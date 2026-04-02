@@ -1,0 +1,1724 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RentFlow – Beginner's Complete Guide</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Syne:wght@700;800&family=Lato:wght@300;400;700&family=IBM+Plex+Mono:wght@400;500&display=swap');
+
+:root {
+  --bg: #0D1117;
+  --surface: #161B22;
+  --surface2: #1C2333;
+  --border: #2A3140;
+  --accent: #E8A838;
+  --green: #3DB88A;
+  --red: #E05555;
+  --blue: #4A9EE8;
+  --purple: #9B72CF;
+  --text: #E6EDF3;
+  --muted: #7D8998;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Lato', sans-serif;
+  font-size: 15px;
+  line-height: 1.8;
+}
+
+/* ── COVER PAGE ── */
+.cover {
+  min-height: 100vh;
+  background: linear-gradient(160deg, #0a1520 0%, #12202e 60%, #1a1508 100%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 60px 40px;
+  position: relative;
+  overflow: hidden;
+}
+.cover::before {
+  content: '🏠';
+  position: absolute;
+  font-size: 400px;
+  opacity: 0.03;
+  top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+.cover-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(232,168,56,0.1);
+  border: 1px solid rgba(232,168,56,0.3);
+  border-radius: 100px;
+  padding: 6px 18px;
+  font-size: 12px;
+  color: var(--accent);
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  font-family: 'IBM Plex Mono', monospace;
+  margin-bottom: 32px;
+}
+.cover h1 {
+  font-family: 'Syne', sans-serif;
+  font-size: clamp(36px, 7vw, 72px);
+  font-weight: 800;
+  line-height: 1.05;
+  margin-bottom: 16px;
+  background: linear-gradient(135deg, #fff 30%, var(--accent));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+.cover-sub {
+  font-size: clamp(16px, 2.5vw, 22px);
+  color: var(--muted);
+  max-width: 600px;
+  margin-bottom: 48px;
+}
+.cover-steps {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  justify-content: center;
+  margin-bottom: 48px;
+}
+.cover-step-pill {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 100px;
+  padding: 8px 18px;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.cover-step-pill span { color: var(--accent); font-weight: 700; }
+.cover-meta {
+  font-size: 12px;
+  color: var(--muted);
+  font-family: 'IBM Plex Mono', monospace;
+}
+
+/* ── TOC ── */
+.toc-page {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 60px 40px;
+}
+.toc-title {
+  font-family: 'Syne', sans-serif;
+  font-size: 28px;
+  font-weight: 800;
+  margin-bottom: 8px;
+}
+.toc-sub { color: var(--muted); margin-bottom: 40px; font-size: 14px; }
+.toc-item {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 14px 20px;
+  border-radius: 10px;
+  margin-bottom: 6px;
+  border: 1px solid transparent;
+  transition: all 0.15s;
+  text-decoration: none;
+  color: var(--text);
+}
+.toc-item:hover { background: var(--surface); border-color: var(--border); }
+.toc-num {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 11px;
+  color: var(--accent);
+  font-weight: 500;
+  width: 28px;
+  flex-shrink: 0;
+}
+.toc-icon { font-size: 20px; flex-shrink: 0; }
+.toc-name { font-weight: 700; font-size: 14px; }
+.toc-desc { font-size: 12px; color: var(--muted); }
+.toc-dot { flex: 1; border-bottom: 1px dotted var(--border); }
+
+/* ── SECTION ── */
+.section {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 60px 40px;
+  border-top: 1px solid var(--border);
+}
+
+.section-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 20px;
+  margin-bottom: 36px;
+}
+.section-num {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 11px;
+  color: var(--accent);
+  background: rgba(232,168,56,0.08);
+  border: 1px solid rgba(232,168,56,0.2);
+  padding: 4px 10px;
+  border-radius: 6px;
+  flex-shrink: 0;
+  margin-top: 4px;
+}
+.section-title-wrap h2 {
+  font-family: 'Syne', sans-serif;
+  font-size: 28px;
+  font-weight: 800;
+  line-height: 1.2;
+  margin-bottom: 6px;
+}
+.section-title-wrap p {
+  color: var(--muted);
+  font-size: 14px;
+}
+
+/* ── STEPS ── */
+.steps { display: flex; flex-direction: column; gap: 0; }
+
+.step {
+  display: flex;
+  gap: 24px;
+  position: relative;
+}
+.step:not(:last-child)::before {
+  content: '';
+  position: absolute;
+  left: 19px;
+  top: 52px;
+  bottom: 0;
+  width: 2px;
+  background: linear-gradient(to bottom, var(--border), transparent);
+}
+.step-indicator {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding-top: 4px;
+}
+.step-circle {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: 2px solid var(--accent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: 'Syne', sans-serif;
+  font-weight: 800;
+  font-size: 15px;
+  color: var(--accent);
+  background: rgba(232,168,56,0.05);
+  flex-shrink: 0;
+  position: relative;
+  z-index: 1;
+}
+.step-circle.done {
+  background: rgba(61,184,138,0.1);
+  border-color: var(--green);
+  color: var(--green);
+}
+.step-body { flex: 1; padding-bottom: 36px; }
+.step-title {
+  font-family: 'Syne', sans-serif;
+  font-size: 17px;
+  font-weight: 700;
+  margin-bottom: 8px;
+  margin-top: 8px;
+}
+.step-text { color: #b0bac8; font-size: 14px; margin-bottom: 12px; line-height: 1.75; }
+
+/* ── CALLOUTS ── */
+.callout {
+  border-radius: 10px;
+  padding: 14px 18px;
+  margin: 14px 0;
+  display: flex;
+  gap: 12px;
+  font-size: 13.5px;
+  line-height: 1.65;
+}
+.callout-icon { font-size: 18px; flex-shrink: 0; margin-top: 1px; }
+.callout.tip { background: rgba(61,184,138,0.07); border: 1px solid rgba(61,184,138,0.18); }
+.callout.tip .callout-icon::after { content: '💡'; }
+.callout.warn { background: rgba(232,168,56,0.07); border: 1px solid rgba(232,168,56,0.18); }
+.callout.warn .callout-icon::after { content: '⚠️'; }
+.callout.info { background: rgba(74,158,232,0.07); border: 1px solid rgba(74,158,232,0.18); }
+.callout.info .callout-icon::after { content: 'ℹ️'; }
+.callout.danger { background: rgba(224,85,85,0.07); border: 1px solid rgba(224,85,85,0.18); }
+.callout.danger .callout-icon::after { content: '🚨'; }
+
+/* ── CODE ── */
+.code-block {
+  background: #0a0d12;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  margin: 14px 0;
+  overflow: hidden;
+}
+.code-header {
+  background: var(--surface2);
+  padding: 8px 16px;
+  font-size: 11px;
+  color: var(--muted);
+  font-family: 'IBM Plex Mono', monospace;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-bottom: 1px solid var(--border);
+}
+.code-header::before { content: '●'; color: var(--red); }
+.code-header::after { content: '●  ●'; color: var(--border); }
+.code-body {
+  padding: 16px;
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 12.5px;
+  line-height: 1.7;
+  color: #a8d8b0;
+  overflow-x: auto;
+  white-space: pre;
+}
+.code-body .cmd { color: #79c0ff; }
+.code-body .val { color: var(--accent); }
+.code-body .comment { color: var(--muted); }
+.code-body .key { color: #ff9f9f; }
+.code-body .str { color: #a8d8b0; }
+
+/* ── TABLES ── */
+.info-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 14px 0;
+  font-size: 13.5px;
+}
+.info-table th {
+  background: var(--surface2);
+  padding: 10px 14px;
+  text-align: left;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  color: var(--muted);
+  font-family: 'IBM Plex Mono', monospace;
+  border-bottom: 1px solid var(--border);
+}
+.info-table td {
+  padding: 10px 14px;
+  border-bottom: 1px solid rgba(42,49,64,0.5);
+  color: #b0bac8;
+  vertical-align: top;
+}
+.info-table tr:last-child td { border-bottom: none; }
+.info-table tr:hover td { background: rgba(255,255,255,0.02); }
+
+/* ── CHECKLIST ── */
+.checklist { list-style: none; padding: 0; }
+.checklist li {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 0;
+  font-size: 14px;
+  color: #b0bac8;
+  border-bottom: 1px solid rgba(42,49,64,0.4);
+}
+.checklist li:last-child { border-bottom: none; }
+.check-box {
+  width: 20px; height: 20px;
+  border: 2px solid var(--border);
+  border-radius: 4px;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+/* ── PILL / BADGE ── */
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 10px;
+  border-radius: 100px;
+  font-size: 12px;
+  font-weight: 700;
+}
+.pill.green { background: rgba(61,184,138,0.1); color: var(--green); }
+.pill.gold { background: rgba(232,168,56,0.1); color: var(--accent); }
+.pill.blue { background: rgba(74,158,232,0.1); color: var(--blue); }
+.pill.red { background: rgba(224,85,85,0.1); color: var(--red); }
+
+/* ── FLOW DIAGRAM ── */
+.flow {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  margin: 16px 0;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.flow-node {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 14px;
+  font-size: 12.5px;
+  font-weight: 600;
+  text-align: center;
+  min-width: 90px;
+}
+.flow-arrow {
+  color: var(--muted);
+  font-size: 18px;
+  padding: 0 4px;
+}
+
+/* ── VISUAL CARDS ── */
+.card-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 14px; margin: 16px 0; }
+.mini-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 16px;
+}
+.mini-card-icon { font-size: 24px; margin-bottom: 8px; }
+.mini-card-title { font-family: 'Syne', sans-serif; font-size: 13px; font-weight: 700; margin-bottom: 4px; }
+.mini-card-text { font-size: 12px; color: var(--muted); }
+
+/* ── ARCHITECTURE DIAGRAM ── */
+.arch {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 24px;
+  margin: 16px 0;
+  text-align: center;
+  font-size: 13px;
+}
+.arch-layer {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+  flex-wrap: wrap;
+  margin: 10px 0;
+}
+.arch-box {
+  padding: 8px 16px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.arch-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--muted);
+  margin: 12px 0 6px;
+  font-family: 'IBM Plex Mono', monospace;
+}
+.arch-arrow { font-size: 22px; color: var(--border); margin: 4px 0; }
+
+/* ── SUMMARY BOX ── */
+.summary-box {
+  background: linear-gradient(135deg, rgba(232,168,56,0.05), rgba(61,184,138,0.05));
+  border: 1px solid rgba(232,168,56,0.15);
+  border-radius: 12px;
+  padding: 24px;
+  margin: 24px 0;
+}
+.summary-box h3 {
+  font-family: 'Syne', sans-serif;
+  font-size: 16px;
+  font-weight: 800;
+  margin-bottom: 12px;
+  color: var(--accent);
+}
+
+/* ── FOOTER ── */
+.guide-footer {
+  text-align: center;
+  padding: 60px 40px;
+  border-top: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 13px;
+  font-family: 'IBM Plex Mono', monospace;
+}
+
+@media print {
+  .cover { min-height: auto; padding: 40px; }
+  .section { page-break-before: always; }
+}
+
+@media (max-width: 640px) {
+  .section, .toc-page { padding: 40px 20px; }
+  .step { gap: 14px; }
+  .cover { padding: 40px 20px; }
+}
+</style>
+</head>
+<body>
+
+<!-- ══════════════════════════════ COVER ══════════════════════════════ -->
+<div class="cover">
+  <div class="cover-badge">● Complete Beginner's Guide</div>
+  <h1>Build a Rental<br>Management System</h1>
+  <div class="cover-sub">A step-by-step guide to building RentFlow — from zero to a fully working property management system with M-Pesa payments, tenant tracking, and more.</div>
+  <div class="cover-steps">
+    <div class="cover-step-pill"><span>01</span> Project Setup</div>
+    <div class="cover-step-pill"><span>02</span> Database Design</div>
+    <div class="cover-step-pill"><span>03</span> Backend API</div>
+    <div class="cover-step-pill"><span>04</span> Frontend UI</div>
+    <div class="cover-step-pill"><span>05</span> M-Pesa Integration</div>
+    <div class="cover-step-pill"><span>06</span> SMS Alerts</div>
+    <div class="cover-step-pill"><span>07</span> Deployment</div>
+  </div>
+  <div class="cover-meta">RentFlow Pro · Version 1.0 · For Beginners · Kenya Edition</div>
+</div>
+
+<!-- ══════════════════════════════ TOC ══════════════════════════════ -->
+<div class="toc-page">
+  <div class="toc-title">Table of Contents</div>
+  <div class="toc-sub">7 major phases · 40+ detailed steps · estimated 2–4 weeks to build</div>
+
+  <a href="#section1" class="toc-item">
+    <span class="toc-num">01</span>
+    <span class="toc-icon">🛠️</span>
+    <div><div class="toc-name">Project Setup & Tools</div><div class="toc-desc">Install Node.js, VS Code, PostgreSQL and create your project</div></div>
+    <div class="toc-dot"></div>
+  </a>
+  <a href="#section2" class="toc-item">
+    <span class="toc-num">02</span>
+    <span class="toc-icon">🗄️</span>
+    <div><div class="toc-name">Database Design</div><div class="toc-desc">Design all tables: users, plots, houses, tenants, payments</div></div>
+    <div class="toc-dot"></div>
+  </a>
+  <a href="#section3" class="toc-item">
+    <span class="toc-num">03</span>
+    <span class="toc-icon">⚙️</span>
+    <div><div class="toc-name">Backend API with Node.js</div><div class="toc-desc">Build the Express server, routes, and authentication</div></div>
+    <div class="toc-dot"></div>
+  </a>
+  <a href="#section4" class="toc-item">
+    <span class="toc-num">04</span>
+    <span class="toc-icon">🎨</span>
+    <div><div class="toc-name">Frontend with React</div><div class="toc-desc">Build the dashboard, tenant pages, and property views</div></div>
+    <div class="toc-dot"></div>
+  </a>
+  <a href="#section5" class="toc-item">
+    <span class="toc-num">05</span>
+    <span class="toc-icon">💚</span>
+    <div><div class="toc-name">M-Pesa Integration</div><div class="toc-desc">Connect to Safaricom Daraja API for automatic rent payments</div></div>
+    <div class="toc-dot"></div>
+  </a>
+  <a href="#section6" class="toc-item">
+    <span class="toc-num">06</span>
+    <span class="toc-icon">📨</span>
+    <div><div class="toc-name">SMS Notifications</div><div class="toc-desc">Set up Africa's Talking for automated rent reminders</div></div>
+    <div class="toc-dot"></div>
+  </a>
+  <a href="#section7" class="toc-item">
+    <span class="toc-num">07</span>
+    <span class="toc-icon">🚀</span>
+    <div><div class="toc-name">Deployment & Going Live</div><div class="toc-desc">Deploy to the cloud and set up your domain</div></div>
+    <div class="toc-dot"></div>
+  </a>
+</div>
+
+<!-- ══════════════════════════════ SECTION 1 ══════════════════════════════ -->
+<div class="section" id="section1">
+  <div class="section-header">
+    <div class="section-num">PHASE 01</div>
+    <div class="section-title-wrap">
+      <h2>🛠️ Project Setup & Tools</h2>
+      <p>Install everything you need and create your project structure from scratch.</p>
+    </div>
+  </div>
+
+  <div class="steps">
+
+    <div class="step">
+      <div class="step-indicator"><div class="step-circle">1</div></div>
+      <div class="step-body">
+        <div class="step-title">Install Required Software</div>
+        <div class="step-text">Before writing a single line of code, install these tools on your computer. Each one plays a specific role in the project.</div>
+        <table class="info-table">
+          <thead><tr><th>Tool</th><th>What It Does</th><th>Download</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Node.js</strong> (v20+)</td><td>Runs your backend JavaScript server</td><td>nodejs.org</td></tr>
+            <tr><td><strong>VS Code</strong></td><td>Code editor — where you write your app</td><td>code.visualstudio.com</td></tr>
+            <tr><td><strong>PostgreSQL</strong></td><td>Database — stores all your data</td><td>postgresql.org</td></tr>
+            <tr><td><strong>Git</strong></td><td>Version control — saves your work history</td><td>git-scm.com</td></tr>
+            <tr><td><strong>Postman</strong></td><td>Tests your API endpoints easily</td><td>postman.com</td></tr>
+          </tbody>
+        </table>
+        <div class="callout tip"><div class="callout-icon"></div><div>After installing Node.js, open your terminal and type <code style="background:#1a1f2b;padding:2px 6px;border-radius:4px;font-family:monospace">node --version</code>. If you see a version number like <code style="background:#1a1f2b;padding:2px 6px;border-radius:4px;font-family:monospace">v20.11.0</code>, the install worked!</div></div>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="step-indicator"><div class="step-circle">2</div></div>
+      <div class="step-body">
+        <div class="step-title">Create Your Project Folder Structure</div>
+        <div class="step-text">Open your terminal (Command Prompt on Windows, Terminal on Mac/Linux) and run these commands one by one:</div>
+        <div class="code-block">
+          <div class="code-header">Terminal — Create Project</div>
+          <div class="code-body"><span class="comment"># Create the main project folder</span>
+mkdir rentflow
+cd rentflow
+
+<span class="comment"># Create backend and frontend folders</span>
+mkdir backend
+mkdir frontend
+
+<span class="comment"># Go into backend and set it up</span>
+cd backend
+npm init -y
+
+<span class="comment"># Go back and create the React frontend</span>
+cd ..
+npx create-react-app frontend</div>
+        </div>
+        <div class="callout info"><div class="callout-icon"></div><div>The <code style="background:#1a1f2b;padding:2px 6px;border-radius:4px;font-family:monospace">npx create-react-app</code> command takes 2–5 minutes to finish. This is normal — it's downloading everything React needs.</div></div>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="step-indicator"><div class="step-circle">3</div></div>
+      <div class="step-body">
+        <div class="step-title">Install Backend Packages</div>
+        <div class="step-text">These are the "ingredients" your backend needs. Think of them like apps your server depends on:</div>
+        <div class="code-block">
+          <div class="code-header">Terminal — Backend folder</div>
+          <div class="code-body">cd backend
+
+npm install <span class="val">express</span>          <span class="comment"># Web server framework</span>
+npm install <span class="val">pg</span>               <span class="comment"># PostgreSQL database connector</span>
+npm install <span class="val">jsonwebtoken</span>     <span class="comment"># User login tokens (security)</span>
+npm install <span class="val">bcryptjs</span>         <span class="comment"># Password hashing (security)</span>
+npm install <span class="val">cors</span>             <span class="comment"># Allows frontend to talk to backend</span>
+npm install <span class="val">dotenv</span>           <span class="comment"># Stores secret keys safely</span>
+npm install <span class="val">multer</span>           <span class="comment"># File uploads (tenant photos, leases)</span>
+npm install <span class="val">node-cron</span>        <span class="comment"># Runs tasks on a schedule (reminders)</span>
+npm install <span class="val">axios</span>            <span class="comment"># Makes HTTP requests (M-Pesa, SMS)</span>
+npm install <span class="val">nodemon</span> --save-dev <span class="comment"># Auto-restarts server during development</span></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="step-indicator"><div class="step-circle">4</div></div>
+      <div class="step-body">
+        <div class="step-title">Set Up Your Environment File (.env)</div>
+        <div class="step-text">This file stores your secret settings — like passwords and API keys. It should NEVER be uploaded to GitHub. Inside your <code style="background:#1a1f2b;padding:2px 6px;border-radius:4px;font-family:monospace">backend</code> folder, create a file called <code style="background:#1a1f2b;padding:2px 6px;border-radius:4px;font-family:monospace">.env</code>:</div>
+        <div class="code-block">
+          <div class="code-header">.env — backend folder</div>
+          <div class="code-body"><span class="comment"># Server</span>
+<span class="key">PORT</span>=<span class="val">5000</span>
+<span class="key">NODE_ENV</span>=<span class="val">development</span>
+
+<span class="comment"># Database (replace with your PostgreSQL details)</span>
+<span class="key">DB_HOST</span>=<span class="val">localhost</span>
+<span class="key">DB_PORT</span>=<span class="val">5432</span>
+<span class="key">DB_USER</span>=<span class="val">postgres</span>
+<span class="key">DB_PASS</span>=<span class="val">your_password_here</span>
+<span class="key">DB_NAME</span>=<span class="val">rentflow_db</span>
+
+<span class="comment"># Security (make this a long random string)</span>
+<span class="key">JWT_SECRET</span>=<span class="val">myverylongsecretkey123456789abc</span>
+
+<span class="comment"># M-Pesa (you'll fill these in Section 5)</span>
+<span class="key">MPESA_CONSUMER_KEY</span>=<span class="val">your_key_here</span>
+<span class="key">MPESA_CONSUMER_SECRET</span>=<span class="val">your_secret_here</span>
+<span class="key">MPESA_PAYBILL</span>=<span class="val">400200</span>
+<span class="key">MPESA_PASSKEY</span>=<span class="val">your_passkey_here</span>
+<span class="key">MPESA_CALLBACK_URL</span>=<span class="val">https://yoursite.com/api/mpesa/callback</span>
+
+<span class="comment"># Africa's Talking SMS (Section 6)</span>
+<span class="key">AT_USERNAME</span>=<span class="val">sandbox</span>
+<span class="key">AT_API_KEY</span>=<span class="val">your_api_key_here</span>
+<span class="key">AT_SENDER_ID</span>=<span class="val">RENTFLOW</span></div>
+        </div>
+        <div class="callout warn"><div class="callout-icon"></div><div>Create a file called <code style="background:#1a1f2b;padding:2px 6px;border-radius:4px;font-family:monospace">.gitignore</code> in your project root and add <code style="background:#1a1f2b;padding:2px 6px;border-radius:4px;font-family:monospace">.env</code> to it. This stops your secrets from being leaked to the internet!</div></div>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="step-indicator"><div class="step-circle done">✓</div></div>
+      <div class="step-body">
+        <div class="step-title">Verify Your Setup</div>
+        <div class="step-text">Run these commands to confirm everything is working before moving to the next phase:</div>
+        <div class="code-block">
+          <div class="code-header">Terminal</div>
+          <div class="code-body">node --version      <span class="comment"># Should show v20.x.x</span>
+npm --version       <span class="comment"># Should show 10.x.x</span>
+psql --version      <span class="comment"># Should show PostgreSQL 15.x</span></div>
+        </div>
+        <div class="summary-box">
+          <h3>✅ Phase 1 Complete — You should now have:</h3>
+          <ul class="checklist">
+            <li><span class="check-box"></span>Node.js, VS Code, PostgreSQL, Git installed</li>
+            <li><span class="check-box"></span>A <code style="background:#1a1f2b;padding:2px 6px;border-radius:4px;font-family:monospace">rentflow/</code> project folder with <code style="background:#1a1f2b;padding:2px 6px;border-radius:4px;font-family:monospace">backend/</code> and <code style="background:#1a1f2b;padding:2px 6px;border-radius:4px;font-family:monospace">frontend/</code> subfolders</li>
+            <li><span class="check-box"></span>All backend npm packages installed</li>
+            <li><span class="check-box"></span>A <code style="background:#1a1f2b;padding:2px 6px;border-radius:4px;font-family:monospace">.env</code> file with your settings</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ══════════════════════════════ SECTION 2 ══════════════════════════════ -->
+<div class="section" id="section2">
+  <div class="section-header">
+    <div class="section-num">PHASE 02</div>
+    <div class="section-title-wrap">
+      <h2>🗄️ Database Design</h2>
+      <p>Create all the database tables that will store your system's data.</p>
+    </div>
+  </div>
+
+  <div class="steps">
+
+    <div class="step">
+      <div class="step-indicator"><div class="step-circle">1</div></div>
+      <div class="step-body">
+        <div class="step-title">Create the Database in PostgreSQL</div>
+        <div class="step-text">Open your terminal and connect to PostgreSQL, then create your database:</div>
+        <div class="code-block">
+          <div class="code-header">PostgreSQL Terminal</div>
+          <div class="code-body"><span class="comment"># Connect to PostgreSQL (enter your password when asked)</span>
+psql -U postgres
+
+<span class="comment"># Create the database</span>
+CREATE DATABASE rentflow_db;
+
+<span class="comment"># Connect to it</span>
+\c rentflow_db
+
+<span class="comment"># You should see: "You are now connected to database rentflow_db"</span></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="step-indicator"><div class="step-circle">2</div></div>
+      <div class="step-body">
+        <div class="step-title">Understand the Table Relationships</div>
+        <div class="step-text">Before creating tables, understand how they connect. This is called an Entity Relationship — every piece of data links to another:</div>
+        <div class="arch">
+          <div class="arch-label">DATA RELATIONSHIPS</div>
+          <div class="arch-layer">
+            <div class="arch-box" style="background:rgba(232,168,56,0.1);border:1px solid rgba(232,168,56,0.3);color:var(--accent)">👤 Users (Admins)</div>
+          </div>
+          <div class="arch-arrow">↓ owns</div>
+          <div class="arch-layer">
+            <div class="arch-box" style="background:rgba(74,158,232,0.1);border:1px solid rgba(74,158,232,0.3);color:var(--blue)">🏗️ Plots</div>
+          </div>
+          <div class="arch-arrow">↓ contains</div>
+          <div class="arch-layer">
+            <div class="arch-box" style="background:rgba(155,114,207,0.1);border:1px solid rgba(155,114,207,0.3);color:var(--purple)">🏠 Houses / Units</div>
+          </div>
+          <div class="arch-arrow">↓ occupied by</div>
+          <div class="arch-layer">
+            <div class="arch-box" style="background:rgba(61,184,138,0.1);border:1px solid rgba(61,184,138,0.3);color:var(--green)">👥 Tenants</div>
+            <div class="arch-box" style="background:rgba(224,85,85,0.1);border:1px solid rgba(224,85,85,0.3);color:var(--red)">💳 Payments</div>
+            <div class="arch-box" style="background:rgba(232,168,56,0.1);border:1px solid rgba(232,168,56,0.3);color:var(--accent)">🔧 Maintenance</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="step-indicator"><div class="step-circle">3</div></div>
+      <div class="step-body">
+        <div class="step-title">Create All Database Tables</div>
+        <div class="step-text">In your backend folder, create a file called <code style="background:#1a1f2b;padding:2px 6px;border-radius:4px;font-family:monospace">database/schema.sql</code> and paste this SQL. Then run it in PostgreSQL:</div>
+        <div class="code-block">
+          <div class="code-header">database/schema.sql</div>
+          <div class="code-body"><span class="comment">-- 1. USERS TABLE (Admins, Managers, Tenants)</span>
+CREATE TABLE users (
+  id          SERIAL PRIMARY KEY,
+  name        VARCHAR(100) NOT NULL,
+  email       VARCHAR(100) UNIQUE NOT NULL,
+  password    VARCHAR(255) NOT NULL,        <span class="comment">-- stored hashed, never plain text</span>
+  role        VARCHAR(20) DEFAULT <span class="str">'admin'</span>, <span class="comment">-- admin | manager | tenant</span>
+  phone       VARCHAR(20),
+  created_at  TIMESTAMP DEFAULT NOW()
+);
+
+<span class="comment">-- 2. PLOTS TABLE (Properties / Buildings)</span>
+CREATE TABLE plots (
+  id          SERIAL PRIMARY KEY,
+  user_id     INTEGER REFERENCES users(id),
+  name        VARCHAR(100) NOT NULL,
+  location    VARCHAR(200),
+  description TEXT,
+  gps_lat     DECIMAL(10,8),
+  gps_lng     DECIMAL(11,8),
+  created_at  TIMESTAMP DEFAULT NOW()
+);
+
+<span class="comment">-- 3. HOUSES TABLE (Individual rental units)</span>
+CREATE TABLE houses (
+  id          SERIAL PRIMARY KEY,
+  plot_id     INTEGER REFERENCES plots(id) ON DELETE CASCADE,
+  unit_number VARCHAR(20) NOT NULL,
+  house_type  VARCHAR(50),               <span class="comment">-- Bedsitter, 1 Bed, 2 Bed, Shop</span>
+  rent_amount DECIMAL(10,2) NOT NULL,
+  deposit     DECIMAL(10,2),
+  status      VARCHAR(20) DEFAULT <span class="str">'vacant'</span>, <span class="comment">-- vacant | occupied</span>
+  meter_no    VARCHAR(50),
+  created_at  TIMESTAMP DEFAULT NOW()
+);
+
+<span class="comment">-- 4. TENANTS TABLE</span>
+CREATE TABLE tenants (
+  id               SERIAL PRIMARY KEY,
+  user_id          INTEGER REFERENCES users(id),  <span class="comment">-- tenant's login account</span>
+  house_id         INTEGER REFERENCES houses(id),
+  full_name        VARCHAR(100) NOT NULL,
+  national_id      VARCHAR(30),
+  phone            VARCHAR(20),
+  email            VARCHAR(100),
+  emergency_phone  VARCHAR(20),
+  move_in_date     DATE,
+  rent_due_day     INTEGER DEFAULT 5,
+  deposit_paid     DECIMAL(10,2) DEFAULT 0,
+  balance          DECIMAL(10,2) DEFAULT 0,       <span class="comment">-- outstanding rent</span>
+  photo_url        VARCHAR(255),
+  lease_url        VARCHAR(255),
+  is_active        BOOLEAN DEFAULT true,
+  created_at       TIMESTAMP DEFAULT NOW()
+);
+
+<span class="comment">-- 5. PAYMENTS TABLE (All M-Pesa transactions)</span>
+CREATE TABLE payments (
+  id             SERIAL PRIMARY KEY,
+  tenant_id      INTEGER REFERENCES tenants(id),
+  transaction_id VARCHAR(50) UNIQUE,              <span class="comment">-- M-Pesa transaction code</span>
+  amount         DECIMAL(10,2) NOT NULL,
+  phone          VARCHAR(20),
+  payment_date   TIMESTAMP DEFAULT NOW(),
+  house_id       INTEGER REFERENCES houses(id),
+  method         VARCHAR(30) DEFAULT <span class="str">'mpesa'</span>,
+  status         VARCHAR(20) DEFAULT <span class="str">'unmatched'</span>, <span class="comment">-- matched | unmatched | review</span>
+  match_score    INTEGER DEFAULT 0,               <span class="comment">-- 0-100 confidence</span>
+  receipt_no     VARCHAR(50),
+  notes          TEXT
+);
+
+<span class="comment">-- 6. EXPENSES TABLE</span>
+CREATE TABLE expenses (
+  id          SERIAL PRIMARY KEY,
+  plot_id     INTEGER REFERENCES plots(id),
+  category    VARCHAR(50),    <span class="comment">-- Repairs, Electricity, Water, Security etc.</span>
+  description TEXT,
+  amount      DECIMAL(10,2),
+  expense_date DATE,
+  receipt_url VARCHAR(255),
+  created_at  TIMESTAMP DEFAULT NOW()
+);
+
+<span class="comment">-- 7. MAINTENANCE REQUESTS</span>
+CREATE TABLE maintenance_requests (
+  id          SERIAL PRIMARY KEY,
+  tenant_id   INTEGER REFERENCES tenants(id),
+  house_id    INTEGER REFERENCES houses(id),
+  issue       TEXT NOT NULL,
+  photo_url   VARCHAR(255),
+  priority    VARCHAR(20) DEFAULT <span class="str">'medium'</span>,
+  status      VARCHAR(20) DEFAULT <span class="str">'pending'</span>, <span class="comment">-- pending | in_progress | completed</span>
+  reported_at TIMESTAMP DEFAULT NOW(),
+  resolved_at TIMESTAMP
+);
+
+<span class="comment">-- 8. SMS LOGS</span>
+CREATE TABLE sms_logs (
+  id          SERIAL PRIMARY KEY,
+  to_phone    VARCHAR(20),
+  message     TEXT,
+  status      VARCHAR(20),  <span class="comment">-- sent | failed</span>
+  sent_at     TIMESTAMP DEFAULT NOW()
+);
+
+<span class="comment">-- Run this file in psql:</span>
+<span class="comment">-- \i database/schema.sql</span></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="step-indicator"><div class="step-circle">4</div></div>
+      <div class="step-body">
+        <div class="step-title">Connect Your Backend to the Database</div>
+        <div class="step-text">Create a file <code style="background:#1a1f2b;padding:2px 6px;border-radius:4px;font-family:monospace">backend/db.js</code> that connects Node.js to PostgreSQL:</div>
+        <div class="code-block">
+          <div class="code-header">backend/db.js</div>
+          <div class="code-body">const { Pool } = require(<span class="str">'pg'</span>);
+require(<span class="str">'dotenv'</span>).config();
+
+<span class="comment">// Create a connection "pool" — this manages database connections efficiently</span>
+const pool = new Pool({
+  host:     process.env.DB_HOST,
+  port:     process.env.DB_PORT,
+  user:     process.env.DB_USER,
+  password: process.env.DB_PASS,
+  database: process.env.DB_NAME,
+});
+
+<span class="comment">// Test connection on startup</span>
+pool.connect((err) => {
+  if (err) {
+    console.error(<span class="str">'❌ Database connection failed:'</span>, err.message);
+  } else {
+    console.log(<span class="str">'✅ Connected to PostgreSQL database'</span>);
+  }
+});
+
+module.exports = pool;</div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ══════════════════════════════ SECTION 3 ══════════════════════════════ -->
+<div class="section" id="section3">
+  <div class="section-header">
+    <div class="section-num">PHASE 03</div>
+    <div class="section-title-wrap">
+      <h2>⚙️ Backend API with Node.js</h2>
+      <p>Build the server that powers all your data — properties, tenants, payments, and more.</p>
+    </div>
+  </div>
+
+  <div class="steps">
+
+    <div class="step">
+      <div class="step-indicator"><div class="step-circle">1</div></div>
+      <div class="step-body">
+        <div class="step-title">Create the Main Server File</div>
+        <div class="step-text">This is the heart of your backend. Create <code style="background:#1a1f2b;padding:2px 6px;border-radius:4px;font-family:monospace">backend/server.js</code>:</div>
+        <div class="code-block">
+          <div class="code-header">backend/server.js</div>
+          <div class="code-body">const express = require(<span class="str">'express'</span>);
+const cors    = require(<span class="str">'cors'</span>);
+require(<span class="str">'dotenv'</span>).config();
+
+const app = express();
+
+<span class="comment">// Middleware — process incoming requests</span>
+app.use(cors());                         <span class="comment">// Allow cross-origin requests from React</span>
+app.use(express.json());                 <span class="comment">// Parse JSON request bodies</span>
+app.use(<span class="str">'/uploads'</span>, express.static(<span class="str">'uploads'</span>)); <span class="comment">// Serve uploaded files</span>
+
+<span class="comment">// Import route files (we'll create these next)</span>
+app.use(<span class="str">'/api/auth'</span>,        require(<span class="str">'./routes/auth'</span>));
+app.use(<span class="str">'/api/plots'</span>,       require(<span class="str">'./routes/plots'</span>));
+app.use(<span class="str">'/api/houses'</span>,      require(<span class="str">'./routes/houses'</span>));
+app.use(<span class="str">'/api/tenants'</span>,     require(<span class="str">'./routes/tenants'</span>));
+app.use(<span class="str">'/api/payments'</span>,    require(<span class="str">'./routes/payments'</span>));
+app.use(<span class="str">'/api/expenses'</span>,    require(<span class="str">'./routes/expenses'</span>));
+app.use(<span class="str">'/api/maintenance'</span>, require(<span class="str">'./routes/maintenance'</span>));
+app.use(<span class="str">'/api/mpesa'</span>,       require(<span class="str">'./routes/mpesa'</span>));
+app.use(<span class="str">'/api/sms'</span>,         require(<span class="str">'./routes/sms'</span>));
+app.use(<span class="str">'/api/listings'</span>,    require(<span class="str">'./routes/listings'</span>)); <span class="comment">// public portal</span>
+
+<span class="comment">// Health check — visit http://localhost:5000/api/health</span>
+app.get(<span class="str">'/api/health'</span>, (req, res) => {
+  res.json({ status: <span class="str">'ok'</span>, message: <span class="str">'RentFlow API running!'</span> });
+});
+
+const PORT = process.env.PORT || 5000;
+app.listen(PORT, () => console.log(<span class="str">`🚀 Server running on port ${PORT}`</span>));</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="step-indicator"><div class="step-circle">2</div></div>
+      <div class="step-body">
+        <div class="step-title">Build User Authentication (Login & Register)</div>
+        <div class="step-text">Create <code style="background:#1a1f2b;padding:2px 6px;border-radius:4px;font-family:monospace">backend/routes/auth.js</code>. This handles secure login for admins and tenants:</div>
+        <div class="code-block">
+          <div class="code-header">backend/routes/auth.js</div>
+          <div class="code-body">const router  = require(<span class="str">'express'</span>).Router();
+const db      = require(<span class="str">'../db'</span>);
+const bcrypt  = require(<span class="str">'bcryptjs'</span>);
+const jwt     = require(<span class="str">'jsonwebtoken'</span>);
+
+<span class="comment">// POST /api/auth/register — Create new admin account</span>
+router.post(<span class="str">'/register'</span>, async (req, res) => {
+  const { name, email, password, role } = req.body;
+
+  try {
+    <span class="comment">// Hash password (NEVER store plain text passwords!)</span>
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    const result = await db.query(
+      <span class="str">'INSERT INTO users (name, email, password, role) VALUES ($1,$2,$3,$4) RETURNING id,name,email,role'</span>,
+      [name, email, hashedPassword, role || <span class="str">'admin'</span>]
+    );
+
+    res.json({ success: true, user: result.rows[0] });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+<span class="comment">// POST /api/auth/login — Login and get a token</span>
+router.post(<span class="str">'/login'</span>, async (req, res) => {
+  const { email, password } = req.body;
+
+  try {
+    const result = await db.query(<span class="str">'SELECT * FROM users WHERE email = $1'</span>, [email]);
+    const user = result.rows[0];
+
+    if (!user) return res.status(401).json({ error: <span class="str">'User not found'</span> });
+
+    <span class="comment">// Compare entered password with stored hash</span>
+    const valid = await bcrypt.compare(password, user.password);
+    if (!valid) return res.status(401).json({ error: <span class="str">'Wrong password'</span> });
+
+    <span class="comment">// Create a token (like a digital key card)</span>
+    const token = jwt.sign(
+      { id: user.id, role: user.role },
+      process.env.JWT_SECRET,
+      { expiresIn: <span class="str">'7d'</span> }   <span class="comment">// expires in 7 days</span>
+    );
+
+    res.json({ token, user: { id: user.id, name: user.name, role: user.role } });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+module.exports = router;</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="step-indicator"><div class="step-circle">3</div></div>
+      <div class="step-body">
+        <div class="step-title">Build the Tenants Route</div>
+        <div class="step-text">Create <code style="background:#1a1f2b;padding:2px 6px;border-radius:4px;font-family:monospace">backend/routes/tenants.js</code>. This pattern repeats for all routes:</div>
+        <div class="code-block">
+          <div class="code-header">backend/routes/tenants.js (example pattern)</div>
+          <div class="code-body">const router = require(<span class="str">'express'</span>).Router();
+const db     = require(<span class="str">'../db'</span>);
+const auth   = require(<span class="str">'../middleware/auth'</span>); <span class="comment">// protects routes</span>
+
+<span class="comment">// GET all tenants — GET /api/tenants</span>
+router.get(<span class="str">'/'</span>, auth, async (req, res) => {
+  const result = await db.query(<span class="str">`
+    SELECT t.*, h.unit_number, h.rent_amount, p.name as plot_name
+    FROM tenants t
+    LEFT JOIN houses h ON t.house_id = h.id
+    LEFT JOIN plots  p ON h.plot_id  = p.id
+    WHERE t.is_active = true
+    ORDER BY t.full_name
+  `</span>);
+  res.json(result.rows);
+});
+
+<span class="comment">-- GET single tenant with payment history</span>
+router.get(<span class="str">'/:id'</span>, auth, async (req, res) => {
+  const tenant = await db.query(<span class="str">'SELECT * FROM tenants WHERE id=$1'</span>, [req.params.id]);
+  const payments = await db.query(
+    <span class="str">'SELECT * FROM payments WHERE tenant_id=$1 ORDER BY payment_date DESC'</span>,
+    [req.params.id]
+  );
+  res.json({ ...tenant.rows[0], payments: payments.rows });
+});
+
+<span class="comment">// POST add new tenant — POST /api/tenants</span>
+router.post(<span class="str">'/'</span>, auth, async (req, res) => {
+  const { full_name, phone, email, house_id, move_in_date, deposit_paid } = req.body;
+  const result = await db.query(
+    <span class="str">`INSERT INTO tenants (full_name, phone, email, house_id, move_in_date, deposit_paid)
+     VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`</span>,
+    [full_name, phone, email, house_id, move_in_date, deposit_paid]
+  );
+  <span class="comment">// Mark the house as occupied</span>
+  await db.query(<span class="str">"UPDATE houses SET status='occupied' WHERE id=$1"</span>, [house_id]);
+  res.json(result.rows[0]);
+});
+
+module.exports = router;</div>
+        </div>
+        <div class="callout info"><div class="callout-icon"></div><div>Follow this exact same pattern to create <code style="background:#1a1f2b;padding:2px 6px;border-radius:4px;font-family:monospace">plots.js</code>, <code style="background:#1a1f2b;padding:2px 6px;border-radius:4px;font-family:monospace">houses.js</code>, <code style="background:#1a1f2b;padding:2px 6px;border-radius:4px;font-family:monospace">expenses.js</code>, and <code style="background:#1a1f2b;padding:2px 6px;border-radius:4px;font-family:monospace">maintenance.js</code>. The structure is always: GET all, GET one, POST create, PUT update, DELETE remove.</div></div>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="step-indicator"><div class="step-circle">4</div></div>
+      <div class="step-body">
+        <div class="step-title">Start Your Server & Test It</div>
+        <div class="code-block">
+          <div class="code-header">Terminal — backend folder</div>
+          <div class="code-body">cd backend
+npx nodemon server.js
+
+<span class="comment"># You should see:</span>
+<span class="comment"># ✅ Connected to PostgreSQL database</span>
+<span class="comment"># 🚀 Server running on port 5000</span></div>
+        </div>
+        <div class="step-text" style="margin-top:12px">Now open Postman and test: <code style="background:#1a1f2b;padding:2px 6px;border-radius:4px;font-family:monospace">GET http://localhost:5000/api/health</code> — you should get <code style="background:#1a1f2b;padding:2px 6px;border-radius:4px;font-family:monospace">{status: "ok"}</code></div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ══════════════════════════════ SECTION 4 ══════════════════════════════ -->
+<div class="section" id="section4">
+  <div class="section-header">
+    <div class="section-num">PHASE 04</div>
+    <div class="section-title-wrap">
+      <h2>🎨 Frontend with React</h2>
+      <p>Build the visual interface that users interact with every day.</p>
+    </div>
+  </div>
+
+  <div class="steps">
+
+    <div class="step">
+      <div class="step-indicator"><div class="step-circle">1</div></div>
+      <div class="step-body">
+        <div class="step-title">Install Frontend Packages</div>
+        <div class="code-block">
+          <div class="code-header">Terminal — frontend folder</div>
+          <div class="code-body">cd frontend
+
+npm install <span class="val">axios</span>              <span class="comment"># Talk to your backend API</span>
+npm install <span class="val">react-router-dom</span>   <span class="comment"># Page navigation (like clicking links)</span>
+npm install <span class="val">recharts</span>           <span class="comment"># Charts and graphs for dashboard</span>
+npm install <span class="val">react-hot-toast</span>    <span class="comment"># Show success/error notifications</span>
+npm install <span class="val">date-fns</span>           <span class="comment"># Format dates nicely</span></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="step-indicator"><div class="step-circle">2</div></div>
+      <div class="step-body">
+        <div class="step-title">Set Up Your Folder Structure</div>
+        <div class="step-text">Inside <code style="background:#1a1f2b;padding:2px 6px;border-radius:4px;font-family:monospace">frontend/src/</code>, create these folders. Good structure = easy to find files later:</div>
+        <div class="code-block">
+          <div class="code-header">frontend/src/ folder layout</div>
+          <div class="code-body">src/
+├── <span class="val">components/</span>     <span class="comment"># Reusable pieces (Button, Card, Modal)</span>
+│   ├── Sidebar.jsx
+│   ├── TopBar.jsx
+│   ├── StatCard.jsx
+│   └── DataTable.jsx
+├── <span class="val">pages/</span>          <span class="comment"># Full page views</span>
+│   ├── Dashboard.jsx
+│   ├── Properties.jsx
+│   ├── Tenants.jsx
+│   ├── Payments.jsx
+│   ├── Maintenance.jsx
+│   ├── Reports.jsx
+│   └── PublicListings.jsx
+├── <span class="val">services/</span>       <span class="comment"># API call functions</span>
+│   └── api.js
+├── <span class="val">context/</span>        <span class="comment"># Global state (logged-in user etc.)</span>
+│   └── AuthContext.jsx
+└── App.jsx         <span class="comment"># Main app with routing</span></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="step-indicator"><div class="step-circle">3</div></div>
+      <div class="step-body">
+        <div class="step-title">Create the API Service File</div>
+        <div class="step-text">This file is the "bridge" between your React app and your backend. Create <code style="background:#1a1f2b;padding:2px 6px;border-radius:4px;font-family:monospace">frontend/src/services/api.js</code>:</div>
+        <div class="code-block">
+          <div class="code-header">src/services/api.js</div>
+          <div class="code-body">import axios from <span class="str">'axios'</span>;
+
+<span class="comment">// Base URL of your backend server</span>
+const API = axios.create({ baseURL: <span class="str">'http://localhost:5000/api'</span> });
+
+<span class="comment">// Auto-attach the login token to every request</span>
+API.interceptors.request.use((config) => {
+  const token = localStorage.getItem(<span class="str">'token'</span>);
+  if (token) config.headers.Authorization = <span class="str">`Bearer ${token}`</span>;
+  return config;
+});
+
+<span class="comment">// Auth</span>
+export const login    = (data) => API.post(<span class="str">'/auth/login'</span>, data);
+export const register = (data) => API.post(<span class="str">'/auth/register'</span>, data);
+
+<span class="comment">// Properties</span>
+export const getPlots = ()     => API.get(<span class="str">'/plots'</span>);
+export const addPlot  = (data) => API.post(<span class="str">'/plots'</span>, data);
+export const getHouses = (plotId) => API.get(<span class="str">`/houses?plot=${plotId}`</span>);
+
+<span class="comment">// Tenants</span>
+export const getTenants   = ()     => API.get(<span class="str">'/tenants'</span>);
+export const getTenant    = (id)   => API.get(<span class="str">`/tenants/${id}`</span>);
+export const addTenant    = (data) => API.post(<span class="str">'/tenants'</span>, data);
+export const updateTenant = (id, data) => API.put(<span class="str">`/tenants/${id}`</span>, data);
+
+<span class="comment">// Payments</span>
+export const getPayments   = () => API.get(<span class="str">'/payments'</span>);
+export const matchPayment  = (id, tenantId) => API.post(<span class="str">`/payments/${id}/match`</span>, { tenantId });
+
+<span class="comment">// Maintenance</span>
+export const getMaintenance = ()     => API.get(<span class="str">'/maintenance'</span>);
+export const addMaintenance = (data) => API.post(<span class="str">'/maintenance'</span>, data);</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="step-indicator"><div class="step-circle">4</div></div>
+      <div class="step-body">
+        <div class="step-title">Set Up App Routing</div>
+        <div class="step-text">Update <code style="background:#1a1f2b;padding:2px 6px;border-radius:4px;font-family:monospace">src/App.jsx</code> to connect all your pages with navigation:</div>
+        <div class="code-block">
+          <div class="code-header">src/App.jsx</div>
+          <div class="code-body">import { BrowserRouter, Routes, Route, Navigate } from <span class="str">'react-router-dom'</span>;
+import Dashboard       from <span class="str">'./pages/Dashboard'</span>;
+import Tenants         from <span class="str">'./pages/Tenants'</span>;
+import Properties      from <span class="str">'./pages/Properties'</span>;
+import Payments        from <span class="str">'./pages/Payments'</span>;
+import Maintenance     from <span class="str">'./pages/Maintenance'</span>;
+import PublicListings  from <span class="str">'./pages/PublicListings'</span>;
+import Login           from <span class="str">'./pages/Login'</span>;
+import Layout          from <span class="str">'./components/Layout'</span>; <span class="comment">// sidebar + topbar</span>
+
+function App() {
+  const token = localStorage.getItem(<span class="str">'token'</span>);
+
+  return (
+    &lt;BrowserRouter&gt;
+      &lt;Routes&gt;
+        <span class="comment">{/* Public page — no login needed */}</span>
+        &lt;Route path=<span class="str">"/listings"</span> element={&lt;PublicListings /&gt;} /&gt;
+        &lt;Route path=<span class="str">"/login"</span>    element={&lt;Login /&gt;} /&gt;
+
+        <span class="comment">{/* Protected pages — requires login */}</span>
+        &lt;Route path=<span class="str">"/"</span> element={token ? &lt;Layout /&gt; : &lt;Navigate to=<span class="str">"/login"</span> /&gt;}&gt;
+          &lt;Route index             element={&lt;Dashboard /&gt;} /&gt;
+          &lt;Route path=<span class="str">"properties"</span> element={&lt;Properties /&gt;} /&gt;
+          &lt;Route path=<span class="str">"tenants"</span>    element={&lt;Tenants /&gt;} /&gt;
+          &lt;Route path=<span class="str">"payments"</span>   element={&lt;Payments /&gt;} /&gt;
+          &lt;Route path=<span class="str">"maintenance"</span> element={&lt;Maintenance /&gt;} /&gt;
+        &lt;/Route&gt;
+      &lt;/Routes&gt;
+    &lt;/BrowserRouter&gt;
+  );
+}
+
+export default App;</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="step-indicator"><div class="step-circle done">✓</div></div>
+      <div class="step-body">
+        <div class="step-title">Start the React App</div>
+        <div class="code-block">
+          <div class="code-header">Terminal — frontend folder</div>
+          <div class="code-body">cd frontend
+npm start
+
+<span class="comment"># Opens browser at http://localhost:3000</span></div>
+        </div>
+        <div class="callout tip"><div class="callout-icon"></div><div>Run BOTH servers at the same time — your backend on port 5000 and React on port 3000. Open two terminal windows, one for each.</div></div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ══════════════════════════════ SECTION 5 ══════════════════════════════ -->
+<div class="section" id="section5">
+  <div class="section-header">
+    <div class="section-num">PHASE 05</div>
+    <div class="section-title-wrap">
+      <h2>💚 M-Pesa Integration</h2>
+      <p>Connect to Safaricom's Daraja API so tenants can pay rent automatically.</p>
+    </div>
+  </div>
+
+  <div class="steps">
+
+    <div class="step">
+      <div class="step-indicator"><div class="step-circle">1</div></div>
+      <div class="step-body">
+        <div class="step-title">Register on Safaricom Daraja Portal</div>
+        <div class="step-text">You must register your app with Safaricom before any M-Pesa integration can work:</div>
+        <table class="info-table">
+          <thead><tr><th>Step</th><th>What To Do</th></tr></thead>
+          <tbody>
+            <tr><td>1</td><td>Go to <strong>developer.safaricom.co.ke</strong> and create an account</td></tr>
+            <tr><td>2</td><td>Click "Create App" — name it "RentFlow"</td></tr>
+            <tr><td>3</td><td>Select <strong>Lipa Na M-Pesa Online</strong> (also called STK Push)</td></tr>
+            <tr><td>4</td><td>Copy your <strong>Consumer Key</strong> and <strong>Consumer Secret</strong> into your .env file</td></tr>
+            <tr><td>5</td><td>For testing, use the <strong>Sandbox</strong> environment first</td></tr>
+            <tr><td>6</td><td>When ready to go live, apply for <strong>Go-Live</strong> approval</td></tr>
+          </tbody>
+        </table>
+        <div class="callout warn"><div class="callout-icon"></div><div>Sandbox = pretend payments for testing. Live = real money. Always test in Sandbox first until everything works perfectly!</div></div>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="step-indicator"><div class="step-circle">2</div></div>
+      <div class="step-body">
+        <div class="step-title">Understand How M-Pesa STK Push Works</div>
+        <div class="step-text">STK Push = Safaricom sends a payment prompt to the tenant's phone automatically. Here's the flow:</div>
+        <div class="flow" style="flex-direction:column; align-items:flex-start; gap:0">
+          <div style="display:flex; align-items:center; gap:12px; padding:10px 0; border-left:2px solid var(--border); padding-left:16px; margin-left:12px">
+            <div style="width:28px;height:28px;background:rgba(232,168,56,0.1);border:1px solid var(--accent);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:var(--accent);flex-shrink:0;margin-left:-26px">1</div>
+            <span style="font-size:13.5px">Tenant clicks "Pay Rent" button on the portal</span>
+          </div>
+          <div style="display:flex; align-items:center; gap:12px; padding:10px 0; border-left:2px solid var(--border); padding-left:16px; margin-left:12px">
+            <div style="width:28px;height:28px;background:rgba(232,168,56,0.1);border:1px solid var(--accent);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:var(--accent);flex-shrink:0;margin-left:-26px">2</div>
+            <span style="font-size:13.5px">Your backend sends a request to Safaricom's API with the phone number + amount</span>
+          </div>
+          <div style="display:flex; align-items:center; gap:12px; padding:10px 0; border-left:2px solid var(--border); padding-left:16px; margin-left:12px">
+            <div style="width:28px;height:28px;background:rgba(232,168,56,0.1);border:1px solid var(--accent);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:var(--accent);flex-shrink:0;margin-left:-26px">3</div>
+            <span style="font-size:13.5px">Safaricom sends a PIN prompt to the tenant's phone</span>
+          </div>
+          <div style="display:flex; align-items:center; gap:12px; padding:10px 0; border-left:2px solid var(--border); padding-left:16px; margin-left:12px">
+            <div style="width:28px;height:28px;background:rgba(232,168,56,0.1);border:1px solid var(--accent);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:var(--accent);flex-shrink:0;margin-left:-26px">4</div>
+            <span style="font-size:13.5px">Tenant enters M-Pesa PIN and confirms</span>
+          </div>
+          <div style="display:flex; align-items:center; gap:12px; padding:10px 0; padding-left:16px; margin-left:12px">
+            <div style="width:28px;height:28px;background:rgba(61,184,138,0.1);border:1px solid var(--green);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:var(--green);flex-shrink:0;margin-left:-26px">5</div>
+            <span style="font-size:13.5px">Safaricom calls your <strong>callback URL</strong> — your system records the payment automatically ✅</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="step-indicator"><div class="step-circle">3</div></div>
+      <div class="step-body">
+        <div class="step-title">Build the M-Pesa Route</div>
+        <div class="step-text">Create <code style="background:#1a1f2b;padding:2px 6px;border-radius:4px;font-family:monospace">backend/routes/mpesa.js</code>:</div>
+        <div class="code-block">
+          <div class="code-header">backend/routes/mpesa.js</div>
+          <div class="code-body">const router = require(<span class="str">'express'</span>).Router();
+const axios  = require(<span class="str">'axios'</span>);
+const db     = require(<span class="str">'../db'</span>);
+
+<span class="comment">// Step 1: Get an access token from Safaricom</span>
+async function getMpesaToken() {
+  const key    = process.env.MPESA_CONSUMER_KEY;
+  const secret = process.env.MPESA_CONSUMER_SECRET;
+  const auth   = Buffer.from(<span class="str">`${key}:${secret}`</span>).toString(<span class="str">'base64'</span>);
+
+  const response = await axios.get(
+    <span class="str">'https://sandbox.safaricom.co.ke/oauth/v1/generate?grant_type=client_credentials'</span>,
+    { headers: { Authorization: <span class="str">`Basic ${auth}`</span> } }
+  );
+  return response.data.access_token;
+}
+
+<span class="comment">// Step 2: Initiate STK Push (send payment prompt to phone)</span>
+router.post(<span class="str">'/stk-push'</span>, async (req, res) => {
+  const { phone, amount, accountRef } = req.body;
+  const token = await getMpesaToken();
+
+  const timestamp = new Date().toISOString().replace(/[^0-9]/g, <span class="str">''</span>).slice(0, 14);
+  const password  = Buffer.from(
+    process.env.MPESA_PAYBILL + process.env.MPESA_PASSKEY + timestamp
+  ).toString(<span class="str">'base64'</span>);
+
+  const response = await axios.post(
+    <span class="str">'https://sandbox.safaricom.co.ke/mpesa/stkpush/v1/processrequest'</span>,
+    {
+      BusinessShortCode: process.env.MPESA_PAYBILL,
+      Password:          password,
+      Timestamp:         timestamp,
+      TransactionType:   <span class="str">'CustomerPayBillOnline'</span>,
+      Amount:            amount,
+      PartyA:            phone,           <span class="comment">// tenant phone</span>
+      PartyB:            process.env.MPESA_PAYBILL,
+      PhoneNumber:       phone,
+      CallBackURL:       process.env.MPESA_CALLBACK_URL,
+      AccountReference:  accountRef,      <span class="comment">// house unit number</span>
+      TransactionDesc:   <span class="str">'Rent Payment'</span>
+    },
+    { headers: { Authorization: <span class="str">`Bearer ${token}`</span> } }
+  );
+
+  res.json(response.data);
+});
+
+<span class="comment">// Step 3: Receive callback from Safaricom when payment succeeds</span>
+router.post(<span class="str">'/callback'</span>, async (req, res) => {
+  const callback = req.body.Body.stkCallback;
+
+  if (callback.ResultCode === 0) {
+    <span class="comment">// Payment succeeded! Extract details</span>
+    const items  = callback.CallbackMetadata.Item;
+    const amount = items.find(i => i.Name === <span class="str">'Amount'</span>).Value;
+    const txnId  = items.find(i => i.Name === <span class="str">'MpesaReceiptNumber'</span>).Value;
+    const phone  = items.find(i => i.Name === <span class="str">'PhoneNumber'</span>).Value.toString();
+
+    <span class="comment">// Save payment to database</span>
+    await db.query(
+      <span class="str">'INSERT INTO payments (transaction_id, amount, phone, status) VALUES ($1,$2,$3,$4)'</span>,
+      [txnId, amount, phone, <span class="str">'unmatched'</span>]
+    );
+
+    <span class="comment">// Try to auto-match to a tenant</span>
+    await autoMatchPayment(txnId, phone, amount);
+  }
+
+  res.json({ ResultCode: 0, ResultDesc: <span class="str">'Accepted'</span> }); <span class="comment">// Always send this back!</span>
+});
+
+<span class="comment">// Auto-match payment to tenant using phone number</span>
+async function autoMatchPayment(txnId, phone, amount) {
+  const tenant = await db.query(
+    <span class="str">'SELECT * FROM tenants WHERE phone = $1 AND is_active = true'</span>,
+    [phone.slice(-9)]  <span class="comment">// match last 9 digits</span>
+  );
+
+  if (tenant.rows.length > 0) {
+    const t = tenant.rows[0];
+    <span class="comment">// Update payment with tenant match</span>
+    await db.query(
+      <span class="str">'UPDATE payments SET tenant_id=$1, house_id=$2, status=$3, match_score=$4 WHERE transaction_id=$5'</span>,
+      [t.id, t.house_id, <span class="str">'matched'</span>, 95, txnId]
+    );
+    <span class="comment">// Update tenant balance</span>
+    await db.query(
+      <span class="str">'UPDATE tenants SET balance = GREATEST(0, balance - $1) WHERE id = $2'</span>,
+      [amount, t.id]
+    );
+  }
+}
+
+module.exports = router;</div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ══════════════════════════════ SECTION 6 ══════════════════════════════ -->
+<div class="section" id="section6">
+  <div class="section-header">
+    <div class="section-num">PHASE 06</div>
+    <div class="section-title-wrap">
+      <h2>📨 SMS Notifications</h2>
+      <p>Automatically send rent reminders and payment confirmations via SMS.</p>
+    </div>
+  </div>
+
+  <div class="steps">
+
+    <div class="step">
+      <div class="step-indicator"><div class="step-circle">1</div></div>
+      <div class="step-body">
+        <div class="step-title">Register on Africa's Talking</div>
+        <table class="info-table">
+          <thead><tr><th>Step</th><th>Action</th></tr></thead>
+          <tbody>
+            <tr><td>1</td><td>Go to <strong>africastalking.com</strong> and create a free account</td></tr>
+            <tr><td>2</td><td>Go to Settings → API Key and copy it into your <code style="background:#1a1f2b;padding:2px 6px;border-radius:4px;font-family:monospace">.env</code></td></tr>
+            <tr><td>3</td><td>In Sandbox mode, test with your own phone number first</td></tr>
+            <tr><td>4</td><td>Top up your account (min KES 200) before going live</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="step-indicator"><div class="step-circle">2</div></div>
+      <div class="step-body">
+        <div class="step-title">Build the SMS Service</div>
+        <div class="step-text">Create <code style="background:#1a1f2b;padding:2px 6px;border-radius:4px;font-family:monospace">backend/services/sms.js</code>:</div>
+        <div class="code-block">
+          <div class="code-header">backend/services/sms.js</div>
+          <div class="code-body">const axios = require(<span class="str">'axios'</span>);
+const db    = require(<span class="str">'../db'</span>);
+require(<span class="str">'dotenv'</span>).config();
+
+async function sendSMS(phone, message) {
+  try {
+    const response = await axios.post(
+      <span class="str">'https://api.africastalking.com/version1/messaging'</span>,
+      new URLSearchParams({
+        username: process.env.AT_USERNAME,
+        to:       <span class="str">`+254${phone.slice(-9)}`</span>,   <span class="comment">// format: +254712345678</span>
+        message:  message,
+        from:     process.env.AT_SENDER_ID
+      }),
+      { headers: { apiKey: process.env.AT_API_KEY } }
+    );
+
+    <span class="comment">// Save to SMS log</span>
+    await db.query(
+      <span class="str">'INSERT INTO sms_logs (to_phone, message, status) VALUES ($1,$2,$3)'</span>,
+      [phone, message, <span class="str">'sent'</span>]
+    );
+
+    return { success: true };
+  } catch (err) {
+    await db.query(
+      <span class="str">'INSERT INTO sms_logs (to_phone, message, status) VALUES ($1,$2,$3)'</span>,
+      [phone, message, <span class="str">'failed'</span>]
+    );
+    return { success: false, error: err.message };
+  }
+}
+
+<span class="comment">// Pre-built message templates</span>
+const templates = {
+  paymentReceived: (name, amount, unit, txnId) =>
+    <span class="str">`Dear ${name}, payment of KES ${amount} received for ${unit}. Ref: ${txnId}. Thank you!`</span>,
+
+  rentReminder: (name, unit, plot, paybill) =>
+    <span class="str">`Dear ${name}, your rent for ${unit} at ${plot} is due soon. Pay via M-Pesa Paybill ${paybill}.`</span>,
+
+  rentOverdue: (name, unit, months, balance, paybill) =>
+    <span class="str">`Dear ${name}, your rent for ${unit} is ${months} month(s) overdue. Balance: KES ${balance}. Pay via Paybill ${paybill}.`</span>,
+};
+
+module.exports = { sendSMS, templates };</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="step-indicator"><div class="step-circle">3</div></div>
+      <div class="step-body">
+        <div class="step-title">Schedule Automatic Rent Reminders</div>
+        <div class="step-text">Create <code style="background:#1a1f2b;padding:2px 6px;border-radius:4px;font-family:monospace">backend/jobs/reminders.js</code>. This runs daily at 9 AM and sends SMS reminders automatically:</div>
+        <div class="code-block">
+          <div class="code-header">backend/jobs/reminders.js</div>
+          <div class="code-body">const cron = require(<span class="str">'node-cron'</span>);
+const db   = require(<span class="str">'../db'</span>);
+const { sendSMS, templates } = require(<span class="str">'../services/sms'</span>);
+
+<span class="comment">// Run every day at 9:00 AM</span>
+cron.schedule(<span class="str">'0 9 * * *'</span>, async () => {
+  console.log(<span class="str">'📅 Running daily rent reminders...'</span>);
+
+  const today = new Date().getDate(); <span class="comment">// day of month (1-31)</span>
+
+  <span class="comment">// 1. Tenants whose rent is due in 3 days</span>
+  const dueSoon = await db.query(<span class="str">`
+    SELECT t.full_name, t.phone, h.unit_number, p.name as plot_name
+    FROM tenants t
+    JOIN houses h ON t.house_id = h.id
+    JOIN plots  p ON h.plot_id  = p.id
+    WHERE t.rent_due_day = $1 AND t.balance = 0 AND t.is_active = true
+  `</span>, [today + 3]);
+
+  for (const tenant of dueSoon.rows) {
+    await sendSMS(
+      tenant.phone,
+      templates.rentReminder(tenant.full_name, tenant.unit_number, tenant.plot_name, <span class="str">'400200'</span>)
+    );
+  }
+
+  <span class="comment">// 2. Tenants with overdue rent (balance > 0)</span>
+  const overdue = await db.query(<span class="str">`
+    SELECT t.full_name, t.phone, h.unit_number, h.rent_amount, t.balance
+    FROM tenants t
+    JOIN houses h ON t.house_id = h.id
+    WHERE t.balance > 0 AND t.is_active = true
+  `</span>);
+
+  for (const tenant of overdue.rows) {
+    const months = Math.ceil(tenant.balance / tenant.rent_amount);
+    await sendSMS(
+      tenant.phone,
+      templates.rentOverdue(tenant.full_name, tenant.unit_number, months, tenant.balance, <span class="str">'400200'</span>)
+    );
+  }
+
+  console.log(<span class="str">`✅ Sent reminders to ${dueSoon.rows.length + overdue.rows.length} tenants`</span>);
+});
+
+console.log(<span class="str">'⏰ Reminder scheduler started'</span>);</div>
+        </div>
+        <div class="callout info"><div class="callout-icon"></div><div>Add <code style="background:#1a1f2b;padding:2px 6px;border-radius:4px;font-family:monospace">require('./jobs/reminders')</code> at the bottom of your <code style="background:#1a1f2b;padding:2px 6px;border-radius:4px;font-family:monospace">server.js</code> file to activate the scheduler when your server starts.</div></div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ══════════════════════════════ SECTION 7 ══════════════════════════════ -->
+<div class="section" id="section7">
+  <div class="section-header">
+    <div class="section-num">PHASE 07</div>
+    <div class="section-title-wrap">
+      <h2>🚀 Deployment & Going Live</h2>
+      <p>Put your app on the internet so it's accessible from anywhere.</p>
+    </div>
+  </div>
+
+  <div class="steps">
+
+    <div class="step">
+      <div class="step-indicator"><div class="step-circle">1</div></div>
+      <div class="step-body">
+        <div class="step-title">Choose Your Hosting Platform</div>
+        <table class="info-table">
+          <thead><tr><th>Service</th><th>What To Host</th><th>Free Tier?</th><th>Cost</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Railway.app</strong></td><td>Backend (Node.js) + Database</td><td>✅ Yes</td><td>~$5/mo after free</td></tr>
+            <tr><td><strong>Vercel</strong></td><td>Frontend (React)</td><td>✅ Yes</td><td>Free for small apps</td></tr>
+            <tr><td><strong>Supabase</strong></td><td>PostgreSQL Database</td><td>✅ Yes</td><td>Free up to 500MB</td></tr>
+            <tr><td><strong>Cloudinary</strong></td><td>Images / Lease files</td><td>✅ Yes</td><td>Free up to 25GB</td></tr>
+          </tbody>
+        </table>
+        <div class="callout tip"><div class="callout-icon"></div><div>For a beginner, the best combination is: <strong>Railway</strong> for backend, <strong>Vercel</strong> for frontend, and <strong>Supabase</strong> for database. Total cost: <strong>KES 0</strong> to start!</div></div>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="step-indicator"><div class="step-circle">2</div></div>
+      <div class="step-body">
+        <div class="step-title">Deploy Backend to Railway</div>
+        <div class="code-block">
+          <div class="code-header">Terminal — Deploy to Railway</div>
+          <div class="code-body"><span class="comment"># 1. Install Railway CLI</span>
+npm install -g @railway/cli
+
+<span class="comment"># 2. Login to Railway</span>
+railway login
+
+<span class="comment"># 3. From your backend folder, deploy</span>
+cd backend
+railway init
+railway up
+
+<span class="comment"># 4. Set your .env variables in Railway dashboard</span>
+<span class="comment">#    (Go to: railway.app → your project → Variables)</span></div>
+        </div>
+        <div class="step-text" style="margin-top:12px">Railway will give you a URL like <code style="background:#1a1f2b;padding:2px 6px;border-radius:4px;font-family:monospace">https://rentflow-backend.railway.app</code>. Copy this — you'll need it for the frontend and M-Pesa callback.</div>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="step-indicator"><div class="step-circle">3</div></div>
+      <div class="step-body">
+        <div class="step-title">Deploy Frontend to Vercel</div>
+        <div class="code-block">
+          <div class="code-header">Terminal — Deploy to Vercel</div>
+          <div class="code-body"><span class="comment"># Update your API URL to the Railway backend URL first!</span>
+<span class="comment"># In frontend/src/services/api.js, change:</span>
+<span class="comment"># baseURL: 'https://rentflow-backend.railway.app/api'</span>
+
+<span class="comment"># Install Vercel CLI</span>
+npm install -g vercel
+
+<span class="comment"># From the frontend folder</span>
+cd frontend
+vercel
+
+<span class="comment"># Follow the prompts. Your app will be live at:</span>
+<span class="comment"># https://rentflow.vercel.app</span></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="step-indicator"><div class="step-circle">4</div></div>
+      <div class="step-body">
+        <div class="step-title">Update M-Pesa Callback URL</div>
+        <div class="step-text">Now that your backend is live, update the M-Pesa callback URL in your .env to point to your Railway URL:</div>
+        <div class="code-block">
+          <div class="code-header">.env (production)</div>
+          <div class="code-body"><span class="key">MPESA_CALLBACK_URL</span>=<span class="val">https://rentflow-backend.railway.app/api/mpesa/callback</span></div>
+        </div>
+        <div class="callout warn"><div class="callout-icon"></div><div>The M-Pesa callback URL MUST be a public HTTPS URL. Safaricom cannot reach <code style="background:#1a1f2b;padding:2px 6px;border-radius:4px;font-family:monospace">localhost</code>. This is why deployment comes before final M-Pesa testing!</div></div>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="step-indicator"><div class="step-circle done">✓</div></div>
+      <div class="step-body">
+        <div class="step-title">Final Pre-Launch Checklist</div>
+        <div class="summary-box">
+          <h3>🎉 You're Almost Live! Final Checks:</h3>
+          <ul class="checklist">
+            <li><span class="check-box"></span>All .env variables set in Railway (never commit .env to GitHub)</li>
+            <li><span class="check-box"></span>Database schema deployed and tested on production</li>
+            <li><span class="check-box"></span>M-Pesa callback URL updated to production URL</li>
+            <li><span class="check-box"></span>Test a full payment flow: STK Push → callback → balance updated</li>
+            <li><span class="check-box"></span>Test SMS: send a manual SMS to your own phone</li>
+            <li><span class="check-box"></span>Add at least one property, unit, and tenant</li>
+            <li><span class="check-box"></span>Apply for M-Pesa Go-Live approval on Safaricom Daraja portal</li>
+            <li><span class="check-box"></span>Share the public listings URL with potential tenants</li>
+          </ul>
+        </div>
+
+        <div class="card-grid" style="margin-top:24px">
+          <div class="mini-card">
+            <div class="mini-card-icon">🏗️</div>
+            <div class="mini-card-title">Add Properties</div>
+            <div class="mini-card-text">Start by adding your plots and all rental units</div>
+          </div>
+          <div class="mini-card">
+            <div class="mini-card-icon">👥</div>
+            <div class="mini-card-title">Add Tenants</div>
+            <div class="mini-card-text">Create tenant profiles and assign them to units</div>
+          </div>
+          <div class="mini-card">
+            <div class="mini-card-icon">💚</div>
+            <div class="mini-card-title">Go Live</div>
+            <div class="mini-card-text">Apply for M-Pesa production access on Daraja</div>
+          </div>
+          <div class="mini-card">
+            <div class="mini-card-icon">📨</div>
+            <div class="mini-card-title">Test SMS</div>
+            <div class="mini-card-text">Send a test reminder to verify delivery</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ══════════════════════════════ FOOTER ══════════════════════════════ -->
+<div class="guide-footer">
+  <div style="font-size:32px;margin-bottom:16px">🏠</div>
+  <div style="font-family:'Syne',sans-serif;font-size:20px;font-weight:800;color:var(--text);margin-bottom:8px">RentFlow — Built by You</div>
+  <div style="margin-bottom:24px">Beginner's Complete Guide · Kenya Edition · 2025</div>
+  <div style="display:flex;gap:16px;justify-content:center;flex-wrap:wrap;margin-bottom:24px">
+    <span class="pill green">● Phase 1: Setup</span>
+    <span class="pill blue">● Phase 2: Database</span>
+    <span class="pill gold">● Phase 3: Backend</span>
+    <span class="pill green">● Phase 4: Frontend</span>
+    <span class="pill gold">● Phase 5: M-Pesa</span>
+    <span class="pill blue">● Phase 6: SMS</span>
+    <span class="pill green">● Phase 7: Deploy</span>
+  </div>
+  <div>Estimated build time for a beginner: 2–4 weeks · Good luck! 🚀</div>
+</div>
+
+</body>
+</html>

@@ -1,0 +1,17 @@
+.env
+
+# Secret environment files
+.env
+
+# Node modules (these are huge, no need to upload)
+node_modules/
+
+# Build files
+build/
+dist/
+
+# Log files
+*.log
+
+# Mac system files
+.DS_Store
