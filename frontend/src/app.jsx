@@ -10,6 +10,10 @@ import Register       from './pages/Register';
 import Users          from './pages/Users';
 import Reports        from './pages/Reports';
 import Layout         from './components/Layout';
+import TenantLogin    from './pages/TenantLogin';
+import TenantPortal   from './pages/TenantPortal';
+import ListingsAdmin  from './pages/Listings';
+import Notices        from './pages/Notices';
 
 function getUser() {
   const token = localStorage.getItem('token');
@@ -36,12 +40,16 @@ export default function App() {
     <BrowserRouter>
       <Routes>
         {/* Public pages */}
-        <Route path="/listings"  element={<PublicListings />} />
-        <Route path="/login"     element={<Login />} />
-        <Route path="/register"  element={<Register />} />
+        <Route path="/listings"       element={<PublicListings />} />
+        <Route path="/login"          element={<Login />} />
+        <Route path="/register"       element={<Register />} />
+
+        {/* Tenant portal */}
+        <Route path="/tenant/login"     element={<TenantLogin />} />
+        <Route path="/tenant/dashboard" element={<TenantPortal />} />
 
         {/* Protected pages */}
-        <Route path="/" element={user ? <Layout /> : <Navigate to="/login" />}>
+        <Route path="/" element={user ? <Layout /> : <Navigate to="/listings" />}>
           <Route index             element={<Dashboard />} />
           <Route path="properties" element={<Properties />} />
           <Route path="tenants"    element={<Tenants />} />
@@ -54,6 +62,21 @@ export default function App() {
           <Route path="reports"     element={
             <ProtectedRoute allowedRoles={['admin', 'landlord']}>
               <Reports />
+            </ProtectedRoute>
+          } />
+          <Route path="manage/listings" element={
+            <ProtectedRoute allowedRoles={['admin', 'landlord']}>
+              <ListingsAdmin />
+            </ProtectedRoute>
+          } />
+          <Route path="notices" element={
+            <ProtectedRoute allowedRoles={['admin', 'landlord', 'caretaker']}>
+              <Notices defaultTab="notices" />
+            </ProtectedRoute>
+          } />
+          <Route path="messages" element={
+            <ProtectedRoute allowedRoles={['admin', 'landlord', 'caretaker']}>
+              <Notices defaultTab="messages" />
             </ProtectedRoute>
           } />
           <Route path="users"       element={

@@ -1,106 +1,206 @@
-/**
- * backend/jobs/balanceUpdater.js
- *
- * Runs daily at midnight and checks all active tenants.
- * If today is past their rent_due_day and no payment has been
- * recorded for this month, it adds their rent amount to their balance.
- */
-
 const cron = require('node-cron');
 const pool = require('../database/db');
 
-async function updateBalances() {
-  console.log('💰 Running daily balance update...');
-
-  const today    = new Date();
-  const todayDay = today.getDate();        // e.g. 15
-  const month    = today.getMonth() + 1;  // e.g. 3 (March)
-  const year     = today.getFullYear();   // e.g. 2026
-
+// ── Daily balance updater — runs at midnight every day ────────────────────────
+cron.schedule('0 0 * * *', async () => {
+  console.log('Running daily balance updater...');
   try {
-    // Get all active tenants with their rent amount
-    const { rows: tenants } = await pool.query(`
-      SELECT t.id, t.full_name, t.rent_due_day, t.balance, h.rent_amount
-      FROM tenants t
-      JOIN houses h ON t.house_id = h.id
-      WHERE t.is_active = true
-    `);
+    const now   = new Date();
+    const year  = now.getFullYear();
+    const month = now.getMonth() + 1;
 
-    let updated = 0;
+    // Find all active tenants whose rent is due today (1st of month)
+    if (now.getDate() !== 1) return;
 
-    for (const tenant of tenants) {
-      // Only process tenants whose due day has passed this month
-      if (todayDay < tenant.rent_due_day) continue;
+    const tenants = await pool.query(
+      `SELECT t.id, t.full_name, t.phone, h.rent_amount, h.unit_number, p.name AS plot_name
+       FROM tenants t
+       LEFT JOIN houses h ON t.house_id = h.id
+       LEFT JOIN plots  p ON h.plot_id  = p.id
+       WHERE t.is_active = true AND h.rent_amount IS NOT NULL`
+    );
 
-      // Check if a payment has already been recorded for this month
-      const { rows: payments } = await pool.query(`
-        SELECT id FROM payments
-        WHERE tenant_id = $1
-          AND EXTRACT(MONTH FROM payment_date) = $2
-          AND EXTRACT(YEAR  FROM payment_date) = $3
-        LIMIT 1
-      `, [tenant.id, month, year]);
+    console.log(`Processing ${tenants.rows.length} tenants for ${month}/${year}`);
+  } catch (err) {
+    console.error('Balance updater error:', err.message);
+  }
+});
 
-      if (payments.length > 0) {
-        // Payment exists this month — make sure balance is 0
-        await pool.query(
-          'UPDATE tenants SET balance = 0 WHERE id = $1 AND balance < 0',
-          [tenant.id]
-        );
-        continue;
-      }
+// ── Monthly SMS reminders — runs at 8AM on the 1st of every month ─────────────
+cron.schedule('0 8 1 * *', async () => {
+  console.log('Sending monthly rent reminders...');
+  try {
+    const { sendSMS } = require('./routes/sms');
 
-      // No payment this month — add rent amount to balance if not already added
-      // We track this by checking if balance already reflects this month's unpaid rent
-      const currentBalance = parseFloat(tenant.balance || 0);
-      const rentAmount     = parseFloat(tenant.rent_amount || 0);
+    const now = new Date();
 
-      // Only add rent if balance hasn't already been incremented this month
-      // We store a monthly_charged flag by checking payment logs
-      const { rows: charged } = await pool.query(`
-        SELECT id FROM payments
-        WHERE tenant_id = $1
-          AND method = 'balance_charge'
-          AND EXTRACT(MONTH FROM payment_date) = $2
-          AND EXTRACT(YEAR  FROM payment_date) = $3
-        LIMIT 1
-      `, [tenant.id, month, year]);
+    const tenants = await pool.query(
+      `SELECT t.id, t.full_name, t.phone, t.move_in_date,
+              h.rent_amount, h.unit_number, p.name AS plot_name
+       FROM tenants t
+       LEFT JOIN houses h ON t.house_id = h.id
+       LEFT JOIN plots  p ON h.plot_id  = p.id
+       WHERE t.is_active = true AND t.move_in_date IS NOT NULL AND t.phone IS NOT NULL`
+    );
 
-      if (charged.length > 0) continue; // Already charged this month
+    const payments = await pool.query(
+      `SELECT tenant_id,
+              COALESCE(for_year,  EXTRACT(YEAR  FROM payment_date)::int) AS year,
+              COALESCE(for_month, EXTRACT(MONTH FROM payment_date)::int) AS month,
+              COALESCE(SUM(amount_allocated), SUM(amount)) AS total_paid
+       FROM payments WHERE status != 'pending'
+       GROUP BY tenant_id, year, month`
+    );
 
-      // Add rent to balance
-      await pool.query(
-        'UPDATE tenants SET balance = balance + $1 WHERE id = $2',
-        [rentAmount, tenant.id]
-      );
-
-      // Log a balance charge record so we don't charge twice
-      await pool.query(`
-        INSERT INTO payments (tenant_id, house_id, amount, payment_date, method, status, notes)
-        SELECT t.id, t.house_id, h.rent_amount, NOW(), 'balance_charge', 'unmatched',
-               'Auto-charged: rent due ' || $1
-        FROM tenants t
-        JOIN houses h ON t.house_id = h.id
-        WHERE t.id = $2
-      `, [`${year}-${String(month).padStart(2,'0')}`, tenant.id]);
-
-      console.log(`  → Charged KES ${rentAmount} to ${tenant.full_name}`);
-      updated++;
+    const paidMap = {};
+    for (const p of payments.rows) {
+      paidMap[`${p.tenant_id}-${p.year}-${p.month}`] = parseFloat(p.total_paid);
     }
 
-    console.log(`✅ Balance update complete — ${updated} tenant(s) charged.`);
+    let sent = 0;
+    for (const tenant of tenants.rows) {
+      if (!tenant.phone) continue;
+
+      const moveIn = new Date(tenant.move_in_date);
+      let y = moveIn.getDate() === 1 ? moveIn.getFullYear() : (moveIn.getMonth() === 11 ? moveIn.getFullYear() + 1 : moveIn.getFullYear());
+      let m = moveIn.getDate() === 1 ? moveIn.getMonth() + 1 : (moveIn.getMonth() === 11 ? 1 : moveIn.getMonth() + 2);
+
+      const unpaidMonths = [];
+      while (y < now.getFullYear() || (y === now.getFullYear() && m <= now.getMonth() + 1)) {
+        const paid    = paidMap[`${tenant.id}-${y}-${m}`] || 0;
+        const balance = parseFloat(tenant.rent_amount) - paid;
+        if (balance > 0) unpaidMonths.push({ label: new Date(y, m - 1, 1).toLocaleString('en-KE', { month: 'long', year: 'numeric' }), balance });
+        m++; if (m > 12) { m = 1; y++; }
+      }
+
+      if (unpaidMonths.length === 0) continue;
+
+      const totalOwed  = unpaidMonths.reduce((s, m) => s + m.balance, 0);
+      const monthsList = unpaidMonths.map(m => `${m.label} (KES ${m.balance.toLocaleString()})`).join(', ');
+      const message    = `Dear ${tenant.full_name}, rent of KES ${totalOwed.toLocaleString()} is due for: ${monthsList}. Unit ${tenant.unit_number}, ${tenant.plot_name}. Pay via M-Pesa or visit your tenant portal. - RentFlow`;
+
+      try {
+        await sendSMS(tenant.phone, message);
+        sent++;
+        await new Promise(r => setTimeout(r, 200));
+      } catch (e) {
+        console.error(`Reminder failed for ${tenant.full_name}:`, e.message);
+      }
+    }
+    console.log(`✅ Sent ${sent} rent reminders.`);
   } catch (err) {
-    console.error('❌ Balance update error:', err.message);
+    console.error('SMS reminder cron error:', err.message);
   }
-}
+});
 
-// Run every day at midnight
-cron.schedule('0 0 * * *', updateBalances);
+console.log('✅ Cron jobs scheduled: balance updater + SMS reminders');
 
-// Also run once immediately on server start (for testing)
-// Comment this out in production if you don't want it running on every restart
-// updateBalances();
+// ── Monthly emailed Unpaid Rent report — runs 9AM on the 1st of every month ───
+// Reuses the same "months since move-in vs paid" logic as the SMS reminder job
+// above and tenants.js's /unpaid-months route, but emails a summary table to
+// every admin instead of texting tenants.
+cron.schedule('0 9 1 * *', async () => {
+  console.log('Building and emailing monthly Unpaid Rent report...');
+  try {
+    const nodemailer = require('nodemailer');
+    function getMailer() {
+      return nodemailer.createTransport({
+        service: 'gmail',
+        auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS },
+      });
+    }
 
-console.log('⏰ Balance updater scheduled (runs daily at midnight)');
+    const tenants = await pool.query(
+      `SELECT t.id, t.full_name, t.phone, t.move_in_date,
+              h.rent_amount, h.unit_number, p.name AS plot_name
+       FROM tenants t
+       LEFT JOIN houses h ON t.house_id = h.id
+       LEFT JOIN plots  p ON h.plot_id  = p.id
+       WHERE t.is_active = true AND t.move_in_date IS NOT NULL`
+    );
+    const payments = await pool.query(
+      `SELECT tenant_id,
+              COALESCE(for_year,  EXTRACT(YEAR  FROM payment_date)::int) AS year,
+              COALESCE(for_month, EXTRACT(MONTH FROM payment_date)::int) AS month,
+              COALESCE(SUM(amount_allocated), SUM(amount)) AS total_paid
+       FROM payments WHERE status != 'pending'
+       GROUP BY tenant_id, year, month`
+    );
+    const paidMap = {};
+    for (const p of payments.rows) paidMap[`${p.tenant_id}-${p.year}-${p.month}`] = parseFloat(p.total_paid);
 
-module.exports = { updateBalances };
+    const now = new Date();
+    const rows = [];
+    for (const tenant of tenants.rows) {
+      const moveIn = new Date(tenant.move_in_date);
+      let y = moveIn.getDate() === 1 ? moveIn.getFullYear() : (moveIn.getMonth() === 11 ? moveIn.getFullYear() + 1 : moveIn.getFullYear());
+      let m = moveIn.getDate() === 1 ? moveIn.getMonth() + 1 : (moveIn.getMonth() === 11 ? 1 : moveIn.getMonth() + 2);
+      let owed = 0;
+      while (y < now.getFullYear() || (y === now.getFullYear() && m <= now.getMonth() + 1)) {
+        owed += Math.max(0, parseFloat(tenant.rent_amount) - (paidMap[`${tenant.id}-${y}-${m}`] || 0));
+        m++; if (m > 12) { m = 1; y++; }
+      }
+      if (owed > 0) rows.push({ ...tenant, owed });
+    }
+
+    if (rows.length === 0) {
+      console.log('No unpaid rent this run — skipping email.');
+      return;
+    }
+
+    const total = rows.reduce((s, r) => s + r.owed, 0);
+    const tableRows = rows
+      .sort((a, b) => b.owed - a.owed)
+      .map(r => `<tr><td>${r.full_name}</td><td>Unit ${r.unit_number || '—'}, ${r.plot_name || '—'}</td><td style="text-align:right">KES ${r.owed.toLocaleString()}</td></tr>`)
+      .join('');
+
+    const html = `
+      <div style="font-family:sans-serif;max-width:640px;margin:0 auto;">
+        <h2 style="color:#4f46e5;">Monthly Unpaid Rent Report — ${now.toLocaleString('en-KE', { month: 'long', year: 'numeric' })}</h2>
+        <p>${rows.length} tenant(s) owing a total of <strong>KES ${total.toLocaleString()}</strong>.</p>
+        <table style="width:100%;border-collapse:collapse;font-size:14px;">
+          <thead><tr style="background:#f3f4f6;text-align:left;">
+            <th style="padding:8px;">Tenant</th><th style="padding:8px;">Unit</th><th style="padding:8px;text-align:right;">Owed (KES)</th>
+          </tr></thead>
+          <tbody>${tableRows}</tbody>
+        </table>
+        <p style="color:#9ca3af;font-size:12px;margin-top:20px;">RentFlow · Automated monthly report</p>
+      </div>`;
+
+    const admins = await pool.query(`SELECT id, email FROM users WHERE role = 'admin' AND email IS NOT NULL`);
+    if (admins.rows.length === 0) { console.log('No admin email on file — skipping.'); return; }
+
+    const mailer = getMailer();
+    await mailer.sendMail({
+      from:    `"RentFlow Reports" <${process.env.EMAIL_USER}>`,
+      to:      admins.rows.map(a => a.email).join(','),
+      subject: `RentFlow — Unpaid Rent Report (${now.toLocaleString('en-KE', { month: 'long', year: 'numeric' })})`,
+      html,
+    });
+    console.log(`✅ Emailed Unpaid Rent report to ${admins.rows.length} admin(s).`);
+
+    // Also drop an in-app alert in Notices, so admins see it without checking
+    // email. Uses target_type='all' since notices has no admin-only target
+    // type in its current schema — every admin already sees every notice
+    // regardless of target_type (see notices.js's GET / query), so this is
+    // functionally admin-visible; it will also be visible to landlords and
+    // caretakers though, unlike the email. If you'd rather it be admin-only,
+    // that needs a small notices.js change to add and filter on a new
+    // target_type value (e.g. 'admin').
+    try {
+      await pool.query(
+        `INSERT INTO notices (author_id, title, body, priority, target_type)
+         VALUES ($1, $2, $3, 'info', 'all')`,
+        [
+          admins.rows[0].id,
+          `Monthly Unpaid Rent Report — ${now.toLocaleString('en-KE', { month: 'long', year: 'numeric' })}`,
+          `${rows.length} tenant(s) owing a total of KES ${total.toLocaleString()}. Full report emailed to admin inbox.`,
+        ]
+      );
+    } catch (e) {
+      console.error('Notice creation failed (non-fatal):', e.message);
+    }
+  } catch (err) {
+    console.error('Monthly report email error:', err.message);
+  }
+});

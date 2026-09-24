@@ -6,9 +6,9 @@ const app = express();
 
 // Middleware — process incoming requests
 app.use(cors({
-  origin: ['http://localhost:3000', 'http:// 192.168.0.103:3000'],  
+  origin: (origin, callback) => callback(null, true), // Allow all origins (local network)
   credentials: true,
-}));                      // Allow cross-origin requests from React
+}));
 app.use(express.json());                 // Parse JSON request bodies
 app.use('/uploads', express.static('uploads')); // Serve uploaded files
 
@@ -21,8 +21,13 @@ app.use('/api/payments',    require('./routes/payments'));
 app.use('/api/expenses',    require('./routes/expenses'));
 app.use('/api/maintenance', require('./routes/maintenance'));
 app.use('/api/mpesa',       require('./routes/mpesa'));
-app.use('/api/sms',         require('./routes/sms'));
+app.use('/api/sms',         require('./routes/sms').router);
 app.use('/api/listings',    require('./routes/listings')); // public portal
+app.use('/api/tenant-portal', require('./routes/tenantportal'));
+app.use('/api/notices', require('./routes/notices'));
+app.use('/api/deposits', require('./routes/deposits'));
+app.use('/api/audit-log', require('./routes/auditlog'));
+app.use('/api/statements', require('./routes/statements'));
 
 // Health check — visit http://localhost:5000/api/health
 app.get('/api/health', (req, res) => {

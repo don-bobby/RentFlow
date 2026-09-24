@@ -62,9 +62,12 @@ router.patch('/:id', auth, async (req, res) => {
   const validStatuses = ['pending', 'in_progress', 'completed'];
   if (!validStatuses.includes(status)) return res.status(400).json({ error: `Status must be one of: ${validStatuses.join(', ')}` });
   try {
-    const resolved_at = status === 'completed' ? 'NOW()' : 'NULL';
     const result = await pool.query(
-      `UPDATE maintenance_requests SET status=$1, resolved_at=${resolved_at} WHERE id=$2 RETURNING *`,
+      `UPDATE maintenance_requests
+       SET status = $1,
+           resolved_at = CASE WHEN $1 = 'completed' THEN NOW() ELSE NULL END
+       WHERE id = $2
+       RETURNING *`,
       [status, req.params.id]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'Request not found' });
