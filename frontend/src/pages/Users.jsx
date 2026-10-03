@@ -1,11 +1,18 @@
 import { useState, useEffect } from 'react';
 import API from '../services/api';
-
-function getUser() {
-  try { return JSON.parse(atob(localStorage.getItem('token').split('.')[1])); } catch { return null; }
-}
+import { useAuth } from '../context/AuthContext';
 
 const labelStyle = { display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--muted)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.4px' };
+
+const AVATAR_COLORS = ['#7c3aed', '#2563eb', '#16a34a', '#d97706', '#dc2626', '#0891b2', '#db2777'];
+function initialsAvatar(name) {
+  const clean = (name || '?').trim();
+  const parts = clean.split(/\s+/);
+  const initials = ((parts[0]?.[0] || '') + (parts[1]?.[0] || '')).toUpperCase() || '?';
+  let hash = 0;
+  for (let i = 0; i < clean.length; i++) hash = (hash * 31 + clean.charCodeAt(i)) % AVATAR_COLORS.length;
+  return { initials, color: AVATAR_COLORS[hash] };
+}
 const inputStyle = { width: '100%', padding: '10px 12px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface2)', fontSize: 14, color: 'var(--text)', outline: 'none', boxSizing: 'border-box' };
 
 export default function Users() {
@@ -22,10 +29,14 @@ export default function Users() {
   const [msg,          setMsg]          = useState('');
   const [search,       setSearch]       = useState('');
   const [roleFilter,   setRoleFilter]   = useState('all');
+  const [pendingOnly,  setPendingOnly]  = useState(false); // driven by ?filter=pending
+  const [approveTarget, setApproveTarget] = useState(null); // landlord being approved in the modal
+  const [selectedAgent, setSelectedAgent] = useState('');   // agent_id chosen in the approve modal
   const [form,         setForm]         = useState({ name: '', email: '', password: '', role: 'caretaker', phone: '', plot_id: '' });
 
-  const me = getUser();
-  const isAdmin = me?.role === 'admin';
+  const { user: me, can } = useAuth();
+  const isAdmin = me?.role === 'admin' || me?.role === 'super_admin';
+  const isAgent = me?.role === 'agent';
 
   async function load() {
     setLoading(true);
@@ -37,7 +48,21 @@ export default function Users() {
     finally { setLoading(false); }
   }
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); }, [me?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Support /users?filter=pending (e.g. from the dashboard's pending-landlords alert)
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('filter') === 'pending') {
+      setRoleFilter('landlord');
+      setPendingOnly(true);
+    }
+  }, []);
+
+  function clearPendingFilter() {
+    setPendingOnly(false);
+    window.history.replaceState({}, '', window.location.pathname);
+  }
 
   async function handleCreate() {
     setSaving(true); setError('');
@@ -51,11 +76,60 @@ export default function Users() {
     finally { setSaving(false); }
   }
 
-  async function handleApprove(user, approved) {
+  function openApprove(user) {
+    setApproveTarget(user);
+    setSelectedAgent('');
+    setError('');
+    setModal('approve');
+  }
+
+  async function handleApprove() {
+    if (!approveTarget) return;
+    setSaving(true); setError('');
     try {
-      await API.patch(`/auth/users/${user.id}/approve`, { is_approved: approved });
-      setUsers(us => us.map(u => u.id === user.id ? { ...u, is_approved: approved } : u));
-    } catch (e) { alert(e.response?.data?.error || 'Failed to update.'); }
+      const agentId = selectedAgent ? parseInt(selectedAgent) : null;
+      await API.patch(`/auth/users/${approveTarget.id}/approve`, { agent_id: agentId });
+      setUsers(us => us.map(u => u.id === approveTarget.id ? { ...u, is_approved: true, agent_id: agentId } : u));
+      setModal(null);
+      setApproveTarget(null);
+      setMsg('Landlord approved.');
+      setTimeout(() => setMsg(''), 3000);
+    } catch (e) { setError(e.response?.data?.error || 'Failed to approve.'); }
+    finally { setSaving(false); }
+  }
+
+  async function handleReject(user) {
+    const extra = user.role === 'agent'
+      ? ' Their landlords will be switched to self-managed and will NOT be reassigned automatically if you reactivate this agent.'
+      : '';
+    if (!window.confirm(`Suspend ${user.name}? They will lose access until re-approved.${extra}`)) return;
+    try {
+      await API.patch(`/auth/users/${user.id}/reject`);
+      setUsers(us => us.map(u => {
+        if (u.id === user.id) return { ...u, is_approved: false };
+        if (user.role === 'agent' && u.agent_id === user.id) return { ...u, agent_id: null };
+        return u;
+      }));
+    } catch (e) { alert(e.response?.data?.error || 'Failed to suspend user.'); }
+  }
+
+  // Reactivate a suspended agent (landlords use the Approve modal instead).
+  async function handleReactivate(user) {
+    if (!window.confirm(`Reactivate ${user.name}? They will be able to log in again.`)) return;
+    try {
+      await API.patch(`/auth/users/${user.id}/approve`, { agent_id: null });
+      setUsers(us => us.map(u => u.id === user.id ? { ...u, is_approved: true } : u));
+    } catch (e) { alert(e.response?.data?.error || 'Failed to reactivate user.'); }
+  }
+
+  // Reassign (or clear) an already-approved landlord's agent — separate from
+  // the approve dialog, which only sets this at approval time.
+  async function handleAgentChange(user, newAgentId) {
+    try {
+      const agentId = newAgentId ? parseInt(newAgentId) : null;
+      await API.patch(`/auth/users/${user.id}/agent`, { agent_id: agentId });
+      setUsers(us => us.map(u => u.id === user.id ? { ...u, agent_id: agentId } : u));
+    } catch (e) { alert(e.response?.data?.error || 'Failed to update agent.'); }
   }
 
   async function handleResetPassword(user) {
@@ -108,27 +182,39 @@ export default function Users() {
     } catch (e) { setError(e.response?.data?.error || 'Failed to remove plot.'); }
   }
 
+  const agents = users.filter(u => u.role === 'agent');
+  const roleCounts = users.reduce((m, u) => { m[u.role] = (m[u.role] || 0) + 1; return m; }, {});
+  const pendingLandlordCount = users.filter(u => u.role === 'landlord' && !u.is_approved).length;
+
   const filtered = users.filter(u => {
-    const matchRole   = roleFilter === 'all' || u.role === roleFilter;
-    const matchSearch = search === '' || u.name?.toLowerCase().includes(search.toLowerCase()) || u.email?.toLowerCase().includes(search.toLowerCase());
+    const matchRole    = roleFilter === 'all' || u.role === roleFilter;
+    const matchSearch  = search === '' || u.name?.toLowerCase().includes(search.toLowerCase()) || u.email?.toLowerCase().includes(search.toLowerCase());
+    const matchPending = !pendingOnly || (u.role === 'landlord' && !u.is_approved);
     // Landlord should not see themselves in the list
     const notSelf = isAdmin || u.id !== me?.id;
-    return matchRole && matchSearch && notSelf;
+    return matchRole && matchSearch && matchPending && notSelf;
   });
 
   const roleBadge = (role, approved) => {
     const colors = {
-      admin:     { bg: 'var(--primary-light, #ede9fe)', color: 'var(--primary, #7c3aed)' },
-      landlord:  { bg: 'var(--blue-light, #dbeafe)',    color: 'var(--blue, #2563eb)'    },
-      caretaker: { bg: 'var(--green-light, #dcfce7)',   color: 'var(--green, #16a34a)'   },
+      admin:       { bg: 'var(--primary-light, #ede9fe)', color: 'var(--primary, #7c3aed)' },
+      super_admin: { bg: 'var(--primary-light, #ede9fe)', color: 'var(--primary, #7c3aed)' },
+      agent:       { bg: 'var(--pink-light, #fce7f3)',    color: '#db2777' },
+      landlord:    { bg: 'var(--blue-light, #dbeafe)',    color: 'var(--blue, #2563eb)'    },
+      caretaker:   { bg: 'var(--green-light, #dcfce7)',   color: 'var(--green, #16a34a)'   },
     };
     const c = colors[role] || { bg: 'var(--surface2)', color: 'var(--muted)' };
     return (
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
         <span style={{ background: c.bg, color: c.color, padding: '3px 10px', borderRadius: 99, fontSize: 12, fontWeight: 600 }}>{role}</span>
         {role === 'landlord' && (
-          <span style={{ background: approved ? 'var(--green-light, #dcfce7)' : 'var(--amber-light, #fef3c7)', color: approved ? 'var(--green, #16a34a)' : 'var(--amber, #d97706)', padding: '3px 10px', borderRadius: 99, fontSize: 12, fontWeight: 600 }}>
-            {approved ? 'approved' : 'pending'}
+          <span className={approved ? '' : 'us-pending-badge'} style={{ background: approved ? 'var(--green-light, #dcfce7)' : 'var(--amber-light, #fef3c7)', color: approved ? 'var(--green, #16a34a)' : 'var(--amber, #d97706)', padding: '3px 10px', borderRadius: 99, fontSize: 12, fontWeight: 600 }}>
+            {approved ? '✓ approved' : '⏳ pending'}
+          </span>
+        )}
+        {role === 'agent' && (
+          <span className={approved ? '' : 'us-pending-badge'} style={{ background: approved ? 'var(--green-light, #dcfce7)' : 'var(--red-light, #fee2e2)', color: approved ? 'var(--green, #16a34a)' : 'var(--red, #dc2626)', padding: '3px 10px', borderRadius: 99, fontSize: 12, fontWeight: 600 }}>
+            {approved ? '✓ active' : '⏸ suspended'}
           </span>
         )}
       </div>
@@ -137,25 +223,61 @@ export default function Users() {
 
   return (
     <div>
+      <style>{`
+        .us-row { transition: background 0.12s ease; }
+        .us-row:hover { background: var(--primary-light, #ede9fe) !important; }
+        .us-skel { background: var(--surface2); border-radius: 6px; animation: us-pulse 1.3s ease-in-out infinite; }
+        @keyframes us-pulse { 0%, 100% { opacity: .5; } 50% { opacity: 1; } }
+        @keyframes us-glow { 0%, 100% { box-shadow: 0 0 0 0 rgba(217,119,6,0.4); } 50% { box-shadow: 0 0 0 4px rgba(217,119,6,0); } }
+        .us-pending-badge { animation: us-glow 1.8s ease-in-out infinite; }
+        @media (prefers-reduced-motion: reduce) { .us-row, .us-skel, .us-pending-badge { transition: none; animation: none; } }
+      `}</style>
       {/* Header */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
         <div>
-          <h1 style={{ fontFamily: 'Space Grotesk', fontSize: 26, fontWeight: 700, marginBottom: 4 }}>Users</h1>
-          <p style={{ color: 'var(--muted)', fontSize: 14 }}>{users.length} total users</p>
+          <h1 style={{ fontFamily: 'Space Grotesk', fontSize: 26, fontWeight: 700, marginBottom: 4, color: 'var(--text)' }}>Users</h1>
+          <p style={{ color: 'var(--muted)', fontSize: 14 }}>
+            {users.length} total user{users.length !== 1 ? 's' : ''}
+            {pendingLandlordCount > 0 && <> · <span style={{ color: 'var(--amber, #d97706)', fontWeight: 700 }}>{pendingLandlordCount} pending approval</span></>}
+          </p>
         </div>
-        <button onClick={() => { setForm({ name: '', email: '', password: '', role: 'caretaker', phone: '', plot_id: '' }); setError(''); setModal('create'); }}
-          style={{ padding: '10px 18px', borderRadius: 10, border: 'none', background: 'var(--primary, #7c3aed)', color: '#fff', fontWeight: 600, fontSize: 14, cursor: 'pointer' }}>
-          + Add User
-        </button>
+        {(isAdmin || isAgent || can('users.create_caretaker')) && (
+          <button onClick={() => { setForm({ name: '', email: '', password: '', role: 'caretaker', phone: '', plot_id: '' }); setError(''); setModal('create'); }}
+            style={{ padding: '10px 18px', borderRadius: 10, border: 'none', background: 'var(--primary, #7c3aed)', color: '#fff', fontWeight: 600, fontSize: 14, cursor: 'pointer' }}>
+            + Add User
+          </button>
+        )}
       </div>
+
+      {!loading && (
+        <div style={{ display: 'flex', gap: 10, marginBottom: 20, flexWrap: 'wrap' }}>
+          {Object.entries(roleCounts).map(([role, count]) => (
+            <div key={role} style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, padding: '8px 14px', fontSize: 13 }}>
+              <span style={{ fontWeight: 700, color: 'var(--text)' }}>{count}</span>
+              <span style={{ color: 'var(--muted)', textTransform: 'capitalize', marginLeft: 5 }}>{role}{count !== 1 ? 's' : ''}</span>
+            </div>
+          ))}
+        </div>
+      )}
 
       {msg && <div style={{ background: 'var(--green-light, #dcfce7)', color: 'var(--green, #16a34a)', padding: '10px 16px', borderRadius: 10, marginBottom: 16, fontWeight: 600, fontSize: 13 }}>{msg}</div>}
 
       {/* Filters */}
       <div style={{ display: 'flex', gap: 8, marginBottom: 20, flexWrap: 'wrap' }}>
-        {['all', 'admin', 'landlord', 'caretaker'].map(r => (
-          <button key={r} onClick={() => setRoleFilter(r)} style={{ padding: '7px 16px', borderRadius: 99, border: '1px solid var(--border)', background: roleFilter === r ? 'var(--primary, #7c3aed)' : 'var(--surface)', color: roleFilter === r ? '#fff' : 'var(--muted)', fontWeight: 600, fontSize: 13, textTransform: 'capitalize', cursor: 'pointer' }}>{r}</button>
-        ))}
+        {(isAdmin ? ['all', 'admin', 'agent', 'landlord', 'caretaker']
+          : isAgent ? ['all', 'landlord', 'caretaker']
+          : ['all', 'caretaker'] // landlord (either profile) — filtering by "landlord" is pointless, they only ever see themselves
+        ).map(r => {
+          const count = r === 'all' ? users.length : (roleCounts[r] || 0);
+          return (
+            <button key={r} onClick={() => setRoleFilter(r)} style={{ padding: '7px 16px', borderRadius: 99, border: '1px solid var(--border)', background: roleFilter === r ? 'var(--primary, #7c3aed)' : 'var(--surface)', color: roleFilter === r ? '#fff' : 'var(--muted)', fontWeight: 600, fontSize: 13, textTransform: 'capitalize', cursor: 'pointer' }}>{r} ({count})</button>
+          );
+        })}
+        {pendingOnly && (
+          <button onClick={clearPendingFilter} style={{ padding: '7px 16px', borderRadius: 99, border: '1px solid var(--amber, #d97706)', background: 'var(--amber-light, #fef3c7)', color: 'var(--amber, #d97706)', fontWeight: 600, fontSize: 13, cursor: 'pointer' }}>
+            Pending landlords only ×
+          </button>
+        )}
         <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search name or email..."
           style={{ marginLeft: 'auto', padding: '8px 14px', borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface2)', fontSize: 13, color: 'var(--text)', outline: 'none', width: 220 }} />
       </div>
@@ -163,9 +285,19 @@ export default function Users() {
       {/* Table */}
       <div style={{ background: 'var(--surface)', borderRadius: 14, border: '1px solid var(--border)', boxShadow: 'var(--shadow)', overflow: 'hidden' }}>
         {loading ? (
-          <div style={{ padding: 60, textAlign: 'center', color: 'var(--muted)' }}>Loading...</div>
+          <div style={{ padding: 20 }}>
+            {[0, 1, 2, 3, 4].map(i => (
+              <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '12px 0' }}>
+                <div className="us-skel" style={{ width: 32, height: 32, borderRadius: '50%', flexShrink: 0 }} />
+                <div className="us-skel" style={{ height: 14, width: `${35 + (i * 9) % 35}%` }} />
+              </div>
+            ))}
+          </div>
         ) : filtered.length === 0 ? (
-          <div style={{ padding: 60, textAlign: 'center', color: 'var(--muted)' }}>No users found.</div>
+          <div style={{ padding: 60, textAlign: 'center', color: 'var(--muted)' }}>
+            <div style={{ fontSize: 32, marginBottom: 10 }}>👤</div>
+            No users found.
+          </div>
         ) : (
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
@@ -177,8 +309,20 @@ export default function Users() {
             </thead>
             <tbody>
               {filtered.map((u, i) => (
-                <tr key={u.id} style={{ borderTop: '1px solid var(--border)', background: i % 2 === 0 ? 'var(--surface)' : 'var(--surface2)' }}>
-                  <td style={{ padding: '12px 16px', fontWeight: 600 }}>{u.name}</td>
+                <tr key={u.id} className="us-row" style={{ borderTop: '1px solid var(--border)', background: i % 2 === 0 ? 'var(--surface)' : 'var(--surface2)' }}>
+                  <td style={{ padding: '12px 16px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                      {(() => {
+                        const { initials, color } = initialsAvatar(u.name);
+                        return (
+                          <div style={{ width: 30, height: 30, borderRadius: '50%', flexShrink: 0, background: `${color}26`, color, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 700 }}>
+                            {initials}
+                          </div>
+                        );
+                      })()}
+                      <span style={{ fontWeight: 600, color: 'var(--text)' }}>{u.name}</span>
+                    </div>
+                  </td>
                   <td style={{ padding: '12px 16px', color: 'var(--muted)', fontSize: 13 }}>{u.email}</td>
                   <td style={{ padding: '12px 16px', color: 'var(--muted)', fontSize: 13 }}>{u.phone || '—'}</td>
                   <td style={{ padding: '12px 16px' }}>{roleBadge(u.role, u.is_approved)}</td>
@@ -203,7 +347,7 @@ export default function Users() {
                         })() : (
                           <span style={{ color: 'var(--muted)', fontSize: 12 }}>No plot assigned</span>
                         )}
-                        {isAdmin && (
+                        {(isAdmin || can('users.assign_caretaker')) && (
                           <button onClick={() => openPlots(u)} style={{ padding: '2px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--surface2)', fontSize: 11, fontWeight: 600, color: 'var(--primary, #7c3aed)', cursor: 'pointer' }}>
                             ⚙️ Manage
                           </button>
@@ -240,10 +384,27 @@ export default function Users() {
                   <td style={{ padding: '12px 16px' }}>
                     <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                       {isAdmin && u.role === 'landlord' && !u.is_approved && (
-                        <button onClick={() => handleApprove(u, true)} style={{ padding: '4px 10px', borderRadius: 6, border: 'none', background: 'var(--green, #16a34a)', color: '#fff', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>Approve</button>
+                        <button onClick={() => openApprove(u)} style={{ padding: '4px 10px', borderRadius: 6, border: 'none', background: 'var(--green, #16a34a)', color: '#fff', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>Approve</button>
                       )}
                       {isAdmin && u.role === 'landlord' && u.is_approved && (
-                        <button onClick={() => handleApprove(u, false)} style={{ padding: '4px 10px', borderRadius: 6, border: 'none', background: 'var(--amber, #d97706)', color: '#fff', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>Suspend</button>
+                        <>
+                          <button onClick={() => handleReject(u)} style={{ padding: '4px 10px', borderRadius: 6, border: 'none', background: 'var(--amber, #d97706)', color: '#fff', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>Suspend</button>
+                          <select
+                            value={u.agent_id || ''}
+                            onChange={e => handleAgentChange(u, e.target.value)}
+                            title="Assign or change this landlord's agent"
+                            style={{ padding: '4px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--surface2)', fontSize: 12, color: 'var(--text)', cursor: 'pointer' }}
+                          >
+                            <option value="">— Self-managed —</option>
+                            {agents.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+                          </select>
+                        </>
+                      )}
+                      {isAdmin && u.role === 'agent' && u.is_approved && (
+                        <button onClick={() => handleReject(u)} style={{ padding: '4px 10px', borderRadius: 6, border: 'none', background: 'var(--amber, #d97706)', color: '#fff', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>Suspend</button>
+                      )}
+                      {isAdmin && u.role === 'agent' && !u.is_approved && (
+                        <button onClick={() => handleReactivate(u)} style={{ padding: '4px 10px', borderRadius: 6, border: 'none', background: 'var(--green, #16a34a)', color: '#fff', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>Reactivate</button>
                       )}
                       {isAdmin && (
                         <button onClick={() => handleResetPassword(u)} style={{ padding: '4px 10px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--surface)', fontSize: 12, fontWeight: 600, color: 'var(--muted)', cursor: 'pointer' }}>Reset PW</button>
@@ -272,7 +433,8 @@ export default function Users() {
                 <label style={labelStyle}>Role</label>
                 <select value={form.role} onChange={e => setForm(f => ({ ...f, role: e.target.value }))} style={inputStyle}>
                   {isAdmin && <option value="admin">Admin</option>}
-                  {isAdmin && <option value="landlord">Landlord</option>}
+                  {isAdmin && <option value="agent">Agent</option>}
+                  {(isAdmin || isAgent) && <option value="landlord">Landlord</option>}
                   <option value="caretaker">Caretaker</option>
                 </select>
               </div>
@@ -290,6 +452,35 @@ export default function Users() {
               <button onClick={() => setModal(null)} style={{ padding: '10px 20px', borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface)', fontWeight: 600, fontSize: 14, cursor: 'pointer' }}>Cancel</button>
               <button onClick={handleCreate} disabled={saving} style={{ padding: '10px 20px', borderRadius: 10, border: 'none', background: 'var(--primary, #7c3aed)', color: '#fff', fontWeight: 600, fontSize: 14, cursor: 'pointer' }}>
                 {saving ? 'Creating...' : 'Create User'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Approve Landlord Modal */}
+      {modal === 'approve' && approveTarget && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, padding: 20 }}>
+          <div style={{ background: 'var(--surface)', borderRadius: 16, padding: 28, width: '100%', maxWidth: 440, boxShadow: 'var(--shadow-lg)' }}>
+            <h2 style={{ fontFamily: 'Space Grotesk', fontWeight: 700, fontSize: 18, marginBottom: 8 }}>Approve Landlord</h2>
+            <p style={{ color: 'var(--muted)', fontSize: 13, marginBottom: 20 }}>
+              Approving <strong>{approveTarget.name}</strong>. Optionally assign an agent to manage them — leave this blank to keep them self-managed.
+            </p>
+            {error && <div style={{ background: 'var(--red-light, #fee2e2)', color: 'var(--red, #dc2626)', padding: '9px 14px', borderRadius: 8, marginBottom: 14, fontSize: 13 }}>{error}</div>}
+            <div>
+              <label style={labelStyle}>Assign Agent (optional)</label>
+              <select value={selectedAgent} onChange={e => setSelectedAgent(e.target.value)} style={inputStyle}>
+                <option value="">— Self-managed (no agent) —</option>
+                {agents.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+              </select>
+              {agents.length === 0 && (
+                <div style={{ color: 'var(--muted)', fontSize: 12, marginTop: 6 }}>No agents exist yet — this landlord will be approved as self-managed.</div>
+              )}
+            </div>
+            <div style={{ display: 'flex', gap: 10, marginTop: 24, justifyContent: 'flex-end' }}>
+              <button onClick={() => { setModal(null); setApproveTarget(null); }} style={{ padding: '10px 20px', borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface)', fontWeight: 600, fontSize: 14, cursor: 'pointer' }}>Cancel</button>
+              <button onClick={handleApprove} disabled={saving} style={{ padding: '10px 20px', borderRadius: 10, border: 'none', background: 'var(--green, #16a34a)', color: '#fff', fontWeight: 600, fontSize: 14, cursor: 'pointer' }}>
+                {saving ? 'Approving...' : 'Approve'}
               </button>
             </div>
           </div>

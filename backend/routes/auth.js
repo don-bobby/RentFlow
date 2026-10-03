@@ -6,21 +6,53 @@ const { logAudit } = require('../utils/audit');
 
 // ── Middleware ────────────────────────────────────────────────────────────────
 
-function authMiddleware(req, res, next) {
-  const token = req.headers.authorization?.split(' ')[1];
-  if (!token) return res.status(401).json({ error: 'No token provided' });
-  try {
-    req.user = jwt.verify(token, process.env.JWT_SECRET);
-    next();
-  } catch {
-    res.status(401).json({ error: 'Invalid token' });
-  }
-}
+// Live auth: re-reads the user from the database on every request, so
+// suspensions and permission changes apply immediately (see middleware/auth.js).
+const { authMiddleware } = require('../middleware/auth');
 
 function requireAdmin(req, res, next) {
-  if (req.user.role !== 'admin') return res.status(403).json({ error: 'Admin access required' });
+  if (!['admin', 'super_admin'].includes(req.user.role)) return res.status(403).json({ error: 'Admin access required' });
   next();
 }
+
+// ── GET /api/auth/me — who am I, and what can I do right now? ─────────────────
+// The frontend calls this on app load (and after any permission-affecting
+// action) so the UI always reflects the LIVE database state, not the
+// token's snapshot from up to 7 days ago.
+const { authMiddleware: liveAuthMiddleware } = require('../middleware/auth');
+const { getPermissions, requirePermission } = require('../middleware/permissions');
+const { getVisiblePlotIds } = require('../middleware/scope');
+
+router.get('/me', liveAuthMiddleware, async (req, res) => {
+  try {
+    const { profile, permissions } = await getPermissions(req.user);
+
+    // Landlords previously had no way to see WHICH agent manages them, only
+    // the raw agent_id was ever exposed (or nothing at all, from the UI's
+    // point of view). Resolve it to a name here.
+    let agent_name = null;
+    if (req.user.agent_id) {
+      const a = await pool.query('SELECT name FROM users WHERE id = $1', [req.user.agent_id]);
+      agent_name = a.rows[0]?.name || null;
+    }
+
+    res.json({
+      success: true,
+      data: {
+        id: req.user.id,
+        name: req.user.name,
+        email: req.user.email,
+        role: req.user.role,
+        agent_id: req.user.agent_id,
+        agent_name,
+        profile,
+        permissions,
+      },
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
 // ── POST /api/auth/login ──────────────────────────────────────────────────────
 router.post('/login', async (req, res) => {
@@ -37,6 +69,11 @@ router.post('/login', async (req, res) => {
     // Block unapproved landlords
     if (user.role === 'landlord' && !user.is_approved) {
       return res.status(403).json({ error: 'Your account is pending admin approval.' });
+    }
+
+    // Block suspended agents
+    if (user.role === 'agent' && !user.is_approved) {
+      return res.status(403).json({ error: 'Your account has been suspended. Contact the administrator.' });
     }
 
     const token = jwt.sign(
@@ -91,7 +128,12 @@ router.post('/users', authMiddleware, async (req, res) => {
     if (req.body.role !== 'caretaker') {
       return res.status(403).json({ error: 'Landlords can only create caretaker accounts.' });
     }
-  } else if (requesterRole !== 'admin') {
+  } else if (requesterRole === 'agent') {
+    // Agents can create landlords (auto-assigned to themselves) and caretakers.
+    if (!['landlord', 'caretaker'].includes(req.body.role)) {
+      return res.status(403).json({ error: 'Agents can only create landlord or caretaker accounts.' });
+    }
+  } else if (requesterRole !== 'admin' && requesterRole !== 'super_admin') {
     return res.status(403).json({ error: 'Access denied.' });
   }
 
@@ -101,7 +143,7 @@ router.post('/users', authMiddleware, async (req, res) => {
     return res.status(400).json({ error: 'Name, email, password and role are required.' });
   }
 
-  const allowedRoles = ['admin', 'landlord', 'caretaker'];
+  const allowedRoles = ['admin', 'agent', 'landlord', 'caretaker'];
   if (!allowedRoles.includes(role)) {
     return res.status(400).json({ error: `Role must be one of: ${allowedRoles.join(', ')}` });
   }
@@ -119,11 +161,14 @@ router.post('/users', authMiddleware, async (req, res) => {
       if (plotRes.rows.length > 0) assignedPlot = plotRes.rows[0].id;
     }
 
+    // Landlords created by an agent are auto-assigned to that agent.
+    const assignedAgent = (requesterRole === 'agent' && role === 'landlord') ? requesterId : null;
+
     const result = await pool.query(
-      `INSERT INTO users (name, email, password, role, phone, is_approved, plot_id)
-       VALUES ($1, $2, $3, $4, $5, true, $6)
-       RETURNING id, name, email, role, phone, is_approved, plot_id, created_at`,
-      [name, email, hashedPassword, role, phone || null, assignedPlot]
+      `INSERT INTO users (name, email, password, role, phone, is_approved, plot_id, agent_id)
+       VALUES ($1, $2, $3, $4, $5, true, $6, $7)
+       RETURNING id, name, email, role, phone, is_approved, plot_id, agent_id, created_at`,
+      [name, email, hashedPassword, role, phone || null, assignedPlot, assignedAgent]
     );
 
     res.status(201).json({ success: true, user: result.rows[0] });
@@ -136,9 +181,9 @@ router.post('/users', authMiddleware, async (req, res) => {
 router.get('/users', authMiddleware, async (req, res) => {
   try {
     let result;
-    if (req.user.role === 'admin') {
+    if (['admin', 'super_admin'].includes(req.user.role)) {
       result = await pool.query(
-        `SELECT u.id, u.name, u.email, u.role, u.phone, u.is_approved, u.plot_id, u.created_at,
+        `SELECT u.id, u.name, u.email, u.role, u.phone, u.is_approved, u.plot_id, u.agent_id, u.created_at,
                 -- For caretakers: their assigned plot name
                 cp.name AS plot_name,
                 -- For landlords: comma-separated list of their properties
@@ -160,7 +205,7 @@ router.get('/users', authMiddleware, async (req, res) => {
       );
     } else if (req.user.role === 'landlord') {
       result = await pool.query(
-        `SELECT u.id, u.name, u.email, u.role, u.phone, u.is_approved, u.plot_id, u.created_at,
+        `SELECT u.id, u.name, u.email, u.role, u.phone, u.is_approved, u.plot_id, u.agent_id, u.created_at,
                 cp.name AS plot_name,
                 lp.plot_names AS landlord_plots,
                 ctp.plot_names AS caretaker_plots
@@ -184,7 +229,7 @@ router.get('/users', authMiddleware, async (req, res) => {
       // Caretakers can see admins/landlords (to message them) plus themselves,
       // but not the full roster of other caretakers on other properties.
       result = await pool.query(
-        `SELECT u.id, u.name, u.email, u.role, u.phone, u.is_approved, u.plot_id, u.created_at,
+        `SELECT u.id, u.name, u.email, u.role, u.phone, u.is_approved, u.plot_id, u.agent_id, u.created_at,
                 cp.name AS plot_name,
                 lp.plot_names AS landlord_plots,
                 ctp.plot_names AS caretaker_plots
@@ -199,7 +244,41 @@ router.get('/users', authMiddleware, async (req, res) => {
            FROM caretaker_plots cp JOIN plots p ON cp.plot_id = p.id
            GROUP BY cp.caretaker_id
          ) ctp ON ctp.user_id = u.id AND u.role = 'caretaker'
-         WHERE u.role IN ('admin', 'landlord') OR u.id = $1
+         WHERE u.role IN ('admin', 'super_admin', 'landlord') OR u.id = $1
+         ORDER BY u.created_at DESC`,
+        [req.user.id]
+      );
+
+    } else if (req.user.role === 'agent') {
+      // Agents see: themselves, the landlords assigned to them (agent_id = their id),
+      // and caretakers reachable through those landlords' plots — via either the
+      // legacy single u.plot_id assignment or the multi-plot caretaker_plots table.
+      result = await pool.query(
+        `SELECT u.id, u.name, u.email, u.role, u.phone, u.is_approved, u.plot_id, u.agent_id, u.created_at,
+                cp.name AS plot_name,
+                lp.plot_names AS landlord_plots,
+                ctp.plot_names AS caretaker_plots
+         FROM users u
+         LEFT JOIN plots cp ON u.plot_id = cp.id AND u.role = 'caretaker'
+         LEFT JOIN (
+           SELECT user_id, STRING_AGG(name, ', ' ORDER BY name) AS plot_names
+           FROM plots GROUP BY user_id
+         ) lp ON lp.user_id = u.id AND u.role = 'landlord'
+         LEFT JOIN (
+           SELECT cp.caretaker_id AS user_id, STRING_AGG(p.name, ', ' ORDER BY p.name) AS plot_names
+           FROM caretaker_plots cp JOIN plots p ON cp.plot_id = p.id
+           GROUP BY cp.caretaker_id
+         ) ctp ON ctp.user_id = u.id AND u.role = 'caretaker'
+         WHERE u.id = $1
+            OR (u.role = 'landlord' AND u.agent_id = $1)
+            OR (u.role = 'caretaker' AND (
+                  u.plot_id IN (SELECT id FROM plots WHERE user_id IN (SELECT id FROM users WHERE agent_id = $1))
+                  OR u.id IN (
+                    SELECT cp.caretaker_id FROM caretaker_plots cp
+                    JOIN plots p ON p.id = cp.plot_id
+                    WHERE p.user_id IN (SELECT id FROM users WHERE agent_id = $1)
+                  )
+                ))
          ORDER BY u.created_at DESC`,
         [req.user.id]
       );
@@ -212,15 +291,37 @@ router.get('/users', authMiddleware, async (req, res) => {
   }
 });
 
-// ── PATCH /api/auth/users/:id/approve (admin approves a landlord) ─────────────
-router.patch('/users/:id/approve', authMiddleware, requireAdmin, async (req, res) => {
+// ── GET /api/auth/users/pending-landlords-count (for the dashboard alert) ─────
+router.get('/users/pending-landlords-count', authMiddleware, requireAdmin, async (req, res) => {
   try {
     const result = await pool.query(
-      `UPDATE users SET is_approved = true WHERE id = $1 RETURNING id, name, email, role, is_approved`,
-      [req.params.id]
+      `SELECT COUNT(*)::int AS count FROM users WHERE role = 'landlord' AND is_approved = false`
+    );
+    res.json({ success: true, count: result.rows[0].count });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── PATCH /api/auth/users/:id/approve (admin approves a landlord) ─────────────
+// Body may optionally include { agent_id }: if given, the landlord is
+// approved AND assigned to that agent (switching their profile to
+// landlord_with_agent) in one step. Omit or pass null to approve as
+// self-managed (landlord_self).
+router.patch('/users/:id/approve', authMiddleware, requireAdmin, async (req, res) => {
+  const { agent_id } = req.body;
+  try {
+    if (agent_id) {
+      const agentCheck = await pool.query(`SELECT id FROM users WHERE id = $1 AND role = 'agent'`, [agent_id]);
+      if (!agentCheck.rows[0]) return res.status(400).json({ error: 'agent_id must refer to an existing agent.' });
+    }
+    const result = await pool.query(
+      `UPDATE users SET is_approved = true, agent_id = $2 WHERE id = $1
+       RETURNING id, name, email, role, is_approved, agent_id`,
+      [req.params.id, agent_id || null]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'User not found.' });
-    await logAudit({ user: req.user, action: 'user.approve', entityType: 'user', entityId: req.params.id, changes: { is_approved: { from: false, to: true } } });
+    await logAudit({ user: req.user, action: 'user.approve', entityType: 'user', entityId: req.params.id, changes: { is_approved: { from: false, to: true }, agent_id: { to: agent_id || null } } });
     res.json({ success: true, user: result.rows[0] });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -235,7 +336,43 @@ router.patch('/users/:id/reject', authMiddleware, requireAdmin, async (req, res)
       [req.params.id]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'User not found.' });
+
+    // Suspending an agent isn't a delete, so the FK's ON DELETE SET NULL
+    // won't fire on its own — release their landlords explicitly so they
+    // fall back to self-managed rather than being stuck pointing at a
+    // suspended agent.
+    if (result.rows[0].role === 'agent') {
+      await pool.query(`UPDATE users SET agent_id = NULL WHERE agent_id = $1`, [req.params.id]);
+    }
+
     await logAudit({ user: req.user, action: 'user.reject', entityType: 'user', entityId: req.params.id, changes: { is_approved: { from: true, to: false } } });
+    res.json({ success: true, user: result.rows[0] });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── PATCH /api/auth/users/:id/agent (assign, change, or remove a landlord's agent)
+// Body: { agent_id } — a number to assign/change, or null/omitted to remove
+// (landlord falls back to self-managed). Admin only, since this changes
+// what a landlord can see and do system-wide.
+router.patch('/users/:id/agent', authMiddleware, requireAdmin, async (req, res) => {
+  const { agent_id } = req.body;
+  try {
+    const landlordCheck = await pool.query(`SELECT id, role FROM users WHERE id = $1`, [req.params.id]);
+    if (!landlordCheck.rows[0]) return res.status(404).json({ error: 'User not found.' });
+    if (landlordCheck.rows[0].role !== 'landlord') {
+      return res.status(400).json({ error: 'agent_id can only be set on landlord accounts.' });
+    }
+    if (agent_id) {
+      const agentCheck = await pool.query(`SELECT id FROM users WHERE id = $1 AND role = 'agent'`, [agent_id]);
+      if (!agentCheck.rows[0]) return res.status(400).json({ error: 'agent_id must refer to an existing agent.' });
+    }
+    const result = await pool.query(
+      `UPDATE users SET agent_id = $2 WHERE id = $1 RETURNING id, name, email, role, agent_id`,
+      [req.params.id, agent_id || null]
+    );
+    await logAudit({ user: req.user, action: 'user.set_agent', entityType: 'user', entityId: req.params.id, changes: { agent_id: { to: agent_id || null } } });
     res.json({ success: true, user: result.rows[0] });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -255,7 +392,7 @@ router.delete('/users/:id', authMiddleware, requireAdmin, async (req, res) => {
 // ── PATCH /api/auth/users/:id/profile (any user updates own profile) ──────────
 router.patch('/users/:id/profile', authMiddleware, async (req, res) => {
   // Users can only update their own profile unless admin
-  if (req.user.id !== parseInt(req.params.id) && req.user.role !== 'admin') {
+  if (req.user.id !== parseInt(req.params.id) && !['admin', 'super_admin'].includes(req.user.role)) {
     return res.status(403).json({ error: 'You can only update your own profile.' });
   }
 
@@ -278,7 +415,7 @@ router.patch('/users/:id/profile', authMiddleware, async (req, res) => {
 
 // ── PATCH /api/auth/users/:id/password (any user changes own password) ────────
 router.patch('/users/:id/password', authMiddleware, async (req, res) => {
-  if (req.user.id !== parseInt(req.params.id) && req.user.role !== 'admin') {
+  if (req.user.id !== parseInt(req.params.id) && !['admin', 'super_admin'].includes(req.user.role)) {
     return res.status(403).json({ error: 'You can only change your own password.' });
   }
 
@@ -321,10 +458,16 @@ router.get('/users/:id/plots', authMiddleware, async (req, res) => {
 });
 
 // ── POST /api/auth/users/:id/assign-plot — add a plot to a caretaker ──────────
-router.post('/users/:id/assign-plot', authMiddleware, requireAdmin, async (req, res) => {
+router.post('/users/:id/assign-plot', authMiddleware, requirePermission('users.assign_caretaker'), async (req, res) => {
   const { plot_id } = req.body;
   if (!plot_id) return res.status(400).json({ error: 'plot_id is required.' });
   try {
+    if (req.user.role !== 'admin' && req.user.role !== 'super_admin') {
+      const visible = await getVisiblePlotIds(req.user);
+      if (visible !== 'ALL' && !visible.includes(Number(plot_id))) {
+        return res.status(403).json({ error: 'You do not have access to this property.' });
+      }
+    }
     // Check caretaker exists
     const check = await pool.query(`SELECT id FROM users WHERE id=$1 AND role='caretaker'`, [req.params.id]);
     if (!check.rows[0]) return res.status(404).json({ error: 'Caretaker not found.' });
@@ -365,8 +508,14 @@ router.post('/users/:id/assign-plot', authMiddleware, requireAdmin, async (req, 
 });
 
 // ── DELETE /api/auth/users/:id/assign-plot/:plotId — remove a plot from caretaker
-router.delete('/users/:id/assign-plot/:plotId', authMiddleware, requireAdmin, async (req, res) => {
+router.delete('/users/:id/assign-plot/:plotId', authMiddleware, requirePermission('users.assign_caretaker'), async (req, res) => {
   try {
+    if (req.user.role !== 'admin' && req.user.role !== 'super_admin') {
+      const visible = await getVisiblePlotIds(req.user);
+      if (visible !== 'ALL' && !visible.includes(Number(req.params.plotId))) {
+        return res.status(403).json({ error: 'You do not have access to this property.' });
+      }
+    }
     await pool.query(
       `DELETE FROM caretaker_plots WHERE caretaker_id=$1 AND plot_id=$2`,
       [req.params.id, req.params.plotId]
@@ -407,7 +556,7 @@ router.patch('/users/:id/assign-plot', authMiddleware, requireAdmin, async (req,
 // ── PATCH /api/auth/users/:id/role (admin updates user role) ──────────────────
 router.patch('/users/:id/role', authMiddleware, requireAdmin, async (req, res) => {
   const { role } = req.body;
-  const allowedRoles = ['admin', 'landlord', 'caretaker'];
+  const allowedRoles = ['admin', 'agent', 'landlord', 'caretaker'];
   if (!allowedRoles.includes(role)) {
     return res.status(400).json({ error: `Role must be one of: ${allowedRoles.join(', ')}` });
   }
@@ -560,9 +709,12 @@ router.post('/tenant-reset-pin', async (req, res) => {
 });
 
 // ── POST /api/auth/tenant-login ───────────────────────────────────────────────
+// Login is now by National ID, not phone — phone stays reserved for OTP
+// PIN-reset (tenant-request-otp / tenant-reset-pin, below) and for M-Pesa
+// payment matching (mpesa.js), neither of which changed.
 router.post('/tenant-login', async (req, res) => {
-  const { phone, pin } = req.body;
-  if (!phone || !pin) return res.status(400).json({ error: 'Phone and PIN are required.' });
+  const { national_id, pin } = req.body;
+  if (!national_id || !pin) return res.status(400).json({ error: 'National ID and PIN are required.' });
   try {
     const result = await pool.query(
       `SELECT t.*, h.unit_number, h.rent_amount, h.house_type, h.deposit,
@@ -570,11 +722,11 @@ router.post('/tenant-login', async (req, res) => {
        FROM tenants t
        LEFT JOIN houses h ON t.house_id = h.id
        LEFT JOIN plots  p ON h.plot_id  = p.id
-       WHERE t.phone = $1 AND t.is_active = true`,
-      [phone]
+       WHERE t.national_id = $1 AND t.is_active = true`,
+      [national_id]
     );
     const tenant = result.rows[0];
-    if (!tenant) return res.status(401).json({ error: 'Phone number not found.' });
+    if (!tenant) return res.status(401).json({ error: 'National ID not found.' });
     if (!tenant.pin) return res.status(401).json({ error: 'PIN not set. Contact your landlord to set up your portal access.' });
 
     const valid = await bcrypt.compare(pin, tenant.pin);
@@ -595,11 +747,26 @@ router.post('/tenant-login', async (req, res) => {
 });
 
 // ── PATCH /api/auth/tenants/:id/set-pin (admin/landlord sets tenant PIN) ──────
-router.patch('/tenants/:id/set-pin', authMiddleware, async (req, res) => {
-  if (!['admin','landlord'].includes(req.user.role)) return res.status(403).json({ error: 'Access denied.' });
+// Was hardcoded to ['admin','super_admin','landlord'] with NO scope check at
+// all — any landlord (including a view-only landlord_with_agent) could set
+// the PIN of ANY tenant in the system, not just their own, and agent was
+// excluded entirely despite having tenants.edit. Now matrix-driven + scoped,
+// matching every other write route in this project.
+router.patch('/tenants/:id/set-pin', authMiddleware, requirePermission('tenants.set_pin'), async (req, res) => {
   const { pin } = req.body;
   if (!pin || pin.length < 4) return res.status(400).json({ error: 'PIN must be at least 4 digits.' });
   try {
+    if (req.user.role !== 'admin' && req.user.role !== 'super_admin') {
+      const visible = await getVisiblePlotIds(req.user);
+      const tenantRow = await pool.query(
+        `SELECT h.plot_id FROM tenants t LEFT JOIN houses h ON t.house_id = h.id WHERE t.id = $1`,
+        [req.params.id]
+      );
+      const plotId = tenantRow.rows[0]?.plot_id;
+      const allowed = visible === 'ALL' || (plotId != null && visible.includes(plotId));
+      if (!allowed) return res.status(403).json({ error: 'You do not have access to this tenant.' });
+    }
+
     const hashed = await bcrypt.hash(pin, 10);
     const result = await pool.query(
       'UPDATE tenants SET pin = $1 WHERE id = $2 RETURNING id, full_name, phone',
@@ -637,7 +804,7 @@ router.post('/forgot-password', async (req, res) => {
     // Always return success to avoid email enumeration
     if (!user) return res.json({ success: true });
 
-    if (user.role !== 'admin') {
+    if (!['admin', 'super_admin'].includes(user.role)) {
       // Non-admin staff — don't send email, frontend handles contact message
       return res.json({ success: true, role: user.role });
     }
@@ -716,12 +883,66 @@ router.post('/reset-password', async (req, res) => {
 router.get('/admin-contact', async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT name, email, phone FROM users WHERE role='admin' ORDER BY id ASC LIMIT 1`
+      `SELECT name, email, phone FROM users WHERE role IN ('admin', 'super_admin') ORDER BY id ASC LIMIT 1`
     );
     const admin = result.rows[0];
     res.json({ success: true, data: admin || { name: 'Admin', email: process.env.ADMIN_EMAIL, phone: process.env.ADMIN_PHONE } });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+
+// ── Roles & Permissions matrix (super admin only) ──────────────────────────────
+// Backs the visual permissions editor. super_admin itself is never stored
+// here or editable through this endpoint — it always has every permission,
+// enforced in code (see middleware/permissions.js).
+
+// Permissions that can NEVER be granted to any profile through this
+// endpoint, regardless of what's sent — a defensive floor independent of
+// whatever the frontend currently exposes as toggleable.
+const NEVER_GRANTABLE = ['system.manage_roles', 'system.manage_permissions', 'users.create_super_admin'];
+
+const EDITABLE_PROFILES = ['agent', 'landlord_with_agent', 'landlord_self', 'caretaker'];
+
+// GET /api/auth/role-permissions — the full matrix, one row per (profile, permission)
+router.get('/role-permissions', authMiddleware, requireAdmin, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT profile, permission, allowed FROM role_permissions ORDER BY permission, profile`
+    );
+    res.json({ success: true, data: result.rows, profiles: EDITABLE_PROFILES });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// PATCH /api/auth/role-permissions — toggle a single (profile, permission) cell
+// Body: { profile, permission, allowed }
+router.patch('/role-permissions', authMiddleware, requireAdmin, async (req, res) => {
+  const { profile, permission, allowed } = req.body;
+  if (!profile || !permission || typeof allowed !== 'boolean') {
+    return res.status(400).json({ error: 'profile, permission, and allowed (boolean) are required.' });
+  }
+  if (!EDITABLE_PROFILES.includes(profile)) {
+    return res.status(400).json({ error: `profile must be one of: ${EDITABLE_PROFILES.join(', ')}` });
+  }
+  if (NEVER_GRANTABLE.includes(permission)) {
+    return res.status(403).json({ error: 'This permission can never be granted through the matrix.' });
+  }
+  try {
+    const result = await pool.query(
+      `INSERT INTO role_permissions (profile, permission, allowed) VALUES ($1, $2, $3)
+       ON CONFLICT (profile, permission) DO UPDATE SET allowed = $3
+       RETURNING profile, permission, allowed`,
+      [profile, permission, allowed]
+    );
+    await logAudit({
+      user: req.user, action: 'permissions.toggle', entityType: 'role_permissions', entityId: profile,
+      changes: { [permission]: { to: allowed } },
+    });
+    res.json({ success: true, data: result.rows[0] });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
 module.exports = router;

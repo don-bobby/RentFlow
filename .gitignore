@@ -1,9 +1,6 @@
 .env
 
-# Secret environment files
-.env
-
-# Node modules (these are huge, no need to upload)
+# Node modules
 node_modules/
 
 # Build files
@@ -15,3 +12,18 @@ dist/
 
 # Mac system files
 .DS_Store
+
+# Backup files made along the way — not real migration history
+backup_before_*.sql
+*_backup.sql
+
+# Diagnostic dumps — not meant to be committed
+local_schema_dump.sql
+
+# Leftover/duplicate file copies
+*0.js
+*.updated.jsx
+
+# Actual uploaded tenant/listing files — keep the folder, not its contents
+backend/uploads/*
+!backend/uploads/.gitkeep

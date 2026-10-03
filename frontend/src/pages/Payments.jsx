@@ -1,9 +1,22 @@
 import { useState, useEffect } from 'react';
-import API from '../services/api';
+import { createPortal } from 'react-dom';
+import API, { getUnmatchedPayments, matchPayment, deletePayment } from '../services/api';
+import { useAuth } from '../context/AuthContext';
 
 function hexToRgba(hex, alpha) {
   const n = parseInt(hex.replace('#', ''), 16);
   return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${alpha})`;
+}
+
+// Same deterministic initials-avatar as Tenants.jsx — same tenant, same color.
+const AVATAR_COLORS = ['#7c3aed', '#2563eb', '#16a34a', '#d97706', '#dc2626', '#0891b2', '#db2777'];
+function initialsAvatar(name) {
+  const clean = (name || '?').trim();
+  const parts = clean.split(/\s+/);
+  const initials = ((parts[0]?.[0] || '') + (parts[1]?.[0] || '')).toUpperCase() || '?';
+  let hash = 0;
+  for (let i = 0; i < clean.length; i++) hash = (hash * 31 + clean.charCodeAt(i)) % AVATAR_COLORS.length;
+  return { initials, color: AVATAR_COLORS[hash] };
 }
 
 // Tracks the light/dark theme Layout.jsx sets via document.documentElement's
@@ -23,7 +36,20 @@ function useIsDarkMode() {
 const BASE = process.env.REACT_APP_API_URL || 'http://localhost:5000/api';
 
 export default function Payments() {
+  const { can } = useAuth();
   const [payments,       setPayments]       = useState([]);
+  const [reconcileOpen,  setReconcileOpen]  = useState(false);
+  const [unmatched,      setUnmatched]      = useState([]);
+  const [unmatchedLoad,  setUnmatchedLoad]  = useState(false);
+  const [matchPicks,     setMatchPicks]     = useState({}); // { [paymentId]: tenantId }
+  const [matching,       setMatching]       = useState(null); // payment id currently being matched
+  const [deleting,       setDeleting]       = useState(null); // payment id currently being deleted
+  const [receiptModal,   setReceiptModal]   = useState(null); // payment object, or null
+  const [allocateModal,  setAllocateModal]  = useState(null); // payment object, or null
+  const [allocateYear,   setAllocateYear]   = useState(new Date().getFullYear());
+  const [allocateMonth,  setAllocateMonth]  = useState(new Date().getMonth() + 1);
+  const [allocateSaving, setAllocateSaving] = useState(false);
+  const [allocateError,  setAllocateError]  = useState('');
   const [tenants,        setTenants]        = useState([]);
   const [loading,        setLoading]        = useState(true);
   const [modal,          setModal]          = useState(false);
@@ -76,6 +102,61 @@ export default function Payments() {
     } catch (e) {
       setError(e.response?.data?.message || e.response?.data?.error || e.message || 'Failed to record payment');
     } finally { setSaving(false); }
+  }
+
+  // ── Reconciliation (unmatched M-Pesa payments) ──────────────────
+  async function openReconcile() {
+    setReconcileOpen(true);
+    setUnmatchedLoad(true);
+    try {
+      const res = await getUnmatchedPayments();
+      setUnmatched(res.data.data || []);
+    } catch (e) {
+      console.error(e);
+      setUnmatched([]);
+    } finally {
+      setUnmatchedLoad(false);
+    }
+  }
+
+  async function handleMatch(payment) {
+    const tenantId = matchPicks[payment.id];
+    if (!tenantId) return;
+    const tenant = tenants.find(t => String(t.id) === String(tenantId));
+    setMatching(payment.id);
+    try {
+      await matchPayment(payment.id, tenantId, tenant?.house_id);
+      setUnmatched(list => list.filter(p => p.id !== payment.id));
+      await load(); // refresh the main table so the now-matched row shows up
+    } catch (e) {
+      alert(e.response?.data?.error || 'Failed to match payment.');
+    } finally {
+      setMatching(null);
+    }
+  }
+
+  async function handleAllocate() {
+    setAllocateSaving(true); setAllocateError('');
+    try {
+      const res = await API.patch(`/payments/${allocateModal.id}/allocate`, { for_year: allocateYear, for_month: allocateMonth });
+      setPayments(list => list.map(p => p.id === allocateModal.id ? { ...p, ...res.data.data } : p));
+      setAllocateModal(null);
+    } catch (e) {
+      setAllocateError(e.response?.data?.error || 'Failed to assign month.');
+    } finally { setAllocateSaving(false); }
+  }
+
+  async function handleDelete(payment) {
+    if (!window.confirm(`Delete this payment of KES ${parseFloat(payment.amount).toLocaleString()}? This cannot be undone.`)) return;
+    setDeleting(payment.id);
+    try {
+      await deletePayment(payment.id);
+      setPayments(list => list.filter(p => p.id !== payment.id));
+    } catch (e) {
+      alert(e.response?.data?.error || 'Failed to delete payment.');
+    } finally {
+      setDeleting(null);
+    }
   }
 
   // ── STK Push ─────────────────────────────────────────────────
@@ -169,34 +250,61 @@ export default function Payments() {
 
   return (
     <div>
+      <style>{`
+        .pm-row { transition: background 0.12s ease; }
+        .pm-row:hover { background: var(--primary-light, #ede9fe) !important; }
+        .pm-skel { background: var(--surface2); border-radius: 6px; animation: pm-pulse 1.3s ease-in-out infinite; }
+        @keyframes pm-pulse { 0%, 100% { opacity: .5; } 50% { opacity: 1; } }
+        @media (prefers-reduced-motion: reduce) { .pm-row, .pm-skel { transition: none; animation: none; } }
+        /* Printing a receipt: the modal is portaled to document.body (see
+           below), a sibling of #root rather than nested inside it. Hiding
+           #root with display:none removes its entire layout footprint —
+           unlike visibility:hidden, which keeps hidden elements' height,
+           causing a blank extra page when the app behind the modal is tall.
+           Only the portaled receipt is left to print. */
+        @media print {
+          #root { display: none !important; }
+          .pm-receipt { box-shadow: none !important; border: none !important; }
+          .pm-no-print { display: none !important; }
+        }
+      `}</style>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 28 }}>
         <div>
           <h1 style={{ fontFamily: 'Space Grotesk', fontSize: 26, fontWeight: 700, marginBottom: 4, color: 'var(--text)' }}>Payments</h1>
           <p style={{ color: 'var(--muted)', fontSize: 14 }}>{payments.length} transactions · KES {payments.reduce((s,p)=>s+parseFloat(p.amount||0),0).toLocaleString()} total</p>
         </div>
         <div style={{ display: 'flex', gap: 10 }}>
-          <button onClick={() => {
-            const firstActive = activeTenants[0];
-            setStkTenant(firstActive || null);
-            setStkPhone(firstActive?.phone || '');
-            setStkAmount('');
-            setStkStatus('idle');
-            setStkMsg('');
-            setStkModal(true);
-            setArrears(null);
-            if (firstActive) loadArrears(firstActive.id);
-          }} style={{ padding: '10px 18px', borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontWeight: 600, fontSize: 14, cursor: 'pointer' }}>
-            📱 STK Push
-          </button>
-          <button onClick={() => {
-            const firstActive = activeTenants[0];
-            setForm({ tenant_id: firstActive?.id || '', amount: '', payment_date: new Date().toISOString().split('T')[0], payment_method: 'mpesa', reference_number: '', notes: '' });
-            setArrears(null);
-            if (firstActive) loadArrears(firstActive.id);
-            setModal(true); setError('');
-          }} style={{ padding: '10px 18px', borderRadius: 10, border: 'none', background: 'var(--primary, #7c3aed)', color: '#fff', fontWeight: 600, fontSize: 14, cursor: 'pointer' }}>
-            + Record Payment
-          </button>
+          {can('payments.reconcile_mpesa') && (
+            <button onClick={openReconcile} style={{ padding: '10px 18px', borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontWeight: 600, fontSize: 14, cursor: 'pointer' }}>
+              🔗 Reconcile Unmatched
+            </button>
+          )}
+          {can('payments.record_manual') && (
+            <button onClick={() => {
+              const firstActive = activeTenants[0];
+              setStkTenant(firstActive || null);
+              setStkPhone(firstActive?.phone || '');
+              setStkAmount('');
+              setStkStatus('idle');
+              setStkMsg('');
+              setStkModal(true);
+              setArrears(null);
+              if (firstActive) loadArrears(firstActive.id);
+            }} style={{ padding: '10px 18px', borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontWeight: 600, fontSize: 14, cursor: 'pointer' }}>
+              📱 STK Push
+            </button>
+          )}
+          {can('payments.record_manual') && (
+            <button onClick={() => {
+              const firstActive = activeTenants[0];
+              setForm({ tenant_id: firstActive?.id || '', amount: '', payment_date: new Date().toISOString().split('T')[0], payment_method: 'mpesa', reference_number: '', notes: '' });
+              setArrears(null);
+              if (firstActive) loadArrears(firstActive.id);
+              setModal(true); setError('');
+            }} style={{ padding: '10px 18px', borderRadius: 10, border: 'none', background: 'var(--primary, #7c3aed)', color: '#fff', fontWeight: 600, fontSize: 14, cursor: 'pointer' }}>
+              + Record Payment
+            </button>
+          )}
         </div>
       </div>
 
@@ -211,9 +319,19 @@ export default function Payments() {
 
       <div style={{ background: 'var(--surface)', borderRadius: 'var(--radius)', boxShadow: 'var(--shadow)', border: '1px solid var(--border)', overflow: 'hidden' }}>
         {loading ? (
-          <div style={{ padding: 40, textAlign: 'center', color: 'var(--muted)' }}>Loading...</div>
+          <div style={{ padding: 20 }}>
+            {[0, 1, 2, 3, 4].map(i => (
+              <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '12px 0' }}>
+                <div className="pm-skel" style={{ width: 32, height: 32, borderRadius: '50%', flexShrink: 0 }} />
+                <div className="pm-skel" style={{ height: 14, width: `${35 + (i * 9) % 35}%` }} />
+              </div>
+            ))}
+          </div>
         ) : filtered.length === 0 ? (
-          <div style={{ padding: 60, textAlign: 'center', color: 'var(--muted)' }}>No payments found.</div>
+          <div style={{ padding: 60, textAlign: 'center', color: 'var(--muted)' }}>
+            <div style={{ fontSize: 32, marginBottom: 10 }}>💳</div>
+            No payments found.
+          </div>
         ) : (
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
@@ -225,17 +343,41 @@ export default function Payments() {
             </thead>
             <tbody>
               {filtered.map((p, i) => (
-                <tr key={p.id} style={{ borderTop: '1px solid var(--border)', background: i % 2 === 0 ? 'var(--surface)' : 'var(--surface2)' }}>
+                <tr key={p.id} className="pm-row" style={{ borderTop: '1px solid var(--border)', background: i % 2 === 0 ? 'var(--surface)' : 'var(--surface2)' }}>
                   <td style={{ padding: '12px 16px' }}>
-                    <div style={{ fontWeight: 600, fontSize: 13, color: isDark ? 'var(--blue, #2563eb)' : 'var(--text)' }}>{p.tenant_name || '—'}</div>
-                    <div style={{ fontSize: 11, color: 'var(--muted)' }}>Unit {p.unit_number || '—'}</div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                      {(() => {
+                        const { initials, color } = initialsAvatar(p.tenant_name);
+                        return (
+                          <div style={{
+                            width: 30, height: 30, borderRadius: '50%', flexShrink: 0,
+                            background: hexToRgba(color, isDark ? 0.3 : 0.15), color,
+                            display: 'flex', alignItems: 'center', justifyContent: 'center',
+                            fontSize: 11, fontWeight: 700,
+                          }}>{initials}</div>
+                        );
+                      })()}
+                      <div style={{ minWidth: 0 }}>
+                        <div style={{ fontWeight: 600, fontSize: 13, color: isDark ? 'var(--blue, #2563eb)' : 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.tenant_name || '—'}</div>
+                        <div style={{ fontSize: 11, color: 'var(--muted)' }}>Unit {p.unit_number || '—'}</div>
+                      </div>
+                    </div>
                   </td>
                   <td style={{ padding: '12px 16px', fontFamily: 'monospace', fontSize: 12, color: 'var(--muted)' }}>{p.receipt_no || p.transaction_id || '—'}</td>
                   <td style={{ padding: '12px 16px', fontWeight: 700, color: 'var(--green, #16a34a)', fontSize: 15 }}>KES {parseFloat(p.amount).toLocaleString()}</td>
                   <td style={{ padding: '12px 16px' }}>
-                    {p.for_year && p.for_month
-                      ? <span style={{ background: isDark ? hexToRgba('#7c3aed', 0.22) : 'var(--primary-light)', color: isDark ? '#c4b5fd' : 'var(--primary, #7c3aed)', padding: '3px 10px', borderRadius: 99, fontSize: 12, fontWeight: 600 }}>{monthName(p.for_year, p.for_month)}</span>
-                      : <span style={{ color: 'var(--muted)', fontSize: 12 }}>—</span>}
+                    {p.for_year && p.for_month ? (
+                      <span style={{ background: isDark ? hexToRgba('#7c3aed', 0.22) : 'var(--primary-light)', color: isDark ? '#c4b5fd' : 'var(--primary, #7c3aed)', padding: '3px 10px', borderRadius: 99, fontSize: 12, fontWeight: 600 }}>{monthName(p.for_year, p.for_month)}</span>
+                    ) : p.status === 'matched' && can('payments.record_manual') ? (
+                      <button
+                        onClick={() => { setAllocateModal(p); setAllocateError(''); const d = new Date(); setAllocateYear(d.getFullYear()); setAllocateMonth(d.getMonth() + 1); }}
+                        title="The system couldn't automatically assign this to a month — set one manually"
+                        style={{ padding: '3px 10px', borderRadius: 99, border: '1px dashed var(--border)', background: 'transparent', fontSize: 12, fontWeight: 600, color: 'var(--muted)', cursor: 'pointer' }}>
+                        + Assign month
+                      </button>
+                    ) : (
+                      <span style={{ color: 'var(--muted)', fontSize: 12 }}>—</span>
+                    )}
                   </td>
                   <td style={{ padding: '12px 16px' }}>
                     <span style={{ background: isDark ? hexToRgba('#2563eb', 0.22) : 'var(--blue-light)', color: isDark ? '#93c5fd' : 'var(--blue, #2563eb)', padding: '3px 10px', borderRadius: 99, fontSize: 12, fontWeight: 600 }}>{p.method || 'mpesa'}</span>
@@ -244,16 +386,22 @@ export default function Payments() {
                     <span style={{ background: statusBg[p.status] || 'var(--surface2)', color: statusColor[p.status] || 'var(--muted)', padding: '3px 10px', borderRadius: 99, fontSize: 12, fontWeight: 600 }}>{p.status}</span>
                   </td>
                   <td style={{ padding: '12px 16px', color: 'var(--muted)', fontSize: 13, fontWeight: 700 }}>{new Date(p.payment_date).toLocaleDateString('en-KE')}</td>
-                  <td style={{ padding: '12px 16px' }}>
-                    {p.tenant_id && (
+                  <td style={{ padding: '12px 16px', display: 'flex', gap: 6 }}>
+                    {p.status === 'matched' && (
                       <button
-                        onClick={() => {
-                          const t = tenants.find(t => t.id === p.tenant_id);
-                          if (t) openStkModal(t);
-                        }}
-                        title="Send STK Push to this tenant"
-                        style={{ padding: '5px 10px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--surface2)', fontSize: 12, fontWeight: 600, cursor: 'pointer', color: 'var(--primary, #7c3aed)' }}>
-                        📱
+                        onClick={() => setReceiptModal(p)}
+                        title="View / print receipt"
+                        style={{ padding: '5px 10px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--surface2)', fontSize: 12, fontWeight: 600, cursor: 'pointer', color: 'var(--green, #16a34a)' }}>
+                        🧾
+                      </button>
+                    )}
+                    {can('payments.delete') && (
+                      <button
+                        onClick={() => handleDelete(p)}
+                        disabled={deleting === p.id}
+                        title="Delete this payment"
+                        style={{ padding: '5px 10px', borderRadius: 6, border: '1px solid var(--red, #dc2626)', background: 'var(--surface2)', fontSize: 12, fontWeight: 600, cursor: deleting === p.id ? 'default' : 'pointer', color: 'var(--red, #dc2626)', opacity: deleting === p.id ? 0.5 : 1 }}>
+                        🗑️
                       </button>
                     )}
                   </td>
@@ -364,6 +512,61 @@ export default function Payments() {
         </div>
       )}
 
+      {/* ── Reconcile Unmatched Payments Modal ───────────────────── */}
+      {reconcileOpen && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, padding: 20 }}>
+          <div style={{ background: 'var(--surface)', borderRadius: 16, padding: 28, width: '100%', maxWidth: 640, maxHeight: '85vh', overflowY: 'auto', boxShadow: 'var(--shadow-lg)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+              <h2 style={{ fontFamily: 'Space Grotesk', fontWeight: 700, fontSize: 18, color: 'var(--text)' }}>🔗 Reconcile Unmatched Payments</h2>
+              <button onClick={() => setReconcileOpen(false)} style={{ width: 32, height: 32, borderRadius: '50%', border: 'none', background: 'var(--surface2)', cursor: 'pointer', fontSize: 18, color: 'var(--muted)' }}>×</button>
+            </div>
+            <p style={{ color: 'var(--muted)', fontSize: 13, marginBottom: 18 }}>
+              These M-Pesa payments came in but couldn't be matched to a tenant automatically — usually because the phone number on the transaction doesn't match anyone on file. Pick the right tenant for each one below.
+            </p>
+
+            {unmatchedLoad ? (
+              <div style={{ padding: 30, textAlign: 'center', color: 'var(--muted)' }}>Loading…</div>
+            ) : unmatched.length === 0 ? (
+              <div style={{ padding: 30, textAlign: 'center', color: 'var(--muted)' }}>Nothing to reconcile — all payments are matched. ✅</div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                {unmatched.map(p => (
+                  <div key={p.id} style={{ border: '1px solid var(--border)', borderRadius: 10, padding: 14 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 10 }}>
+                      <div>
+                        <div style={{ fontWeight: 700, fontSize: 15, color: 'var(--green, #16a34a)' }}>KES {parseFloat(p.amount).toLocaleString()}</div>
+                        <div style={{ fontSize: 12, color: 'var(--muted)' }}>From {p.phone || 'unknown number'} · {p.payment_date ? new Date(p.payment_date).toLocaleDateString('en-KE') : '—'}</div>
+                        {(p.receipt_no || p.transaction_id) && <div style={{ fontSize: 11, fontFamily: 'monospace', color: 'var(--muted)' }}>{p.receipt_no || p.transaction_id}</div>}
+                      </div>
+                      <span style={{ background: statusBg[p.status] || 'var(--surface2)', color: statusColor[p.status] || 'var(--muted)', padding: '3px 10px', borderRadius: 99, fontSize: 11, fontWeight: 600, height: 'fit-content' }}>{p.status}</span>
+                    </div>
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      <select
+                        value={matchPicks[p.id] || ''}
+                        onChange={e => setMatchPicks(picks => ({ ...picks, [p.id]: e.target.value }))}
+                        style={{ ...inputStyle, flex: 1 }}
+                      >
+                        <option value="">— Select tenant to match —</option>
+                        {tenants.map(t => (
+                          <option key={t.id} value={t.id}>{t.full_name} — {t.phone} (Unit {t.unit_number || t.house_id})</option>
+                        ))}
+                      </select>
+                      <button
+                        onClick={() => handleMatch(p)}
+                        disabled={!matchPicks[p.id] || matching === p.id}
+                        style={{ padding: '0 18px', borderRadius: 8, border: 'none', background: 'var(--primary, #7c3aed)', color: '#fff', fontWeight: 700, fontSize: 13, cursor: (!matchPicks[p.id] || matching === p.id) ? 'default' : 'pointer', opacity: (!matchPicks[p.id] || matching === p.id) ? 0.5 : 1 }}
+                      >
+                        {matching === p.id ? 'Matching…' : 'Match'}
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* ── Record Payment Modal ───────────────────────────────── */}
       {modal && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, padding: 20, overflowY: 'auto' }}>
@@ -428,6 +631,89 @@ export default function Payments() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* ── Assign Month Modal ─────────────────────────────────── */}
+      {allocateModal && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, padding: 20 }}>
+          <div style={{ background: 'var(--surface)', borderRadius: 16, padding: 28, width: '100%', maxWidth: 400, boxShadow: 'var(--shadow-lg)' }}>
+            <h2 style={{ fontFamily: 'Space Grotesk', fontWeight: 700, fontSize: 18, marginBottom: 6, color: 'var(--text)' }}>Assign Month</h2>
+            <p style={{ color: 'var(--muted)', fontSize: 13, marginBottom: 20 }}>
+              KES {parseFloat(allocateModal.amount).toLocaleString()} from <strong>{allocateModal.tenant_name || 'this payment'}</strong> — which month should this count toward?
+            </p>
+            {allocateError && <div style={{ background: isDark ? hexToRgba('#dc2626', 0.18) : 'var(--red-light)', color: 'var(--red, #dc2626)', padding: '10px 14px', borderRadius: 8, marginBottom: 16, fontSize: 13 }}>{allocateError}</div>}
+            <div style={{ display: 'flex', gap: 10, marginBottom: 20 }}>
+              <div style={{ flex: 1 }}>
+                <label style={labelStyle}>Month</label>
+                <select value={allocateMonth} onChange={e => setAllocateMonth(parseInt(e.target.value))} style={inputStyle}>
+                  {Array.from({ length: 12 }, (_, i) => i + 1).map(m => (
+                    <option key={m} value={m}>{new Date(2000, m - 1, 1).toLocaleString('en-KE', { month: 'long' })}</option>
+                  ))}
+                </select>
+              </div>
+              <div style={{ width: 110 }}>
+                <label style={labelStyle}>Year</label>
+                <input type="number" value={allocateYear} onChange={e => setAllocateYear(parseInt(e.target.value))} style={inputStyle} />
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+              <button onClick={() => setAllocateModal(null)} style={{ padding: '10px 20px', borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface)', fontWeight: 600, fontSize: 14, cursor: 'pointer', color: 'var(--text)' }}>Cancel</button>
+              <button onClick={handleAllocate} disabled={allocateSaving} style={{ padding: '10px 20px', borderRadius: 10, border: 'none', background: 'var(--primary, #7c3aed)', color: '#fff', fontWeight: 600, fontSize: 14, cursor: 'pointer' }}>
+                {allocateSaving ? 'Saving...' : 'Assign'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Receipt Modal ──────────────────────────────────────── */}
+      {receiptModal && createPortal(
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, padding: 20 }}>
+          <div className="pm-receipt" style={{ background: '#fff', color: '#1a1a1a', borderRadius: 16, padding: 32, width: '100%', maxWidth: 420, boxShadow: 'var(--shadow-lg)' }}>
+            <div className="pm-no-print" style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: -8 }}>
+              <button onClick={() => setReceiptModal(null)} style={{ width: 30, height: 30, borderRadius: '50%', border: 'none', background: '#f3f4f6', cursor: 'pointer', fontSize: 16, color: '#6b7280' }}>×</button>
+            </div>
+
+            <div style={{ textAlign: 'center', marginBottom: 20 }}>
+              <div style={{ fontSize: 28, marginBottom: 4 }}>🏠</div>
+              <div style={{ fontFamily: 'Space Grotesk, sans-serif', fontWeight: 800, fontSize: 18 }}>RentFlow</div>
+              <div style={{ fontSize: 12, color: '#6b7280', marginTop: 2 }}>Payment Receipt</div>
+            </div>
+
+            <div style={{ borderTop: '2px dashed #d1d5db', borderBottom: '2px dashed #d1d5db', padding: '16px 0', marginBottom: 16 }}>
+              <div style={{ textAlign: 'center', marginBottom: 14 }}>
+                <div style={{ fontSize: 11, color: '#6b7280', textTransform: 'uppercase', letterSpacing: 0.5 }}>Amount Paid</div>
+                <div style={{ fontSize: 28, fontWeight: 800, color: '#16a34a' }}>KES {parseFloat(receiptModal.amount).toLocaleString()}</div>
+              </div>
+              {[
+                ['Tenant', receiptModal.tenant_name || '—'],
+                ['Unit', receiptModal.unit_number ? `Unit ${receiptModal.unit_number}` : '—'],
+                ['Property', receiptModal.plot_name || '—'],
+                ['Method', (receiptModal.method || 'mpesa').toUpperCase()],
+                ['Receipt / Ref', receiptModal.receipt_no || receiptModal.transaction_id || '—'],
+                ['Date', receiptModal.payment_date ? new Date(receiptModal.payment_date).toLocaleDateString('en-KE', { year: 'numeric', month: 'long', day: 'numeric' }) : '—'],
+                ...(receiptModal.for_year && receiptModal.for_month ? [['Allocated To', monthName(receiptModal.for_year, receiptModal.for_month)]] : []),
+              ].map(([label, value]) => (
+                <div key={label} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, padding: '5px 0' }}>
+                  <span style={{ color: '#6b7280' }}>{label}</span>
+                  <span style={{ fontWeight: 600 }}>{value}</span>
+                </div>
+              ))}
+            </div>
+
+            <div style={{ textAlign: 'center', fontSize: 11, color: '#9ca3af', marginBottom: 20 }}>
+              Receipt #{receiptModal.id} · Generated {new Date().toLocaleDateString('en-KE')}
+            </div>
+
+            <div className="pm-no-print" style={{ display: 'flex', gap: 10, justifyContent: 'center' }}>
+              <button onClick={() => setReceiptModal(null)} style={{ padding: '10px 20px', borderRadius: 10, border: '1px solid #d1d5db', background: '#fff', fontWeight: 600, fontSize: 14, cursor: 'pointer', color: '#1a1a1a' }}>Close</button>
+              <button onClick={() => window.print()} style={{ padding: '10px 20px', borderRadius: 10, border: 'none', background: '#7c3aed', color: '#fff', fontWeight: 700, fontSize: 14, cursor: 'pointer' }}>
+                🖨️ Print Receipt
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body
       )}
     </div>
   );

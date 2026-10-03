@@ -44,6 +44,8 @@ export default function TenantPortal() {
   const [convMessages,  setConvMessages]  = useState([]);
   const [msgInput,      setMsgInput]      = useState('');
   const [unreadNotices, setUnreadNotices] = useState(0);
+  const [contacts,      setContacts]      = useState([]);
+  const [newMsgOpen,    setNewMsgOpen]    = useState(false);
   const [unreadMsgs,    setUnreadMsgs]    = useState(0);
   const [stkLoading, setStkLoading] = useState(false);
   const [stkPhone,   setStkPhone]   = useState('');
@@ -121,6 +123,13 @@ export default function TenantPortal() {
     }, 5000);
   }
 
+  useEffect(() => {
+    if (!newMsgOpen) return;
+    const close = () => setNewMsgOpen(false);
+    document.addEventListener('click', close);
+    return () => document.removeEventListener('click', close);
+  }, [newMsgOpen]);
+
   // ── Global poll for unread counts (runs on all tabs) ─────────────────────
   useEffect(() => {
     const id = setInterval(async () => {
@@ -133,33 +142,73 @@ export default function TenantPortal() {
     return () => clearInterval(id);
   }, []);
 
-  // ── Poll for new messages and conversations ───────────────────────────────
+  // ── Poll for new messages, conversations, and notices ──────────────────────
   useEffect(() => {
     if (tab !== 'Messages' && tab !== 'Notices') return;
     const id = setInterval(async () => {
       try {
-        const cRes = await tenantFetch('/notices/conversations/tenant');
-        if (cRes?.data?.data) {
-          setConversations(cRes.data.data);
-          const total = cRes.data.data.reduce((s, c) => s + parseInt(c.unread_count || 0), 0);
-          setUnreadMsgs(total);
+        if (tab === 'Messages') {
+          const cRes = await tenantFetch('/notices/conversations/tenant');
+          if (cRes?.data) {
+            setConversations(cRes.data);
+            const total = cRes.data.reduce((s, c) => s + parseInt(c.unread_count || 0), 0);
+            setUnreadMsgs(total);
+          }
+          if (activeConv) {
+            const mRes = await tenantFetch(`/notices/conversations/${activeConv.id}/messages/tenant`);
+            if (mRes?.data) setConvMessages(mRes.data);
+          }
         }
-        if (activeConv) {
-          const mRes = await tenantFetch(`/notices/conversations/${activeConv.id}/messages/tenant`);
-          if (mRes?.data) setConvMessages(mRes.data);
+        if (tab === 'Notices') {
+          const nRes = await tenantFetch('/notices/tenant');
+          if (nRes?.data) {
+            setNotices(nRes.data);
+            setUnreadNotices(nRes.data.filter(n => !n.is_read).length);
+          }
         }
       } catch {}
     }, 8000);
     return () => clearInterval(id);
   }, [tab, activeConv]);
 
+  // ── Refresh the notices list immediately when switching to that tab, same
+  // as the existing Messages-tab-switch effect below does for conversations.
+  useEffect(() => {
+    if (tab !== 'Notices') return;
+    tenantFetch('/notices/tenant').then(r => {
+      if (r?.data) {
+        setNotices(r.data);
+        setUnreadNotices(r.data.filter(n => !n.is_read).length);
+      }
+    }).catch(() => {});
+  }, [tab]);
+
   // ── Also refresh conversations list when switching to Messages tab ─────────
   useEffect(() => {
     if (tab !== 'Messages') return;
     tenantFetch('/notices/conversations/tenant').then(r => {
-      if (r?.data?.data) setConversations(r.data.data);
+      if (r?.data) setConversations(r.data);
+    }).catch(() => {});
+    tenantFetch('/notices/contacts/tenant').then(r => {
+      if (r?.data) setContacts(r.data);
     }).catch(() => {});
   }, [tab]);
+
+  // Starts (or reopens, if one already exists) a conversation with a contact
+  // — previously there was no way to begin a new conversation at all, only
+  // to reply to an existing notice.
+  async function startConversation(contact) {
+    setNewMsgOpen(false);
+    const res = await tenantFetch('/notices/conversations/new/tenant', {
+      method: 'POST', body: JSON.stringify({ recipient_id: contact.id, recipient_type: 'user' }),
+    });
+    if (!res?.success) { alert(res?.error || 'Could not start conversation.'); return; }
+    const msgsRes = await tenantFetch(`/notices/conversations/${res.conversation_id}/messages/tenant`);
+    setConvMessages(msgsRes.data || []);
+    setActiveConv({ id: res.conversation_id, other_name: contact.name });
+    const cRes = await tenantFetch('/notices/conversations/tenant');
+    setConversations(cRes.data || []);
+  }
 
   useEffect(() => {
     const token = localStorage.getItem('tenant_token');
@@ -181,10 +230,10 @@ export default function TenantPortal() {
         setMe(meRes.data);
         setStkPhone(meRes.data?.phone || '');
         setPayments(paymentsRes.data || []);
-        setNotices(noticesRes.data?.data || []);
-        setConversations(convsRes.data?.data || []);
-        const unreadN = (noticesRes.data?.data || []).filter(n => !n.is_read).length;
-        const unreadM = (convsRes.data?.data || []).reduce((s,c) => s + parseInt(c.unread_count||0), 0);
+        setNotices(noticesRes.data || []);
+        setConversations(convsRes.data || []);
+        const unreadN = (noticesRes.data || []).filter(n => !n.is_read).length;
+        const unreadM = (convsRes.data || []).reduce((s,c) => s + parseInt(c.unread_count||0), 0);
         setUnreadNotices(unreadN);
         setUnreadMsgs(unreadM);
         setArrears(arrearsRes.data || []);
@@ -221,13 +270,36 @@ export default function TenantPortal() {
   const priorityColor = { low: 'var(--green)', medium: 'var(--amber)', high: 'var(--red)' };
 
   if (loading) return (
-    <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--bg)' }}>
-      <div style={{ color: 'var(--muted)', fontSize: 15 }}>Loading your account...</div>
+    <div style={{ minHeight: '100vh', background: 'var(--bg)', padding: isMobile ? '16px 12px' : '24px 16px' }}>
+      <div style={{ maxWidth: 800, margin: '0 auto' }}>
+        <div className="tp-skel" style={{ height: 24, width: 180, marginBottom: 8 }} />
+        <div className="tp-skel" style={{ height: 14, width: 240, marginBottom: 24 }} />
+        <div style={{ display: 'grid', gridTemplateColumns: isMobile ? 'repeat(2, 1fr)' : 'repeat(3, 1fr)', gap: isMobile ? 8 : 12, marginBottom: 20 }}>
+          {[0, 1, 2].map(i => <div key={i} className="tp-skel" style={{ height: 88, borderRadius: 16 }} />)}
+        </div>
+        <div className="tp-skel" style={{ height: 160, borderRadius: 16 }} />
+      </div>
     </div>
   );
 
   return (
-    <div style={{ minHeight: '100vh', background: 'var(--bg)', fontFamily: 'Inter, sans-serif' }}>
+    <div className="tp-page" style={{ minHeight: '100vh', background: 'var(--bg)', fontFamily: 'Inter, sans-serif' }}>
+      <style>{`
+        /* Friendlier micro-interactions layered on top of the existing theme
+           tokens — no new color system, just hover/press feedback, soft
+           accent-bar KPI cards, and a skeleton loader instead of plain text. */
+        .tp-card { transition: box-shadow .15s ease; }
+        .tp-card:hover { box-shadow: 0 4px 16px rgba(0,0,0,0.06); }
+        .tp-row { transition: background .12s ease; }
+        .tp-row:hover { background: var(--surface2); }
+        .tp-tab-btn { transition: background .15s ease, color .15s ease, transform .08s ease; }
+        .tp-tab-btn:active { transform: scale(0.96); }
+        .tp-kpi { position: relative; overflow: hidden; padding-left: 20px !important; }
+        .tp-kpi::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 4px; background: var(--tp-accent, var(--primary)); }
+        .tp-skel { background: var(--surface2); border-radius: 8px; animation: tp-pulse 1.3s ease-in-out infinite; }
+        @keyframes tp-pulse { 0%, 100% { opacity: .45; } 50% { opacity: 1; } }
+        @media (prefers-reduced-motion: reduce) { .tp-card, .tp-row, .tp-tab-btn, .tp-skel { transition: none; animation: none; } }
+      `}</style>
 
       {/* Topbar */}
       <div style={{ background: 'var(--surface)', borderBottom: '1px solid var(--border)', padding: isMobile ? '0 14px' : '0 24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', height: 56, position: 'sticky', top: 0, zIndex: 50 }}>
@@ -270,7 +342,7 @@ export default function TenantPortal() {
           {TABS.map(t => {
             const badgeCount = t === 'Notices' ? unreadNotices : t === 'Messages' ? unreadMsgs : 0;
             return (
-              <button key={t} onClick={() => setTab(t)} style={{
+              <button key={t} onClick={() => setTab(t)} className="tp-tab-btn" style={{
                 flex: isMobile ? 'none' : 1, whiteSpace: 'nowrap',
                 padding: isMobile ? '8px 14px' : '8px 4px', borderRadius: 8, border: 'none', fontSize: 13, fontWeight: 600, cursor: 'pointer',
                 background: tab === t ? 'var(--primary)' : 'transparent',
@@ -294,11 +366,11 @@ export default function TenantPortal() {
         {tab === 'Overview' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
             {totalArrears > 0 ? (
-              <div style={{ background: 'var(--red-light)', border: '1px solid var(--red)', borderRadius: 12, padding: 20 }}>
+              <div style={{ background: 'var(--red-light)', border: '1px solid var(--red)', borderRadius: 16, padding: 20 }}>
                 <div style={{ fontWeight: 700, color: 'var(--red)', fontSize: 16, marginBottom: 12 }}>⚠️ Outstanding Balance: KES {totalArrears.toLocaleString()}</div>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
                   {arrears.map(m => (
-                    <div key={`${m.year}-${m.month}`} style={{ background: 'white', border: `1px solid ${m.partial ? 'var(--amber)' : 'var(--red)'}`, borderRadius: 8, padding: '6px 12px', fontSize: 12 }}>
+                    <div key={`${m.year}-${m.month}`} style={{ background: 'var(--surface)', border: `1px solid ${m.partial ? 'var(--amber)' : 'var(--red)'}`, borderRadius: 8, padding: '6px 12px', fontSize: 12 }}>
                       <div style={{ fontWeight: 700, color: m.partial ? 'var(--amber)' : 'var(--red)' }}>{m.label} {m.partial ? '(partial)' : ''}</div>
                       <div style={{ color: 'var(--muted)', marginTop: 2 }}>{m.partial ? `Paid KES ${m.paid.toLocaleString()} · ` : ''}Owed KES {m.balance.toLocaleString()}</div>
                     </div>
@@ -306,20 +378,20 @@ export default function TenantPortal() {
                 </div>
               </div>
             ) : (
-              <div style={{ background: 'var(--green-light)', border: '1px solid var(--green)', borderRadius: 12, padding: 20, fontWeight: 700, color: 'var(--green)', fontSize: 15 }}>
+              <div style={{ background: 'var(--green-light)', border: '1px solid var(--green)', borderRadius: 16, padding: 20, fontWeight: 700, color: 'var(--green)', fontSize: 15 }}>
                 ✅ You're all up to date! No outstanding rent.
               </div>
             )}
 
             {/* Last 3 payments */}
             {payments.length > 0 && (
-              <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12, overflow: 'hidden' }}>
+              <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 16, overflow: 'hidden' }}>
                 <div style={{ padding: '14px 18px', borderBottom: '1px solid var(--border)', fontWeight: 700, fontSize: 14 }}>Recent Payments</div>
                 {payments.slice(0, 5).map((p, i) => {
                   const isFailed  = p.status === 'failed';
                   const isPending = p.status === 'pending';
                   return (
-                    <div key={p.id} style={{ padding: '12px 18px', borderTop: i > 0 ? '1px solid var(--border)' : 'none', display: 'flex', justifyContent: 'space-between', alignItems: 'center', opacity: isFailed ? 0.6 : 1 }}>
+                    <div key={p.id} className="tp-row" style={{ padding: '12px 18px', borderTop: i > 0 ? '1px solid var(--border)' : 'none', display: 'flex', justifyContent: 'space-between', alignItems: 'center', opacity: isFailed ? 0.6 : 1 }}>
                       <div>
                         <div style={{ fontWeight: 600, fontSize: 14, textDecoration: isFailed ? 'line-through' : 'none', color: isFailed ? 'var(--muted)' : 'var(--text)' }}>
                           KES {parseFloat(p.amount).toLocaleString()}
@@ -343,7 +415,7 @@ export default function TenantPortal() {
         {/* Pay Now */}
         {tab === 'Pay Now' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-            <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12, padding: 24 }}>
+            <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 16, padding: 24 }}>
               <div style={{ fontFamily: 'Space Grotesk', fontWeight: 700, fontSize: 18, marginBottom: 6 }}>Pay via M-Pesa</div>
               <p style={{ color: 'var(--muted)', fontSize: 13, marginBottom: 20 }}>
                 An STK push will be sent to <strong>{me?.phone}</strong>. Enter your M-Pesa PIN when prompted.
@@ -405,14 +477,14 @@ export default function TenantPortal() {
 
         {/* Payments */}
         {tab === 'Payments' && (
-          <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12, overflow: 'hidden' }}>
+          <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 16, overflow: 'hidden' }}>
             {payments.length === 0
               ? <div style={{ padding: 40, textAlign: 'center', color: 'var(--muted)' }}>No payments recorded yet.</div>
               : payments.map((p, i) => {
                 const isFailed  = p.status === 'failed';
                 const isPending = p.status === 'pending';
                 return (
-                  <div key={p.id} style={{ padding: '14px 18px', borderTop: i > 0 ? '1px solid var(--border)' : 'none', display: 'flex', justifyContent: 'space-between', alignItems: 'center', opacity: isFailed ? 0.55 : 1, background: isFailed ? 'var(--red-light)' : isPending ? 'var(--amber-light)' : 'transparent' }}>
+                  <div key={p.id} className="tp-row" style={{ padding: '14px 18px', borderTop: i > 0 ? '1px solid var(--border)' : 'none', display: 'flex', justifyContent: 'space-between', alignItems: 'center', opacity: isFailed ? 0.55 : 1, background: isFailed ? 'var(--red-light)' : isPending ? 'var(--amber-light)' : 'transparent' }}>
                     <div>
                       <div style={{ fontWeight: 700, fontSize: 15, textDecoration: isFailed ? 'line-through' : 'none', color: isFailed ? 'var(--muted)' : 'var(--text)' }}>
                         KES {parseFloat(p.amount).toLocaleString()}
@@ -442,7 +514,7 @@ export default function TenantPortal() {
             {arrears.length === 0
               ? <div style={{ padding: 40, textAlign: 'center', color: 'var(--green)', fontWeight: 600, fontSize: 15 }}>✅ No arrears — you're fully paid up!</div>
               : arrears.map(m => (
-                <div key={`${m.year}-${m.month}`} style={{ background: 'var(--surface)', border: `1px solid ${m.partial ? 'var(--amber)' : 'var(--red)'}`, borderRadius: 12, padding: '16px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div key={`${m.year}-${m.month}`} style={{ background: 'var(--surface)', border: `1px solid ${m.partial ? 'var(--amber)' : 'var(--red)'}`, borderRadius: 16, padding: '16px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <div>
                     <div style={{ fontWeight: 700, fontSize: 15, color: m.partial ? 'var(--amber)' : 'var(--red)' }}>{m.label} {m.partial ? '— Partial' : '— Unpaid'}</div>
                     {m.partial && <div style={{ fontSize: 13, color: 'var(--muted)', marginTop: 4 }}>Paid: KES {m.paid.toLocaleString()} of KES {m.rent.toLocaleString()}</div>}
@@ -455,7 +527,7 @@ export default function TenantPortal() {
               ))
             }
             {arrears.length > 0 && (
-              <div style={{ background: 'var(--surface2)', border: '1px solid var(--border)', borderRadius: 12, padding: '14px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div style={{ background: 'var(--surface2)', border: '1px solid var(--border)', borderRadius: 16, padding: '14px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <span style={{ fontWeight: 700, fontSize: 15 }}>Total Outstanding</span>
                 <span style={{ fontWeight: 800, fontFamily: 'Space Grotesk', fontSize: 20, color: 'var(--red)' }}>KES {totalArrears.toLocaleString()}</span>
               </div>
@@ -467,7 +539,7 @@ export default function TenantPortal() {
         {tab === 'Maintenance' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
             {/* Submit form */}
-            <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12, padding: 20 }}>
+            <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 16, padding: 20 }}>
               <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 14 }}>Submit New Request</div>
               {mError   && <div style={{ background: 'var(--red-light)', color: 'var(--red)', padding: '8px 12px', borderRadius: 8, marginBottom: 12, fontSize: 13 }}>{mError}</div>}
               {mSuccess && <div style={{ background: 'var(--green-light)', color: 'var(--green)', padding: '8px 12px', borderRadius: 8, marginBottom: 12, fontSize: 13 }}>{mSuccess}</div>}
@@ -494,7 +566,7 @@ export default function TenantPortal() {
 
             {/* Existing requests */}
             {maintenance.length > 0 && (
-              <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12, overflow: 'hidden' }}>
+              <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 16, overflow: 'hidden' }}>
                 <div style={{ padding: '14px 18px', borderBottom: '1px solid var(--border)', fontWeight: 700, fontSize: 14 }}>Your Requests</div>
                 {maintenance.map((r, i) => (
                   <div key={r.id} style={{ padding: '14px 18px', borderTop: i > 0 ? '1px solid var(--border)' : 'none' }}>
@@ -526,9 +598,9 @@ export default function TenantPortal() {
               </div>
             ) : notices.map(n => {
               const pColors = {
-                info:    { bg: '#dbeafe', color: '#2563eb', border: '#2563eb' },
-                warning: { bg: '#fef3c7', color: '#d97706', border: '#d97706' },
-                urgent:  { bg: '#fee2e2', color: '#dc2626', border: '#dc2626' },
+                info:    { bg: 'var(--blue-light)',  color: 'var(--blue)',  border: 'var(--blue)'  },
+                warning: { bg: 'var(--amber-light)', color: 'var(--amber)', border: 'var(--amber)' },
+                urgent:  { bg: 'var(--red-light)',   color: 'var(--red)',   border: 'var(--red)'   },
               };
               const p = pColors[n.priority] || pColors.info;
               const icons = { info: 'ℹ️', warning: '⚠️', urgent: '🚨' };
@@ -539,15 +611,15 @@ export default function TenantPortal() {
                     setNotices(ns => ns.map(x => x.id === n.id ? { ...x, is_read: true } : x));
                     setUnreadNotices(u => Math.max(0, u - 1));
                   }
-                }} style={{ background: 'white', border: `1px solid ${p.border}`, borderLeft: `4px solid ${p.border}`, borderRadius: 12, padding: '14px 16px', cursor: 'pointer', opacity: n.is_read ? 0.75 : 1 }}>
+                }} className="tp-card tp-row" style={{ background: 'var(--surface)', border: `1px solid ${p.border}`, borderLeft: `4px solid ${p.border}`, borderRadius: 16, padding: '14px 16px', cursor: 'pointer', opacity: n.is_read ? 0.75 : 1 }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
                     <span style={{ background: p.bg, color: p.color, padding: '3px 10px', borderRadius: 99, fontSize: 12, fontWeight: 700 }}>{icons[n.priority]} {n.priority}</span>
-                    {!n.is_read && <span style={{ background: '#dc2626', color: '#fff', borderRadius: 99, fontSize: 10, fontWeight: 700, padding: '2px 7px' }}>NEW</span>}
+                    {!n.is_read && <span style={{ background: 'var(--red)', color: '#fff', borderRadius: 99, fontSize: 10, fontWeight: 700, padding: '2px 7px' }}>NEW</span>}
                   </div>
-                  <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 6, color: '#111' }}>{n.title}</div>
-                  <div style={{ fontSize: 13, color: '#6b7280', lineHeight: 1.6, marginBottom: 8 }}>{n.body}</div>
+                  <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 6, color: 'var(--text)' }}>{n.title}</div>
+                  <div style={{ fontSize: 13, color: 'var(--muted)', lineHeight: 1.6, marginBottom: 8 }}>{n.body}</div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <span style={{ fontSize: 11, color: '#9ca3af' }}>From {n.author_name} · {new Date(n.created_at).toLocaleDateString('en-KE')}</span>
+                    <span style={{ fontSize: 11, color: 'var(--muted)' }}>From {n.author_name} · {new Date(n.created_at).toLocaleDateString('en-KE')}</span>
                     <button onClick={async (e) => {
                       e.stopPropagation();
                       const res = await tenantFetch(`/notices/${n.id}/reply`, { method: 'POST' });
@@ -557,9 +629,9 @@ export default function TenantPortal() {
                         setConvMessages(msgsRes.data || []);
                         setActiveConv({ id: res.conversation_id, other_name: n.author_name, notice_title: n.title });
                         const cRes = await tenantFetch('/notices/conversations/tenant');
-                        setConversations(cRes.data?.data || []);
+                        setConversations(cRes.data || []);
                       }
-                    }} style={{ padding: '4px 12px', borderRadius: 8, border: '1px solid #e5e7eb', background: 'transparent', fontSize: 12, fontWeight: 600, color: '#6b7280', cursor: 'pointer' }}>
+                    }} style={{ padding: '4px 12px', borderRadius: 8, border: '1px solid var(--border)', background: 'transparent', fontSize: 12, fontWeight: 600, color: 'var(--muted)', cursor: 'pointer' }}>
                       Reply Privately →
                     </button>
                   </div>
@@ -596,17 +668,37 @@ export default function TenantPortal() {
         {tab === 'Messages' && (
           <div style={
             isMobile
-              ? { display: 'flex', flexDirection: 'column', height: 'calc(100vh - 190px)', minHeight: 360, background: 'white', border: '1px solid #e5e7eb', borderRadius: 12, overflow: 'hidden' }
+              ? { display: 'flex', flexDirection: 'column', height: 'calc(100vh - 190px)', minHeight: 360, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 16, overflow: 'hidden' }
               : { display: 'grid', gridTemplateColumns: '260px 1fr', gap: 12, height: 480 }
           }>
 
             {/* Conversation list — hidden on mobile once a conversation is open */}
             {(!isMobile || !activeConv) && (
-              <div style={{ background: 'white', borderRadius: isMobile ? 0 : 12, border: isMobile ? 'none' : '1px solid #e5e7eb', overflow: 'hidden', display: 'flex', flexDirection: 'column', flex: isMobile ? 1 : 'initial', minHeight: 0 }}>
-                <div style={{ padding: '12px 14px', borderBottom: '1px solid #f3f4f6', fontWeight: 700, fontSize: 13, color: '#374151' }}>Conversations</div>
+              <div style={{ background: 'var(--surface)', borderRadius: isMobile ? 0 : 12, border: isMobile ? 'none' : '1px solid var(--border)', overflow: 'hidden', display: 'flex', flexDirection: 'column', flex: isMobile ? 1 : 'initial', minHeight: 0 }}>
+                <div style={{ padding: '12px 14px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', position: 'relative' }}>
+                  <span style={{ fontWeight: 700, fontSize: 13, color: 'var(--text)' }}>Conversations</span>
+                  <button onClick={e => { e.stopPropagation(); setNewMsgOpen(o => !o); }} style={{ border: 'none', background: 'var(--primary)', color: '#fff', fontSize: 12, fontWeight: 700, padding: '4px 10px', borderRadius: 8, cursor: 'pointer' }}>+ New</button>
+                  {newMsgOpen && (
+                    <div onClick={e => e.stopPropagation()} style={{ position: 'absolute', top: '100%', right: 14, zIndex: 20, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12, boxShadow: 'var(--shadow-lg, 0 8px 24px rgba(0,0,0,0.15))', minWidth: 200, overflow: 'hidden' }}>
+                      {contacts.length === 0 ? (
+                        <div style={{ padding: 14, fontSize: 12, color: 'var(--muted)' }}>No one to message yet.</div>
+                      ) : contacts.map(c => {
+                        const isAdmin = c.role === 'admin' || c.role === 'super_admin';
+                        const displayName = isAdmin ? 'Admin' : c.name;
+                        return (
+                          <button key={`${c.role}-${c.id}`} onClick={() => startConversation({ ...c, name: displayName })} className="tp-row"
+                            style={{ display: 'block', width: '100%', textAlign: 'left', padding: '10px 14px', border: 'none', background: 'transparent', cursor: 'pointer' }}>
+                            <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>{displayName}</div>
+                            {!isAdmin && <div style={{ fontSize: 11, color: 'var(--muted)', textTransform: 'capitalize' }}>{c.role}</div>}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
                 <div style={{ overflowY: 'auto', flex: 1 }}>
                   {conversations.length === 0 ? (
-                    <div style={{ padding: 20, textAlign: 'center', color: '#9ca3af', fontSize: 12 }}>No conversations yet.<br/>Reply to a notice to start one.</div>
+                    <div style={{ padding: 20, textAlign: 'center', color: 'var(--muted)', fontSize: 12 }}>No conversations yet.<br/>Reply to a notice to start one.</div>
                   ) : conversations.map(c => {
                     const unread = parseInt(c.unread_count || 0);
                     const isActive = activeConv?.id === c.id;
@@ -617,13 +709,13 @@ export default function TenantPortal() {
                         setConvMessages(res.data || []);
                         setConversations(cs => cs.map(x => x.id === c.id ? { ...x, unread_count: 0 } : x));
                         setUnreadMsgs(u => Math.max(0, u - unread));
-                      }} style={{ padding: '12px 14px', borderBottom: '1px solid #f9fafb', cursor: 'pointer', background: isActive && !isMobile ? '#eff6ff' : 'transparent' }}>
+                      }} className="tp-row" style={{ padding: '12px 14px', borderBottom: '1px solid var(--border)', cursor: 'pointer', background: isActive && !isMobile ? 'var(--primary-light)' : 'transparent' }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 3 }}>
-                          <span style={{ fontWeight: unread > 0 ? 700 : 500, fontSize: 13, color: '#111' }}>{c.other_name || 'Staff'}</span>
-                          {unread > 0 && <span style={{ background: '#dc2626', color: '#fff', borderRadius: 99, fontSize: 10, fontWeight: 700, padding: '1px 6px' }}>{unread}</span>}
+                          <span style={{ fontWeight: unread > 0 ? 700 : 500, fontSize: 13, color: 'var(--text)' }}>{c.other_name || 'Staff'}</span>
+                          {unread > 0 && <span style={{ background: 'var(--red)', color: '#fff', borderRadius: 99, fontSize: 10, fontWeight: 700, padding: '1px 6px' }}>{unread}</span>}
                         </div>
-                        {c.notice_title && <div style={{ fontSize: 11, color: '#6366f1', fontWeight: 600, marginBottom: 2 }}>Re: {c.notice_title}</div>}
-                        <div style={{ fontSize: 11, color: '#9ca3af', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.last_message || 'No messages yet'}</div>
+                        {c.notice_title && <div style={{ fontSize: 11, color: 'var(--primary)', fontWeight: 600, marginBottom: 2 }}>Re: {c.notice_title}</div>}
+                        <div style={{ fontSize: 11, color: 'var(--muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.last_message || 'No messages yet'}</div>
                       </div>
                     );
                   })}
@@ -633,21 +725,21 @@ export default function TenantPortal() {
 
             {/* Thread — on mobile, only shown once a conversation is selected */}
             {(!isMobile || activeConv) && (
-              <div style={{ background: 'white', borderRadius: isMobile ? 0 : 12, border: isMobile ? 'none' : '1px solid #e5e7eb', display: 'flex', flexDirection: 'column', overflow: 'hidden', flex: isMobile ? 1 : 'initial', minHeight: 0 }}>
+              <div style={{ background: 'var(--surface)', borderRadius: isMobile ? 0 : 12, border: isMobile ? 'none' : '1px solid var(--border)', display: 'flex', flexDirection: 'column', overflow: 'hidden', flex: isMobile ? 1 : 'initial', minHeight: 0 }}>
                 {!activeConv ? (
-                  <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#9ca3af', gap: 8 }}>
+                  <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: 'var(--muted)', gap: 8 }}>
                     <span style={{ fontSize: 36 }}>💬</span>
                     <p style={{ fontSize: 13 }}>Select a conversation</p>
                   </div>
                 ) : (
                   <>
-                    <div style={{ padding: '12px 16px', borderBottom: '1px solid #f3f4f6', display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 10 }}>
                       {isMobile && (
-                        <button onClick={() => setActiveConv(null)} style={{ border: 'none', background: 'transparent', fontSize: 20, cursor: 'pointer', color: '#111', padding: 0, lineHeight: 1 }}>←</button>
+                        <button onClick={() => setActiveConv(null)} style={{ border: 'none', background: 'transparent', fontSize: 20, cursor: 'pointer', color: 'var(--text)', padding: 0, lineHeight: 1 }}>←</button>
                       )}
                       <div>
-                        <div style={{ fontWeight: 700, fontSize: 14, color: '#111' }}>{activeConv.other_name || 'Staff'}</div>
-                        {activeConv.notice_title && <div style={{ fontSize: 11, color: '#6366f1', fontWeight: 600 }}>Re: {activeConv.notice_title}</div>}
+                        <div style={{ fontWeight: 700, fontSize: 14, color: 'var(--text)' }}>{activeConv.other_name || 'Staff'}</div>
+                        {activeConv.notice_title && <div style={{ fontSize: 11, color: 'var(--primary)', fontWeight: 600 }}>Re: {activeConv.notice_title}</div>}
                       </div>
                     </div>
                     <div style={{ flex: 1, overflowY: 'auto', padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -655,8 +747,8 @@ export default function TenantPortal() {
                         const isMe = m.sender_type === 'tenant';
                         return (
                           <div key={m.id} style={{ display: 'flex', flexDirection: isMe ? 'row-reverse' : 'row', gap: 6 }}>
-                            <div style={{ maxWidth: isMobile ? '85%' : '75%', padding: '8px 12px', borderRadius: isMe ? '12px 12px 4px 12px' : '12px 12px 12px 4px', background: isMe ? '#6366f1' : '#f3f4f6', color: isMe ? '#fff' : '#111', fontSize: 13, lineHeight: 1.5 }}>
-                              {!isMe && <div style={{ fontSize: 10, fontWeight: 700, marginBottom: 3, color: '#6366f1' }}>{m.sender_name}</div>}
+                            <div style={{ maxWidth: isMobile ? '85%' : '75%', padding: '8px 12px', borderRadius: isMe ? '12px 12px 4px 12px' : '12px 12px 12px 4px', background: isMe ? 'var(--primary)' : 'var(--surface2)', color: isMe ? '#fff' : 'var(--text)', fontSize: 13, lineHeight: 1.5 }}>
+                              {!isMe && <div style={{ fontSize: 10, fontWeight: 700, marginBottom: 3, color: 'var(--primary)' }}>{m.sender_name}</div>}
                               {m.body}
                               <div style={{ fontSize: 9, marginTop: 3, opacity: 0.6, textAlign: isMe ? 'right' : 'left' }}>
                                 {new Date(m.created_at).toLocaleTimeString('en-KE', { hour: '2-digit', minute: '2-digit' })}
@@ -666,7 +758,7 @@ export default function TenantPortal() {
                         );
                       })}
                     </div>
-                    <div style={{ padding: '10px 14px', borderTop: '1px solid #f3f4f6', display: 'flex', gap: 8 }}>
+                    <div style={{ padding: '10px 14px', borderTop: '1px solid var(--border)', display: 'flex', gap: 8 }}>
                       <input value={msgInput} onChange={e => setMsgInput(e.target.value)}
                         onKeyDown={async e => {
                           if (e.key === 'Enter' && msgInput.trim()) {
@@ -676,13 +768,13 @@ export default function TenantPortal() {
                           }
                         }}
                         placeholder="Type a message... (Enter to send)"
-                        style={{ flex: 1, padding: '8px 12px', borderRadius: 8, border: '1px solid #e5e7eb', fontSize: 13, outline: 'none' }} />
+                        style={{ flex: 1, padding: '8px 12px', borderRadius: 8, border: '1px solid var(--border)', fontSize: 13, outline: 'none', background: 'var(--surface2)', color: 'var(--text)' }} />
                       <button onClick={async () => {
                         if (!msgInput.trim()) return;
                         const res = await tenantFetch(`/notices/conversations/${activeConv.id}/messages/tenant`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ body: msgInput.trim() }) });
                         setConvMessages(m => [...m, res.data]);
                         setMsgInput('');
-                      }} style={{ padding: '8px 16px', borderRadius: 8, border: 'none', background: '#6366f1', color: '#fff', fontWeight: 600, fontSize: 13, cursor: 'pointer' }}>Send</button>
+                      }} style={{ padding: '8px 16px', borderRadius: 8, border: 'none', background: 'var(--primary)', color: '#fff', fontWeight: 600, fontSize: 13, cursor: 'pointer' }}>Send</button>
                     </div>
                   </>
                 )}
@@ -698,17 +790,17 @@ export default function TenantPortal() {
 
 function SummaryCard({ icon, label, value, color, light }) {
   return (
-    <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12, padding: '16px', boxShadow: 'var(--shadow)' }}>
-      <div style={{ width: 36, height: 36, borderRadius: 10, background: light, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18, marginBottom: 10 }}>{icon}</div>
+    <div className="tp-card tp-kpi" style={{ '--tp-accent': color, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 16, padding: '16px', boxShadow: 'var(--shadow)' }}>
+      <div style={{ width: 32, height: 32, borderRadius: 9, background: light, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 16, marginBottom: 10 }}>{icon}</div>
       <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 4 }}>{label}</div>
-      <div style={{ fontFamily: 'Space Grotesk', fontWeight: 800, fontSize: 16, color }}>{value}</div>
+      <div style={{ fontFamily: 'Space Grotesk', fontWeight: 800, fontSize: 18, color }}>{value}</div>
     </div>
   );
 }
 
 function InfoCard({ title, rows }) {
   return (
-    <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12, overflow: 'hidden' }}>
+    <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 16, overflow: 'hidden' }}>
       <div style={{ padding: '12px 18px', background: 'var(--surface2)', borderBottom: '1px solid var(--border)', fontWeight: 700, fontSize: 14 }}>{title}</div>
       {rows.map(([label, value]) => (
         <div key={label} style={{ padding: '10px 18px', borderTop: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', fontSize: 14 }}>

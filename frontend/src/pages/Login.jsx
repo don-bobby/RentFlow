@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { login } from '../services/api';
 import API from '../services/api';
 
@@ -124,6 +125,10 @@ export default function Login() {
             {loading ? 'Signing in...' : 'Sign In →'}
           </button>
         </form>
+
+        <p style={{ textAlign: 'center', marginTop: 20, fontSize: 13, color: 'rgba(255,255,255,0.4)' }}>
+          Own a property? <Link to="/register" style={{ color: 'rgba(129,140,248,0.9)', fontWeight: 600, textDecoration: 'none' }}>Sign up as a landlord</Link>
+        </p>
       </div>
 
       {/* ── Forgot password overlay views ── */}

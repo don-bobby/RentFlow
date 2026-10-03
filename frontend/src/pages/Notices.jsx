@@ -1,10 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useLocation } from 'react-router-dom';
 import API from '../services/api';
-
-function getUser() {
-  try { return JSON.parse(atob(localStorage.getItem('token').split('.')[1])); } catch { return null; }
-}
+import { useAuth } from '../context/AuthContext';
 
 // ── Responsive hook (matches the one used in Layout.jsx) ──────────────────────
 function useBreakpoint() {
@@ -43,13 +40,13 @@ export default function Notices({ defaultTab = 'notices' }) {
   const [modal,         setModal]         = useState(false);
   const [newConvModal,  setNewConvModal]  = useState(false);
   const [newConvTarget, setNewConvTarget] = useState({ id: '', type: 'tenant' });
-  const [form,          setForm]          = useState({ title: '', body: '', priority: 'info', target_type: 'all', target_id: '', expires_at: '' });
+  const [form,          setForm]          = useState({ title: '', body: '', priority: 'info', target_type: 'property', target_id: '', expires_at: '' });
   const [saving,        setSaving]        = useState(false);
   const [error,         setError]         = useState('');
   const messagesEndRef = useRef(null);
   const pollRef        = useRef(null);
-  const me = getUser();
-  const canPost = ['admin', 'landlord'].includes(me?.role);
+  const { user: me, can } = useAuth();
+  const canPost = can('notices.create');
 
   async function load() {
     setLoading(true);
@@ -60,7 +57,7 @@ export default function Notices({ defaultTab = 'notices' }) {
         API.get('/plots'),
         API.get('/houses'),
         API.get('/tenants'),
-        API.get('/auth/users'),
+        API.get('/notices/contacts'),
       ]);
       setNotices(nr.data.data || []);
       setConversations(cr.data.data || []);
@@ -128,11 +125,20 @@ export default function Notices({ defaultTab = 'notices' }) {
   async function postNotice() {
     setSaving(true); setError('');
     try {
-      const payload = { ...form, target_id: form.target_id || null, expires_at: form.expires_at || null };
+      // form.expires_at comes from a plain <input type="date">, e.g. "2026-10-02",
+      // with no time component. Sent as-is, that becomes midnight at the START
+      // of that day — meaning a notice "expiring" today is already expired the
+      // moment it's posted, any time after 00:00. Treat the picked date as
+      // valid through the END of that day instead.
+      const payload = {
+        ...form,
+        target_id: form.target_id || null,
+        expires_at: form.expires_at ? `${form.expires_at}T23:59:59` : null,
+      };
       const res = await API.post('/notices', payload);
       setNotices(n => [res.data.data, ...n]);
       setModal(false);
-      setForm({ title: '', body: '', priority: 'info', target_type: 'all', target_id: '', expires_at: '' });
+      setForm({ title: '', body: '', priority: 'info', target_type: 'property', target_id: '', expires_at: '' });
     } catch (e) { setError(e.response?.data?.error || 'Failed to post notice.'); }
     finally { setSaving(false); }
   }
@@ -237,12 +243,12 @@ export default function Notices({ defaultTab = 'notices' }) {
                   <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                     <span style={{ background: p.bg, color: p.color, padding: '3px 10px', borderRadius: 99, fontSize: 12, fontWeight: 700 }}>{p.icon} {p.label}</span>
                     <span style={{ background: 'var(--surface2)', color: 'var(--muted)', padding: '3px 10px', borderRadius: 99, fontSize: 12, fontWeight: 600, textTransform: 'capitalize' }}>
-                      {n.target_type === 'all' ? '🌍 All Tenants' : n.target_type === 'property' ? '🏢 Property' : n.target_type === 'unit' ? '🏠 Unit' : '👤 Individual'}
+                      {n.target_type === 'all' ? '🌍 Everyone' : n.target_type === 'staff' ? '🔒 Staff Only' : n.target_type === 'property' ? '🏢 Property' : n.target_type === 'unit' ? '🏠 Unit' : '👤 Individual'}
                     </span>
                   </div>
                   <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                     <span style={{ fontSize: 12, color: 'var(--muted)' }}>{parseInt(n.read_count || 0)} read</span>
-                    {canPost && n.author_id === me?.id || me?.role === 'admin' ? (
+                    {(canPost && n.author_id === me?.id) || me?.role === 'admin' || me?.role === 'super_admin' ? (
                       <button onClick={() => deleteNotice(n.id)} style={{ padding: '3px 10px', borderRadius: 6, border: 'none', background: 'var(--red-light)', color: 'var(--red)', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>Delete</button>
                     ) : null}
                   </div>
@@ -392,13 +398,14 @@ export default function Notices({ defaultTab = 'notices' }) {
               <div>
                 <label style={labelStyle}>Send To</label>
                 <select value={form.target_type} onChange={e => setForm(f => ({ ...f, target_type: e.target.value, target_id: '' }))} style={inputStyle}>
-                  <option value="all">🌍 All Tenants</option>
-                  <option value="property">🏢 Specific Property</option>
-                  <option value="unit">🏠 Specific Unit</option>
-                  <option value="tenant">👤 Individual Tenant</option>
+                  {me?.role !== 'caretaker' && <option value="all">🌍 Everyone (all staff and tenants)</option>}
+                  {me?.role !== 'caretaker' && <option value="staff">🔒 Staff Only (admin, agents, landlords — never caretakers or tenants)</option>}
+                  <option value="property">🏢 Specific Property{me?.role === 'caretaker' ? ' (your assigned plot)' : ''}</option>
+                  <option value="unit">🏠 Specific Unit{me?.role === 'caretaker' ? ' (on your assigned plot)' : ''}</option>
+                  {me?.role !== 'caretaker' && <option value="tenant">👤 Individual Tenant</option>}
                 </select>
               </div>
-              {form.target_type !== 'all' && (
+              {form.target_type !== 'all' && form.target_type !== 'staff' && (
                 <div>
                   <label style={labelStyle}>{form.target_type === 'property' ? 'Select Property' : form.target_type === 'unit' ? 'Select Unit' : 'Select Tenant'}</label>
                   <select value={form.target_id} onChange={e => setForm(f => ({ ...f, target_id: e.target.value }))} style={inputStyle}>
@@ -433,7 +440,7 @@ export default function Notices({ defaultTab = 'notices' }) {
                 <label style={labelStyle}>Message To</label>
                 <select value={newConvTarget.type} onChange={e => setNewConvTarget(t => ({ ...t, type: e.target.value, id: '' }))} style={inputStyle}>
                   <option value="tenant">Tenant</option>
-                  <option value="user">Staff (Admin / Landlord / Caretaker)</option>
+                  <option value="user">Staff (Admin / Agent / Landlord / Caretaker)</option>
                 </select>
               </div>
               <div>

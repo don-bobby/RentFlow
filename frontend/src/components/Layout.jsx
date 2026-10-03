@@ -1,13 +1,8 @@
 import { Outlet, NavLink, useNavigate } from 'react-router-dom';
 import { useState, useEffect, useRef } from 'react';
-import API from '../services/api';
-
-function getUser() {
-  const token = localStorage.getItem('token');
-  if (!token) return null;
-  try { return JSON.parse(atob(token.split('.')[1])); }
-  catch { return null; }
-}
+import { createPortal } from 'react-dom';
+import API, { getPendingLandlordsCount } from '../services/api';
+import { useAuth } from '../context/AuthContext';
 
 // ── Responsive hook ───────────────────────────────────────────────────────────
 function useBreakpoint() {
@@ -21,7 +16,10 @@ function useBreakpoint() {
 }
 
 export default function Layout() {
-  const [collapsed,    setCollapsed]    = useState(false);
+  const [collapsed,    setCollapsed]    = useState(() => {
+    const saved = localStorage.getItem('sidebarCollapsed');
+    return saved !== null ? saved === '1' : window.innerWidth < 1100;
+  });
   const [sidebarOpen,  setSidebarOpen]  = useState(false); // mobile drawer
   const [theme,        setTheme]        = useState(localStorage.getItem('theme') || 'light');
   const [dropdown,     setDropdown]     = useState(false);
@@ -33,14 +31,37 @@ export default function Layout() {
   const [error,        setError]        = useState('');
   const [accountDetails, setAccountDetails] = useState(null);
   const fileInputRef = useRef(null);
-  const dropdownRef  = useRef(null);
-  const user         = getUser();
+  const dropdownRef  = useRef(null); // wraps the avatar BUTTON only (used to measure position + outside-click)
+  const dropdownPanelRef = useRef(null); // the portaled panel itself (lives in document.body, not here)
+  const [dropdownPos, setDropdownPos] = useState({ top: 0, right: 0 });
+  const { user, can } = useAuth(); // live DB row (role, agent_id, profile, permissions) via /api/auth/me
   const [displayName, setDisplayName]  = useState(null);
   const role         = user?.role;
+  const canApprove   = role === 'admin' || role === 'super_admin';
   const photoKey     = `userPhoto_${user?.id}`;
   const [photo,      setPhoto]         = useState(localStorage.getItem(`userPhoto_${user?.id}`) || null);
   const [clock,      setClock]         = useState('');
   const [unreadMsg,  setUnreadMsg]     = useState(0);
+  const [pendingLandlords, setPendingLandlords] = useState(0);
+  const [pendingUnits, setPendingUnits] = useState(0);
+  // Dismissal is keyed to the COUNT at the moment of dismissal, not just a
+  // boolean — so dismissing "3 units pending" hides the toast, but if a
+  // 4th shows up later in the same session, it reappears (something new
+  // actually needs attention), rather than being silenced forever.
+  const [dismissedLandlordsAt, setDismissedLandlordsAt] = useState(() => {
+    try { return parseInt(sessionStorage.getItem('dismissed_pending_landlords') || '0'); } catch { return 0; }
+  });
+  const [dismissedUnitsAt, setDismissedUnitsAt] = useState(() => {
+    try { return parseInt(sessionStorage.getItem('dismissed_pending_units') || '0'); } catch { return 0; }
+  });
+  function dismissLandlordsToast() {
+    setDismissedLandlordsAt(pendingLandlords);
+    try { sessionStorage.setItem('dismissed_pending_landlords', String(pendingLandlords)); } catch {}
+  }
+  function dismissUnitsToast() {
+    setDismissedUnitsAt(pendingUnits);
+    try { sessionStorage.setItem('dismissed_pending_units', String(pendingUnits)); } catch {}
+  }
   const [bellOpen,   setBellOpen]      = useState(false);
   const { isMobile }                   = useBreakpoint();
   const navigate = useNavigate();
@@ -73,6 +94,31 @@ export default function Layout() {
   }, []);
 
   useEffect(() => {
+    if (!canApprove) return;
+    async function fetchPending() {
+      try { const res = await getPendingLandlordsCount(); setPendingLandlords(res.data.count || 0); } catch {}
+    }
+    fetchPending();
+    const id = setInterval(fetchPending, 30000);
+    return () => clearInterval(id);
+  }, [canApprove]);
+
+  useEffect(() => {
+    if (!can('houses.approve')) return;
+    async function fetchPendingUnits() {
+      try { const hRes = await API.get('/houses/pending-approval-count'); setPendingUnits(hRes.data.count || 0); } catch {}
+    }
+    fetchPendingUnits();
+    const id = setInterval(fetchPendingUnits, 30000);
+    window.addEventListener('pending-units-changed', fetchPendingUnits);
+    return () => { clearInterval(id); window.removeEventListener('pending-units-changed', fetchPendingUnits); };
+  }, [can]);
+
+  useEffect(() => {
+    try { localStorage.setItem('sidebarCollapsed', collapsed ? '1' : '0'); } catch {}
+  }, [collapsed]);
+
+  useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
     localStorage.setItem('theme', theme);
     if (theme === 'dark') {
@@ -94,7 +140,9 @@ export default function Layout() {
 
   useEffect(() => {
     function handleClick(e) {
-      if (dropdownRef.current && !dropdownRef.current.contains(e.target)) setDropdown(false);
+      const insideButton = dropdownRef.current && dropdownRef.current.contains(e.target);
+      const insidePanel   = dropdownPanelRef.current && dropdownPanelRef.current.contains(e.target);
+      if (!insideButton && !insidePanel) setDropdown(false);
       if (chatsPanelRef.current && !chatsPanelRef.current.contains(e.target)) setChatsOpen(false);
     }
     document.addEventListener('mousedown', handleClick);
@@ -203,16 +251,18 @@ export default function Layout() {
   function handleLogout() { localStorage.removeItem('token'); window.location.href = '/login'; }
 
   const nav = [
-    { to: '/',            icon: '⊞', label: 'Dashboard',  roles: ['admin','landlord','caretaker'] },
-    { to: '/properties',  icon: '🏢', label: 'Properties', roles: ['admin','landlord','caretaker'] },
-    { to: '/tenants',     icon: '👥', label: 'Tenants',    roles: ['admin','landlord','caretaker'] },
-    { to: '/payments',    icon: '💳', label: 'Payments',   roles: ['admin','landlord'] },
-    { to: '/maintenance', icon: '🔧', label: 'Maintenance',roles: ['admin','landlord','caretaker'] },
-    { to: '/reports',     icon: '📊', label: 'Reports',    roles: ['admin','landlord'] },
-    { to: '/users',       icon: '👤', label: 'Users',      roles: ['admin','landlord'] },
-    { to: '/manage/listings', icon: '🏷️', label: 'Listings',  roles: ['admin','landlord'] },
-    { to: '/notices',     icon: '📢', label: 'Notices',    roles: ['admin','landlord','caretaker'] },
-    { to: '/messages',    icon: '💬', label: 'Messages',   roles: ['admin','landlord','caretaker'] },
+    { to: '/',            icon: '⊞', label: 'Dashboard',  roles: ['admin','super_admin','agent','landlord','caretaker'] },
+    { to: '/properties',  icon: '🏢', label: 'Properties', roles: ['admin','super_admin','agent','landlord','caretaker'] },
+    { to: '/tenants',     icon: '👥', label: 'Tenants',    roles: ['admin','super_admin','agent','landlord','caretaker'] },
+    { to: '/payments',    icon: '💳', label: 'Payments',   roles: ['admin','super_admin','agent','landlord'] },
+    { to: '/maintenance', icon: '🔧', label: 'Maintenance',roles: ['admin','super_admin','agent','landlord','caretaker'] },
+    { to: '/reports',     icon: '📊', label: 'Reports',    roles: ['admin','super_admin','agent','landlord'] },
+    { to: '/expenses',    icon: '🧾', label: 'Expenses',   roles: ['admin','super_admin','agent','landlord','caretaker'] },
+    { to: '/users',       icon: '👤', label: 'Users',      roles: ['admin','super_admin','agent','landlord'] },
+    { to: '/roles',       icon: '🛡️', label: 'Roles & Permissions', roles: ['admin','super_admin'] },
+    { to: '/manage/listings', icon: '🏷️', label: 'Listings',  roles: ['admin','super_admin','agent','landlord'] },
+    { to: '/notices',     icon: '📢', label: 'Notices',    roles: ['admin','super_admin','agent','landlord','caretaker'] },
+    { to: '/messages',    icon: '💬', label: 'Messages',   roles: ['admin','super_admin','agent','landlord','caretaker'] },
   ].filter(i => i.roles.includes(role));
 
   // Messages lives in the topbar (next to the profile dropdown) instead of
@@ -223,7 +273,7 @@ export default function Layout() {
 
   // Bottom nav shows max 5 most-used items on mobile
   const bottomNav = sidebarNav.slice(0, 5);
-  const roleColor = { admin: '#818cf8', landlord: '#34d399', caretaker: '#fbbf24' };
+  const roleColor = { admin: '#818cf8', super_admin: '#818cf8', agent: '#f472b6', landlord: '#34d399', caretaker: '#fbbf24' };
 
   const Avatar = ({ size = 30, fontSize = 13 }) => (
     <div style={{ width: size, height: size, borderRadius: '50%', overflow: 'hidden', flexShrink: 0, background: 'linear-gradient(135deg, #4f46e5, #818cf8)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontWeight: 700, fontSize }}>
@@ -242,11 +292,11 @@ export default function Layout() {
       {/* ── Sidebar (desktop always visible, mobile = drawer) ── */}
       {(!isMobile || sidebarOpen) && (
         <aside style={{
-          width: isMobile ? 260 : collapsed ? 68 : 230,
+          width: isMobile ? 260 : collapsed ? 64 : 212,
           minHeight: '100vh',
           background: '#0f1117',
           display: 'flex', flexDirection: 'column',
-          padding: '20px 0',
+          padding: '14px 0',
           transition: 'width 0.2s ease',
           flexShrink: 0,
           position: isMobile ? 'fixed' : 'sticky',
@@ -254,8 +304,9 @@ export default function Layout() {
           height: isMobile ? '100vh' : '100vh',
           overflow: 'hidden',
           zIndex: isMobile ? 50 : 1,
+          boxShadow: isMobile ? '0 0 40px rgba(0,0,0,0.45)' : '1px 0 0 rgba(255,255,255,0.04)',
         }}>
-          <div style={{ padding: '0 16px 24px', display: 'flex', alignItems: 'center', gap: 10 }}>
+          <div style={{ padding: '0 14px 18px', display: 'flex', alignItems: 'center', gap: 10 }}>
             <div style={{ width: 36, height: 36, borderRadius: 10, flexShrink: 0, background: 'linear-gradient(135deg, #4f46e5, #818cf8)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18 }}>🏠</div>
             {(!collapsed || isMobile) && <span style={{ fontFamily: 'Space Grotesk', fontWeight: 700, fontSize: 18, color: '#fff', whiteSpace: 'nowrap' }}>RentFlow</span>}
             {isMobile && <button onClick={() => setSidebarOpen(false)} style={{ marginLeft: 'auto', background: 'transparent', border: 'none', color: 'rgba(255,255,255,0.5)', fontSize: 20, cursor: 'pointer' }}>×</button>}
@@ -269,7 +320,9 @@ export default function Layout() {
 
           <nav style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 2, padding: '0 8px', overflowY: 'auto' }}>
             {sidebarNav.map(({ to, icon, label }) => (
-              <NavItem key={to} to={to} icon={icon} label={label} collapsed={collapsed && !isMobile} unread={label === 'Messages' ? unreadMsg : 0} onClick={() => isMobile && setSidebarOpen(false)} />
+              <NavItem key={to} to={to} icon={icon} label={label} collapsed={collapsed && !isMobile}
+                unread={label === 'Messages' ? unreadMsg : label === 'Users' ? pendingLandlords : label === 'Properties' ? pendingUnits : 0}
+                onClick={() => isMobile && setSidebarOpen(false)} />
             ))}
             <NavAction icon="⚙️" label="Settings" collapsed={collapsed && !isMobile} active={modal === 'settings'}
               onClick={() => { openSettings(); isMobile && setSidebarOpen(false); }} />
@@ -290,11 +343,28 @@ export default function Layout() {
       <main style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, paddingBottom: 0 }}>
 
         {/* ── Topbar ── */}
-        <header style={{ background: 'var(--surface)', borderBottom: '1px solid var(--border)', padding: '0 24px', height: 60, display: 'flex', alignItems: 'center', justifyContent: 'space-between', position: 'sticky', top: 0, zIndex: 10 }}>
+        {/* zIndex here must stay above ordinary page content (cards, the
+            Property Map widget, etc.) — dropdowns rendered inside this
+            header (account menu, bell, chats) are trapped in this
+            stacking context, so if THIS number is too low, no z-index on
+            the dropdown itself can save it from being covered by
+            something on the page with a higher effective z-index.
+            Kept below 200, since this file's own modals/full panels
+            (ModalWrapper, chats full panel, notifications panel) use
+            zIndex: 200 and must stay above the header, not below it. */}
+        <header style={{ padding: isMobile ? '0 14px' : '0 24px', height: 60, display: 'flex', alignItems: 'center', justifyContent: 'space-between', position: 'sticky', top: 0, zIndex: 100 }}>
+          <div aria-hidden="true" style={{
+            position: 'absolute', inset: 0, zIndex: -1, pointerEvents: 'none',
+            background: theme === 'dark' ? 'rgba(26,29,39,0.62)' : 'rgba(255,255,255,0.62)',
+            WebkitBackdropFilter: 'saturate(180%) blur(16px)', backdropFilter: 'saturate(180%) blur(16px)',
+            borderBottom: `1px solid ${theme === 'dark' ? 'rgba(255,255,255,0.07)' : 'rgba(15,22,35,0.07)'}`,
+            boxShadow: theme === 'dark' ? '0 6px 24px rgba(0,0,0,0.25)' : '0 6px 24px rgba(15,23,42,0.06)',
+          }} />
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            {isMobile && (
-              <button onClick={() => setSidebarOpen(true)} style={{ width: 38, height: 38, borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface2)', cursor: 'pointer', fontSize: 20, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>☰</button>
-            )}
+            <button onClick={() => (isMobile ? setSidebarOpen(true) : setCollapsed(c => !c))}
+              aria-label={isMobile ? 'Open menu' : (collapsed ? 'Expand sidebar' : 'Collapse sidebar')}
+              title={isMobile ? 'Menu' : (collapsed ? 'Expand sidebar' : 'Collapse sidebar')}
+              style={{ width: 38, height: 38, borderRadius: 10, border: 'none', background: 'rgba(127,127,127,0.12)', color: 'var(--text)', cursor: 'pointer', fontSize: 18, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>☰</button>
             {!isMobile && (
               <>
                 <div style={{ fontFamily: 'Space Grotesk', fontWeight: 600, fontSize: 15, color: theme === 'dark' ? 'var(--blue, #2563eb)' : 'var(--muted)' }}>Kenya Rental Management</div>
@@ -332,6 +402,7 @@ export default function Layout() {
                       timeAgo={timeAgo}
                       isMobile={isMobile}
                       onClose={() => setChatsOpen(false)}
+                      onOpenFull={() => { setChatsOpen(false); navigate('/messages'); }}
                     />
                   )}
                 </div>
@@ -369,13 +440,19 @@ export default function Layout() {
 
             {/* Avatar */}
             <div ref={dropdownRef} style={{ position: 'relative' }}>
-              <button onClick={() => setDropdown(d => !d)} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface2)', cursor: 'pointer' }}>
+              <button onClick={() => {
+                if (!dropdown && dropdownRef.current) {
+                  const r = dropdownRef.current.getBoundingClientRect();
+                  setDropdownPos({ top: r.bottom + 8, right: window.innerWidth - r.right });
+                }
+                setDropdown(d => !d);
+              }} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface2)', cursor: 'pointer' }}>
                 <Avatar size={30} fontSize={13} />
                 {!isMobile && <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>{displayName || user?.name}</span>}
                 <span style={{ fontSize: 11, color: 'var(--muted)' }}>{dropdown ? '▲' : '▼'}</span>
               </button>
-              {dropdown && (
-                <div style={{ position: 'absolute', right: 0, top: 'calc(100% + 8px)', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12, boxShadow: 'var(--shadow-lg)', width: 220, zIndex: 50, overflow: 'hidden' }}>
+              {dropdown && createPortal(
+                <div ref={dropdownPanelRef} style={{ position: 'fixed', top: dropdownPos.top, right: dropdownPos.right, background: theme === 'dark' ? 'rgba(26,29,39,0.5)' : 'rgba(255,255,255,0.5)', WebkitBackdropFilter: 'saturate(180%) blur(14px)', backdropFilter: 'saturate(180%) blur(14px)', border: '1px solid var(--border)', borderRadius: 12, boxShadow: 'var(--shadow-lg)', width: 220, zIndex: 9999, overflow: 'hidden' }}>
                   <div style={{ padding: '14px 16px', borderBottom: '1px solid var(--border)', background: 'var(--surface2)', display: 'flex', alignItems: 'center', gap: 10 }}>
                     <Avatar size={36} fontSize={14} />
                     <div>
@@ -397,21 +474,22 @@ export default function Layout() {
                     <div style={{ borderTop: '1px solid var(--border)', margin: '6px 0' }} />
                     <DropdownItem icon="⏻" label="Logout" onClick={handleLogout} danger />
                   </div>
-                </div>
+                </div>,
+                document.body
               )}
             </div>
           </div>
         </header>
 
         {/* ── Page content ── */}
-        <div style={{ flex: 1, padding: 28, overflow: 'auto' }}>
+        <div style={{ flex: 1, padding: isMobile ? '16px 14px calc(84px + env(safe-area-inset-bottom, 0px))' : 28, overflow: 'auto' }}>
           <Outlet />
         </div>
       </main>
 
       {/* ── Bottom nav (mobile only) ── */}
       {isMobile && (
-        <nav style={{ position: 'fixed', bottom: 0, left: 0, right: 0, height: 64, background: '#0f1117', borderTop: '1px solid #1e2235', display: 'flex', alignItems: 'center', justifyContent: 'space-around', zIndex: 30, paddingBottom: 'env(safe-area-inset-bottom)' }}>
+        <nav style={{ position: 'fixed', bottom: 0, left: 0, right: 0, height: 64, background: 'rgba(15,17,23,0.82)', WebkitBackdropFilter: 'blur(14px)', backdropFilter: 'blur(14px)', borderTop: '1px solid rgba(255,255,255,0.08)', display: 'flex', alignItems: 'center', justifyContent: 'space-around', zIndex: 30, paddingBottom: 'env(safe-area-inset-bottom)' }}>
           {bottomNav.map(({ to, icon, label }) => (
             <NavLink key={to} to={to} end={to === '/'}
               style={({ isActive }) => ({ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3, padding: '8px 12px', borderRadius: 10, color: isActive ? '#818cf8' : 'rgba(255,255,255,0.45)', textDecoration: 'none', minWidth: 56, position: 'relative' })}>
@@ -419,6 +497,12 @@ export default function Layout() {
               <span style={{ fontSize: 10, fontWeight: 600 }}>{label}</span>
               {label === 'Messages' && unreadMsg > 0 && (
                 <span style={{ position: 'absolute', top: 4, right: 8, background: '#ef4444', color: '#fff', borderRadius: 99, fontSize: 9, fontWeight: 700, padding: '1px 4px' }}>{unreadMsg}</span>
+              )}
+              {label === 'Users' && pendingLandlords > 0 && (
+                <span style={{ position: 'absolute', top: 4, right: 8, background: '#ef4444', color: '#fff', borderRadius: 99, fontSize: 9, fontWeight: 700, padding: '1px 4px' }}>{pendingLandlords}</span>
+              )}
+              {label === 'Properties' && pendingUnits > 0 && (
+                <span style={{ position: 'absolute', top: 4, right: 8, background: '#ef4444', color: '#fff', borderRadius: 99, fontSize: 9, fontWeight: 700, padding: '1px 4px' }}>{pendingUnits}</span>
               )}
             </NavLink>
           ))}
@@ -542,13 +626,79 @@ export default function Layout() {
           </div>
         </ModalWrapper>
       )}
+
+      {/* ── Floating approval toasts (bottom-right) ──────────────────────────
+          Replaces the old full-width Dashboard banners. Global (lives in
+          Layout, not Dashboard), so it follows you to whichever page you're
+          on. Dismissal is per-session and keyed to the count at dismiss
+          time — closing "3 pending" won't hide a later "4 pending". */}
+      <div style={{
+        position: 'fixed', bottom: 20, right: 20, zIndex: 200,
+        display: 'flex', flexDirection: 'column', gap: 10, maxWidth: 340,
+      }}>
+        {pendingLandlords > 0 && pendingLandlords !== dismissedLandlordsAt && (
+          <div style={{
+            display: 'flex', alignItems: 'flex-start', gap: 10, padding: '14px 16px',
+            background: 'color-mix(in srgb, var(--surface) 50%, transparent)',
+            backdropFilter: 'blur(10px)', WebkitBackdropFilter: 'blur(10px)',
+            border: '1px solid var(--amber, #d97706)',
+            borderLeft: '4px solid var(--amber, #d97706)', borderRadius: 12,
+            boxShadow: '0 8px 24px rgba(0,0,0,0.18)',
+            animation: 'toast-in 0.25s ease',
+          }}>
+            <span style={{ fontSize: 18, lineHeight: 1 }}>⏳</span>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)', marginBottom: 6 }}>
+                {pendingLandlords} landlord{pendingLandlords > 1 ? 's' : ''} waiting for approval
+              </div>
+              <button onClick={() => navigate('/users?filter=pending')} style={{
+                padding: '5px 12px', borderRadius: 7, border: 'none',
+                background: 'var(--amber, #d97706)', color: '#fff',
+                fontWeight: 700, fontSize: 12, cursor: 'pointer',
+              }}>Review</button>
+            </div>
+            <button onClick={dismissLandlordsToast} aria-label="Dismiss" style={{
+              border: 'none', background: 'transparent', color: 'var(--muted)',
+              fontSize: 16, cursor: 'pointer', lineHeight: 1, padding: 2,
+            }}>×</button>
+          </div>
+        )}
+        {pendingUnits > 0 && pendingUnits !== dismissedUnitsAt && (
+          <div style={{
+            display: 'flex', alignItems: 'flex-start', gap: 10, padding: '14px 16px',
+            background: 'color-mix(in srgb, var(--surface) 50%, transparent)',
+            backdropFilter: 'blur(10px)', WebkitBackdropFilter: 'blur(10px)',
+            border: '1px solid var(--amber, #d97706)',
+            borderLeft: '4px solid var(--amber, #d97706)', borderRadius: 12,
+            boxShadow: '0 8px 24px rgba(0,0,0,0.18)',
+            animation: 'toast-in 0.25s ease',
+          }}>
+            <span style={{ fontSize: 18, lineHeight: 1 }}>🏠</span>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)', marginBottom: 6 }}>
+                {pendingUnits} unit{pendingUnits > 1 ? 's' : ''} waiting for approval
+              </div>
+              <button onClick={() => navigate('/properties')} style={{
+                padding: '5px 12px', borderRadius: 7, border: 'none',
+                background: 'var(--amber, #d97706)', color: '#fff',
+                fontWeight: 700, fontSize: 12, cursor: 'pointer',
+              }}>Review</button>
+            </div>
+            <button onClick={dismissUnitsToast} aria-label="Dismiss" style={{
+              border: 'none', background: 'transparent', color: 'var(--muted)',
+              fontSize: 16, cursor: 'pointer', lineHeight: 1, padding: 2,
+            }}>×</button>
+          </div>
+        )}
+      </div>
+      <style>{`@keyframes toast-in { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }`}</style>
     </div>
   );
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function ChatsPanel({ loading, conversations, search, setSearch, filter, setFilter, onSelect, timeAgo, isMobile, onClose }) {
+function ChatsPanel({ loading, conversations, search, setSearch, filter, setFilter, onSelect, timeAgo, isMobile, onClose, onOpenFull }) {
   const filtered = conversations
     .filter(c => (c.other_name || 'Staff').toLowerCase().includes(search.toLowerCase()))
     .filter(c => filter === 'all' || parseInt(c.unread_count || 0) > 0);
@@ -603,6 +753,13 @@ function ChatsPanel({ loading, conversations, search, setSearch, filter, setFilt
         ) : filtered.length === 0 ? (
           <div style={{ padding: 24, textAlign: 'center', color: '#8a8d91', fontSize: 13 }}>
             {search ? 'No matching conversations.' : 'No conversations yet.'}
+            {!search && (
+              <div style={{ marginTop: 12 }}>
+                <button onClick={onOpenFull} style={{ padding: '8px 16px', borderRadius: 20, border: 'none', background: '#3a5a99', color: '#8ab4f8', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>
+                  + New Message
+                </button>
+              </div>
+            )}
           </div>
         ) : filtered.map(c => {
           const unread = parseInt(c.unread_count || 0);
@@ -639,6 +796,13 @@ function ChatsPanel({ loading, conversations, search, setSearch, filter, setFilt
           );
         })}
       </div>
+
+      <div onClick={onOpenFull} style={{
+        padding: '10px 14px', textAlign: 'center', fontSize: 12.5, fontWeight: 700,
+        color: '#8ab4f8', cursor: 'pointer', borderTop: '1px solid #3a3b3c',
+      }}>
+        Open Messages →
+      </div>
     </div>
   );
 }
@@ -646,12 +810,12 @@ function ChatsPanel({ loading, conversations, search, setSearch, filter, setFilt
 function NavItem({ to, icon, label, collapsed, unread = 0, onClick }) {
   const [hover, setHover] = useState(false);
   return (
-    <NavLink to={to} end={to === '/'} onClick={onClick}
+    <NavLink to={to} end={to === '/'} onClick={onClick} title={collapsed ? label : undefined}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
       style={({ isActive }) => ({
         display: 'flex', alignItems: 'center', gap: 12,
-        padding: '11px 12px', borderRadius: 10,
+        padding: '9px 12px', borderRadius: 10,
         color: isActive ? '#fff' : hover ? '#fff' : 'rgba(255,255,255,0.5)',
         background: isActive ? 'rgba(255,255,255,0.15)' : hover ? 'rgba(255,255,255,0.08)' : 'transparent',
         fontWeight: isActive ? 600 : 400, fontSize: 14,
@@ -672,12 +836,12 @@ function NavItem({ to, icon, label, collapsed, unread = 0, onClick }) {
 function NavAction({ icon, label, collapsed, active, onClick }) {
   const [hover, setHover] = useState(false);
   return (
-    <button onClick={onClick}
+    <button onClick={onClick} title={collapsed ? label : undefined}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
       style={{
         display: 'flex', alignItems: 'center', gap: 12,
-        padding: '11px 12px', borderRadius: 10,
+        padding: '9px 12px', borderRadius: 10,
         border: 'none', width: '100%', textAlign: 'left', cursor: 'pointer', fontFamily: 'inherit',
         color: active ? '#fff' : hover ? '#fff' : 'rgba(255,255,255,0.5)',
         background: active ? 'rgba(255,255,255,0.15)' : hover ? 'rgba(255,255,255,0.08)' : 'transparent',

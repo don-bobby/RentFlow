@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import { useLocation } from 'react-router-dom';
 import API from '../services/api';
 
 function getUser() {
@@ -78,6 +79,7 @@ export default function Properties() {
   const [houses,    setHouses]    = useState([]);
   const [landlords, setLandlords] = useState([]);
   const [caretakers, setCaretakers] = useState([]);
+  const [agents,     setAgents]     = useState([]);
   const [loading,   setLoading]   = useState(true);
   const [modal,     setModal]     = useState(null);
   const [editing,   setEditing]   = useState(null);
@@ -87,6 +89,10 @@ export default function Properties() {
   const [rejectTarget, setRejectTarget] = useState(null);
   const [rejectReason, setRejectReason] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
+  const [search,          setSearch]          = useState('');
+  const [ownerFilter,     setOwnerFilter]     = useState('all'); // 'all' | owner id
+  const [caretakerFilter, setCaretakerFilter] = useState('all'); // 'all' | 'none' | caretaker id
+  const [agentFilter,     setAgentFilter]     = useState('all'); // 'all' | 'none' | agent id
 
   // Let Esc close the Add/Edit Plot/Unit modal, same as clicking Cancel
   useEffect(() => {
@@ -108,7 +114,11 @@ export default function Properties() {
   const [uploading, setUploading] = useState(false);
 
   const user = getUser();
+  const location = useLocation();
+  const plotRefs = useRef({}); // plot.id -> DOM node, for scrollIntoView
+  const [highlightPlotId, setHighlightPlotId] = useState(location.state?.highlightPlotId || null);
   const isAdmin    = user?.role === 'admin';
+  const isAgent    = user?.role === 'agent';
   const isCaretaker = user?.role === 'caretaker';
   const isDark      = useIsDarkMode();
   const [openMenu, setOpenMenu] = useState(null);
@@ -121,18 +131,25 @@ export default function Properties() {
 
 
 
+  const [permissions, setPermissions] = useState([]);
+  function can(permission) {
+    return permissions.includes('*') || permissions.includes(permission);
+  }
+
   async function load() {
     setLoading(true);
     try {
-      const requests = [API.get('/plots'), API.get('/houses')];
+      const requests = [API.get('/plots'), API.get('/houses'), API.get('/auth/me')];
       if (isAdmin) requests.push(API.get('/auth/users'));
-      const [pr, hr, ur] = await Promise.all(requests);
+      const [pr, hr, meR, ur] = await Promise.all(requests);
       setPlots(Array.isArray(pr.data) ? pr.data : (pr.data.data || []));
       setHouses(Array.isArray(hr.data) ? hr.data : (hr.data.data || []));
+      setPermissions(meR.data?.data?.permissions || []);
       if (ur) {
         const users = ur.data.data || [];
         setLandlords(users.filter(u => u.role === 'landlord' && u.is_approved));
         setCaretakers(users.filter(u => u.role === 'caretaker'));
+        setAgents(users.filter(u => u.role === 'agent'));
       }
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
@@ -144,9 +161,20 @@ export default function Properties() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { load(); }, []);
 
+  // Scroll to the plot flagged by the dashboard alert's "Review" button, once
+  // its card actually exists in the DOM. Highlight fades after a few seconds
+  // so it doesn't linger forever if the landlord/agent just leaves it open.
+  useEffect(() => {
+    if (!highlightPlotId || plots.length === 0) return;
+    const node = plotRefs.current[highlightPlotId];
+    if (node) node.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    const t = setTimeout(() => setHighlightPlotId(null), 4000);
+    return () => clearTimeout(t);
+  }, [highlightPlotId, plots]);
+
   function openAddPlot() {
     setEditing(null);
-    setForm({ name: '', location: '', description: '', owner_id: landlords[0]?.id || '', gps_lat: '', gps_lng: '' });
+    setForm({ name: '', location: '', description: '', owner_id: landlords[0]?.id || '', agent_id: '', gps_lat: '', gps_lng: '' });
     setModal('plot'); setError('');
   }
 
@@ -157,6 +185,7 @@ export default function Properties() {
       location:    plot.location    || '',
       description: plot.description || '',
       owner_id:    plot.user_id     || '',
+      agent_id:    plot.agent_id    || '',
       gps_lat:     plot.gps_lat     != null ? String(plot.gps_lat) : '',
       gps_lng:     plot.gps_lng     != null ? String(plot.gps_lng) : '',
     });
@@ -179,10 +208,15 @@ export default function Properties() {
     setSaving(true); setError('');
     try {
       if (modal === 'plot') {
+        const plotPayload = {
+          ...form,
+          gps_lat: form.gps_lat === '' || form.gps_lat == null ? null : parseFloat(form.gps_lat),
+          gps_lng: form.gps_lng === '' || form.gps_lng == null ? null : parseFloat(form.gps_lng),
+        };
         if (editing) {
-          await API.put(`/plots/${editing.id}`, form);
+          await API.put(`/plots/${editing.id}`, plotPayload);
         } else {
-          await API.post('/plots', form);
+          await API.post('/plots', plotPayload);
         }
       } else {
         const housePayload = {
@@ -224,6 +258,63 @@ export default function Properties() {
     } catch (e) { alert(e.response?.data?.error || 'Failed to delete unit'); }
   }
 
+  // Caretakers: a plot can have several. Matched via the admin-only
+  // `caretakers` list when available (admin sees every caretaker's full
+  // plot assignment string) — but that list is never fetched at all for
+  // landlord/agent, who'd otherwise always see "None assigned" even when a
+  // caretaker genuinely is assigned. Falls back to plot.caretaker_name,
+  // which GET /plots now returns directly, already scoped correctly for
+  // every role, same pattern plotAgent() below already used successfully.
+  const plotCaretakers = (plot) => {
+    const matched = caretakers.filter(c =>
+      String(c.plot_id) === String(plot.id) ||
+      (c.caretaker_plots || '').split(',').map(n => n.trim()).includes(plot.name)
+    );
+    if (matched.length > 0) return matched;
+    return plot.caretaker_name ? [{ name: plot.caretaker_name }] : [];
+  };
+
+  // Agent: stored on the plot itself (plots.agent_id), so every plot can have
+  // its own agent regardless of who owns it.
+  const plotAgent = (plot) => {
+    if (plot.agent_id == null) return undefined;
+    return agents.find(a => String(a.id) === String(plot.agent_id))
+        || (plot.agent_name ? { id: plot.agent_id, name: plot.agent_name } : undefined);
+  };
+
+  // Owners that actually have plots (works for any role, since each plot
+  // carries its owner's id and name).
+  const ownerOptions = Array.from(
+    new Map(plots.map(pl => [String(pl.user_id), { id: pl.user_id, name: pl.owner_name || 'Admin' }])).values()
+  ).sort((a, b) => a.name.localeCompare(b.name));
+
+  const q = search.trim().toLowerCase();
+  const visiblePlots = plots.filter(plot => {
+    if (q && !`${plot.name} ${plot.location || ''}`.toLowerCase().includes(q)) return false;
+    if (ownerFilter !== 'all' && String(plot.user_id) !== String(ownerFilter)) return false;
+
+    const cts = plotCaretakers(plot);
+    if (caretakerFilter === 'none' && cts.length > 0) return false;
+    if (caretakerFilter !== 'all' && caretakerFilter !== 'none' &&
+        !cts.some(c => String(c.id) === String(caretakerFilter))) return false;
+
+    const ag = plotAgent(plot);
+    if (agentFilter === 'none' && ag) return false;
+    if (agentFilter !== 'all' && agentFilter !== 'none' &&
+        !(ag && String(ag.id) === String(agentFilter))) return false;
+
+    return true;
+  });
+
+  const filtersActive = !!q || ownerFilter !== 'all' || statusFilter !== 'all' || caretakerFilter !== 'all' || agentFilter !== 'all';
+  function clearFilters() { setSearch(''); setOwnerFilter('all'); setStatusFilter('all'); setCaretakerFilter('all'); setAgentFilter('all'); }
+  const statusCounts = {
+    all: houses.length,
+    vacant: houses.filter(h => h.status === 'vacant').length,
+    occupied: houses.filter(h => h.status === 'occupied').length,
+    maintenance: houses.filter(h => h.status === 'maintenance').length,
+  };
+
   const allPlotHouses = (plotId) => houses.filter(h => h.plot_id === plotId);
   const plotHouses = (plotId) => allPlotHouses(plotId).filter(h => statusFilter === 'all' || h.status === statusFilter);
 
@@ -231,6 +322,9 @@ export default function Properties() {
     try {
       await API.patch(`/houses/${houseId}/approve`);
       setHouses(hs => hs.map(h => h.id === houseId ? { ...h, is_approved: true, rejection_reason: null } : h));
+      // Tell Layout's sidebar badge (and the dashboard banner) to recount
+      // immediately, instead of leaving them stuck until the next 30s poll.
+      window.dispatchEvent(new Event('pending-units-changed'));
     } catch (e) { console.error(e); }
   }
 
@@ -238,6 +332,7 @@ export default function Properties() {
     try {
       await API.patch(`/houses/${houseId}/reject`, { reason });
       setHouses(hs => hs.map(h => h.id === houseId ? { ...h, is_approved: false, rejection_reason: reason || 'Rejected' } : h));
+      window.dispatchEvent(new Event('pending-units-changed'));
     } catch (e) { console.error(e); }
   }
 
@@ -278,32 +373,78 @@ export default function Properties() {
 
   return (
     <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 28 }}>
+      <style>{`
+        .pp-unit-card:hover { box-shadow: 0 4px 14px rgba(0,0,0,0.12); transform: translateY(-1px); }
+        @media (prefers-reduced-motion: reduce) { .pp-unit-card { transition: none !important; } }
+      `}</style>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
         <div>
           <h1 style={{ fontFamily: 'Space Grotesk', fontSize: 26, fontWeight: 700, marginBottom: 4, color: 'var(--text)' }}>Properties</h1>
           <p style={{ color: isDark ? 'var(--blue, #2563eb)' : 'var(--muted)', fontSize: 14 }}>{plots.length} plots · {houses.length} units</p>
         </div>
-        <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)} style={{
-          padding: '10px 14px', borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface)',
-          fontSize: 13, fontWeight: 600, color: 'var(--text)', cursor: 'pointer', outline: 'none',
-        }}>
-          <option value="all">All Units</option>
-          <option value="vacant">Vacant</option>
-          <option value="occupied">Occupied</option>
-          <option value="maintenance">Under Maintenance</option>
-        </select>
-        <div style={{ display: 'flex', gap: 10 }}>
-          {!isCaretaker && (
-            <button onClick={openAddPlot} style={{ padding: '10px 18px', borderRadius: 10, border: 'none', background: 'var(--red, #dc2626)', color: '#fff', fontWeight: 600, fontSize: 14 }}>+ Add Plot</button>
+        {can('plots.create') && (
+          <button onClick={openAddPlot} style={{ padding: '10px 18px', borderRadius: 10, border: 'none', background: 'var(--red, #dc2626)', color: '#fff', fontWeight: 600, fontSize: 14 }}>+ Add Plot</button>
+        )}
+      </div>
+
+      {/* Filter bar */}
+      <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, padding: 16, marginBottom: 24, display: 'flex', flexDirection: 'column', gap: 14 }}>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16, alignItems: 'flex-end' }}>
+          <div>
+            <div style={filterLabelStyle}>Unit status</div>
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+              {[['all', 'All'], ['vacant', 'Vacant'], ['occupied', 'Occupied'], ['maintenance', 'Maintenance']].map(([val, label]) => {
+                const on = statusFilter === val;
+                return (
+                  <button key={val} onClick={() => setStatusFilter(val)} style={{
+                    padding: '7px 12px', borderRadius: 99, fontSize: 12, fontWeight: 600, cursor: 'pointer',
+                    border: `1px solid ${on ? 'var(--primary, #7c3aed)' : 'var(--border)'}`,
+                    background: on ? 'var(--primary, #7c3aed)' : 'var(--surface)',
+                    color: on ? '#fff' : 'var(--text)',
+                  }}>
+                    {label} <span style={{ opacity: 0.7, marginLeft: 2 }}>{statusCounts[val]}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {ownerOptions.length > 1 && (
+            <FilterSelect label="Owner" value={ownerFilter} onChange={setOwnerFilter}
+              allLabel="All owners" options={ownerOptions} />
           )}
+
+          {isAdmin && (
+            <>
+              <FilterSelect label="Caretaker" value={caretakerFilter} onChange={setCaretakerFilter}
+                allLabel="All caretakers" noneLabel="No caretaker" options={caretakers} />
+              <FilterSelect label="Agent" value={agentFilter} onChange={setAgentFilter}
+                allLabel="All agents" noneLabel="No agent" options={agents} />
+            </>
+          )}
+
+          <ExpandableSearch value={search} onChange={setSearch} />
+
+          <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 12 }}>
+            <span style={{ fontSize: 13, color: 'var(--muted)' }}>Showing {visiblePlots.length} of {plots.length} plots</span>
+            {filtersActive && (
+              <button onClick={clearFilters} style={{ padding: '7px 12px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', fontSize: 12, fontWeight: 600, color: 'var(--text)', cursor: 'pointer' }}>Clear filters</button>
+            )}
+          </div>
         </div>
       </div>
 
       {loading ? <div style={{ color: 'var(--muted)', padding: 40, textAlign: 'center' }}>Loading...</div> : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 28 }}>
           {plots.length === 0 && <div style={{ textAlign: 'center', color: 'var(--muted)', padding: 60 }}>No properties yet. Add your first plot to get started.</div>}
-          {plots.map(plot => (
-            <div key={plot.id} style={{ background: 'var(--surface, #ffffff)', borderRadius: 'var(--radius)', boxShadow: 'var(--shadow, 0 2px 8px rgba(0,0,0,0.10))', border: '1.5px solid var(--border, #94a3b8)', overflow: 'hidden' }}>
+          {plots.length > 0 && visiblePlots.length === 0 && <div style={{ textAlign: 'center', color: 'var(--muted)', padding: 60 }}>No plots match your filters.</div>}
+          {visiblePlots.map(plot => (
+            <div key={plot.id} ref={el => { plotRefs.current[plot.id] = el; }} style={{
+              background: 'var(--surface, #ffffff)', borderRadius: 'var(--radius)',
+              boxShadow: String(plot.id) === String(highlightPlotId) ? '0 0 0 3px var(--amber, #d97706), 0 4px 20px rgba(217,119,6,0.35)' : 'var(--shadow, 0 2px 8px rgba(0,0,0,0.10))',
+              border: String(plot.id) === String(highlightPlotId) ? '1.5px solid var(--amber, #d97706)' : '1.5px solid var(--border, #94a3b8)',
+              overflow: 'hidden', transition: 'box-shadow 0.4s ease, border-color 0.4s ease',
+            }}>
               {/* Plot header */}
               <div style={{ padding: '18px 24px', borderBottom: '1px solid var(--border, #cbd5e1)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'var(--surface2, #f1f5f9)' }}>
                 <div>
@@ -313,21 +454,39 @@ export default function Properties() {
                       <span style={{ fontSize: 11, fontWeight: 700, color: isDark ? 'var(--blue, #2563eb)' : 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.5px', minWidth: 64 }}>Location</span>
                       <span style={{ fontSize: 13, color: 'var(--text)' }}>📍 {plot.location || '—'}</span>
                     </div>
-                    {isAdmin && (
+                    {(isAdmin || isAgent || isCaretaker) && (
                       <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                         <span style={{ fontSize: 11, fontWeight: 700, color: isDark ? 'var(--blue, #2563eb)' : 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.5px', minWidth: 64 }}>Owner</span>
-                        <span style={{ fontSize: 13, color: 'var(--text)' }}>👤 {landlords.find(l => l.id === plot.user_id)?.name || 'Admin'}</span>
+                        {/* landlords.find(...) only ever resolves for admin, since that list is
+                            admin-only fetched — plot.owner_name (from GET /plots directly) works
+                            correctly for every role, same fix as caretaker/agent above. */}
+                        <span style={{ fontSize: 13, color: 'var(--text)' }}>👤 {landlords.find(l => l.id === plot.user_id)?.name || plot.owner_name || 'Admin'}</span>
                       </div>
                     )}
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                      <span style={{ fontSize: 11, fontWeight: 700, color: isDark ? 'var(--blue, #2563eb)' : 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.5px', minWidth: 64 }}>Caretaker</span>
-                      {(() => {
-                        const ct = caretakers.find(c => c.plot_id === plot.id);
-                        return ct
-                          ? <span style={{ fontSize: 13, color: 'var(--text)' }}>🧑‍🔧 {ct.name}</span>
-                          : <span style={{ fontSize: 13, color: 'var(--muted)', fontStyle: 'italic' }}>None assigned</span>;
-                      })()}
-                    </div>
+                    {!isCaretaker && (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <span style={{ fontSize: 11, fontWeight: 700, color: isDark ? 'var(--blue, #2563eb)' : 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.5px', minWidth: 64 }}>Caretaker</span>
+                        {(() => {
+                          const cts = plotCaretakers(plot);
+                          return cts.length
+                            ? <span style={{ fontSize: 13, color: 'var(--text)' }}>🧑‍🔧 {cts.map(c => c.name).join(', ')}</span>
+                            : <span style={{ fontSize: 13, color: 'var(--muted)', fontStyle: 'italic' }}>None assigned</span>;
+                        })()}
+                      </div>
+                    )}
+                    {/* Hidden when the viewer IS the agent shown — "Agent: you" is useless;
+                        they need the Owner row above instead, which agents can now see. */}
+                    {String(plot.agent_id) !== String(user?.id) && (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <span style={{ fontSize: 11, fontWeight: 700, color: isDark ? 'var(--blue, #2563eb)' : 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.5px', minWidth: 64 }}>Agent</span>
+                        {(() => {
+                          const ag = plotAgent(plot);
+                          return ag
+                            ? <span style={{ fontSize: 13, color: 'var(--text)' }}>🤝 {ag.name}</span>
+                            : <span style={{ fontSize: 13, color: 'var(--muted)', fontStyle: 'italic' }}>None assigned</span>;
+                        })()}
+                      </div>
+                    )}
                   </div>
                 </div>
                 <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
@@ -359,7 +518,7 @@ export default function Properties() {
               ) : (
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 12, padding: 16 }}>
                   {plotHouses(plot.id).map(house => (
-                    <div key={house.id} style={{ padding: '14px 16px', borderRadius: 10, border: '1px solid var(--border)', background: house.status === 'vacant' ? 'var(--surface2)' : house.status === 'maintenance' ? hexToRgba('#dc2626', 0.15) : hexToRgba('#39FF14', 0.18) }}>
+                    <div key={house.id} className="pp-unit-card" style={{ padding: '14px 16px', borderRadius: 10, border: '1px solid var(--border)', background: house.status === 'vacant' ? 'var(--surface2)' : house.status === 'maintenance' ? hexToRgba('#dc2626', 0.15) : hexToRgba('#39FF14', 0.18), transition: 'box-shadow 0.15s ease, transform 0.15s ease' }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 4 }}>
                         <div style={{ fontWeight: 700, fontSize: 15, color: 'var(--text)' }}>Unit {house.unit_number}</div>
                         {!isCaretaker && (
@@ -371,6 +530,23 @@ export default function Properties() {
                       </div>
                       <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 8 }}>{house.house_type}</div>
                       <div style={{ fontWeight: 700, color: 'var(--primary)', fontSize: 14 }}>KES {parseFloat(house.rent_amount).toLocaleString()}/mo</div>
+                      {house.status === 'occupied' && house.tenant_name && (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 8, padding: '6px 8px', background: 'var(--surface)', borderRadius: 8, border: '1px solid var(--border)' }}>
+                          <span style={{ fontSize: 14 }}>👤</span>
+                          <div style={{ minWidth: 0, flex: 1 }}>
+                            <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{house.tenant_name}</div>
+                            <div style={{ fontSize: 11, color: 'var(--muted)' }}>{house.tenant_phone || 'No phone on file'}</div>
+                          </div>
+                          <span style={{
+                            fontSize: 11, fontWeight: 700, flexShrink: 0,
+                            color: parseFloat(house.tenant_balance) > 0 ? 'var(--red, #dc2626)' : 'var(--green, #16a34a)',
+                          }}>
+                            {parseFloat(house.tenant_balance) > 0
+                              ? `KES ${parseFloat(house.tenant_balance).toLocaleString()} owed`
+                              : 'Paid up'}
+                          </span>
+                        </div>
+                      )}
                       {house.rejection_reason && (
                         <div style={{ fontSize: 11, color: 'var(--red, #dc2626)', marginTop: 4, fontStyle: 'italic' }}>"{house.rejection_reason}"</div>
                       )}
@@ -382,7 +558,7 @@ export default function Properties() {
                         {house.rejection_reason && (
                           <span style={{ display: 'inline-block', background: 'var(--red-light, #fee2e2)', color: 'var(--red, #dc2626)', padding: '2px 10px', borderRadius: 99, fontSize: 11, fontWeight: 600 }}>❌ Rejected</span>
                         )}
-                        {house.is_approved !== true && !isCaretaker && (
+                        {house.is_approved !== true && can('houses.approve') && (
                           <>
                             <button onClick={() => approveHouse(house.id)} style={{ padding: '2px 8px', borderRadius: 6, border: 'none', background: 'var(--green, #16a34a)', color: '#fff', fontSize: 11, fontWeight: 600, cursor: 'pointer' }}>✓ Approve</button>
                             <button onClick={() => { setRejectTarget(house.id); setRejectReason(''); }} style={{ padding: '2px 8px', borderRadius: 6, border: 'none', background: 'var(--red-light, #fee2e2)', color: 'var(--red, #dc2626)', fontSize: 11, fontWeight: 600, cursor: 'pointer' }}>✗ Reject</button>
@@ -501,6 +677,16 @@ export default function Properties() {
                     </select>
                   </div>
                 )}
+
+                {isAdmin && (
+                  <div>
+                    <label style={labelStyle}>Agent managing this plot</label>
+                    <select value={form.agent_id || ''} onChange={e => setForm(f => ({ ...f, agent_id: e.target.value }))} style={inputStyle}>
+                      <option value="">— No agent —</option>
+                      {agents.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+                    </select>
+                  </div>
+                )}
               </>) : (<>
                 <div>
                   <label style={labelStyle}>Plot</label>
@@ -512,7 +698,7 @@ export default function Properties() {
                 <div>
                   <label style={labelStyle}>Type</label>
                   <select value={form.house_type} onChange={e => setForm(f => ({ ...f, house_type: e.target.value }))} style={inputStyle}>
-                    {['Bedsitter','1 Bedroom','2 Bedroom','3 Bedroom','Shop','Studio'].map(t => <option key={t}>{t}</option>)}
+                    {['Single Room','Double Room','Bedsitter','1 Bedroom','2 Bedroom','3 Bedroom','Shop','Studio'].map(t => <option key={t}>{t}</option>)}
                   </select>
                 </div>
                 <Field label="Rent (KES)"    value={form.rent_amount} onChange={v => setForm(f => ({ ...f, rent_amount: v }))} placeholder="e.g. 15000" type="number" />
@@ -541,6 +727,7 @@ export default function Properties() {
   );
 }
 
+const filterLabelStyle = { fontSize: 10, fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 6 };
 const labelStyle = { display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--muted)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.4px' };
 const inputStyle = { width: '100%', padding: '10px 12px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface2)', fontSize: 14, color: 'var(--text)', outline: 'none' };
 
@@ -549,6 +736,65 @@ function Field({ label, value, onChange, placeholder, type = 'text' }) {
     <div>
       <label style={labelStyle}>{label}</label>
       <input type={type} value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder} style={inputStyle} />
+    </div>
+  );
+}
+
+function FilterSelect({ label, value, onChange, allLabel, noneLabel, options }) {
+  const active = value !== 'all';
+  return (
+    <div style={{ minWidth: 170 }}>
+      <div style={filterLabelStyle}>{label}</div>
+      <select value={value} onChange={e => onChange(e.target.value)} style={{
+        width: '100%', boxSizing: 'border-box', padding: '8px 12px', borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: 'pointer', outline: 'none',
+        border: `1px solid ${active ? 'var(--primary, #7c3aed)' : 'var(--border)'}`,
+        background: 'var(--surface)', color: 'var(--text)',
+      }}>
+        <option value="all">{allLabel}</option>
+        {noneLabel && <option value="none">{noneLabel}</option>}
+        {options.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
+      </select>
+    </div>
+  );
+}
+
+// A search icon that expands into an input when clicked. Stays open while it
+// has text; collapses on blur when empty or on Esc (which also clears it).
+function ExpandableSearch({ value, onChange }) {
+  const [open, setOpen] = useState(false);
+  const inputRef = useRef(null);
+  const expanded = open || !!value;
+
+  function openIt() {
+    setOpen(true);
+    setTimeout(() => inputRef.current?.focus(), 0);
+  }
+
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', flexShrink: 0, overflow: 'hidden',
+      height: 40, width: expanded ? 240 : 40, maxWidth: '100%',
+      transition: 'width 0.2s ease, border-color 0.15s',
+      borderRadius: 10, background: 'var(--surface)',
+      border: `1px solid ${expanded ? 'var(--primary, #7c3aed)' : 'var(--border)'}`,
+    }}>
+      <button type="button" onClick={openIt} aria-label="Search plots" title="Search plots"
+        style={{ width: 38, height: 38, flex: 'none', border: 'none', background: 'transparent', cursor: 'pointer', fontSize: 15 }}>🔍</button>
+      <input
+        ref={inputRef}
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        onFocus={() => setOpen(true)}
+        onBlur={() => setOpen(false)}
+        onKeyDown={e => { if (e.key === 'Escape') { onChange(''); setOpen(false); e.currentTarget.blur(); } }}
+        placeholder="Search plots…"
+        tabIndex={expanded ? 0 : -1}
+        style={{ flex: 1, minWidth: 0, border: 'none', background: 'transparent', outline: 'none', color: 'var(--text)', fontSize: 13, paddingRight: value ? 0 : 10 }}
+      />
+      {value && (
+        <button type="button" onClick={() => { onChange(''); inputRef.current?.focus(); }} aria-label="Clear search"
+          style={{ width: 30, height: 30, flex: 'none', border: 'none', background: 'transparent', cursor: 'pointer', fontSize: 16, color: 'var(--muted)' }}>×</button>
+      )}
     </div>
   );
 }

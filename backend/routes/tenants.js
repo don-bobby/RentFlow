@@ -1,30 +1,63 @@
 const express = require('express');
 const router  = express.Router();
 const pool    = require('../database/db');
-const jwt     = require('jsonwebtoken');
 const { logAudit, diff } = require('../utils/audit');
+const { getVisiblePlotIds } = require('../middleware/scope');
+const { authMiddleware: staffAuth } = require('../middleware/auth');
+const { requirePermission, getPermissions } = require('../middleware/permissions');
 
-function auth(req, res, next) {
-  const token = req.headers.authorization?.split(' ')[1];
-  if (!token) return res.status(401).json({ error: 'No token provided' });
-  try { req.user = jwt.verify(token, process.env.JWT_SECRET); next(); }
-  catch { res.status(401).json({ error: 'Invalid token' }); }
+// Strips national_id / emergency_phone / lease_url from tenant rows unless
+// the requester's profile has tenants.view_sensitive. Server-side, so the
+// data never reaches the browser at all when the toggle is off — not just
+// hidden by the frontend, which could be bypassed by reading the network
+// response directly.
+async function stripSensitiveFields(req, rows) {
+  const { permissions } = await getPermissions(req.user);
+  const canSee = permissions.includes('*') || permissions.includes('tenants.view_sensitive');
+  if (canSee) return rows;
+  return rows.map(({ national_id, emergency_phone, lease_url, ...rest }) => rest);
 }
 
 // GET all tenants — balance calculated dynamically from move-in date
-router.get('/', auth, async (req, res) => {
+router.get('/', staffAuth, requirePermission('tenants.view'), async (req, res) => {
   try {
-    const isAdmin = req.user.role === 'admin';
-    const filter  = isAdmin ? '' : 'WHERE p.user_id = $1';
-    const params  = isAdmin ? [] : [req.user.id];
+    const visible = await getVisiblePlotIds(req.user);
+    const filter = visible === 'ALL' ? '' : (visible.length === 0 ? 'WHERE 1=0' : 'WHERE p.id = ANY($1)');
+    const params = visible === 'ALL' || visible.length === 0 ? [] : [visible];
 
     const result = await pool.query(`
       SELECT
-        t.*,
+        t.id,
+        t.user_id,
+        t.house_id,
+        t.full_name,
+        t.national_id,
+        t.phone,
+        t.email,
+        t.emergency_phone,
+        t.move_in_date,
+        t.rent_due_day,
+        t.deposit_paid,
+        t.photo_url,
+        t.lease_url,
+        t.is_active,
+        t.created_at,
         h.unit_number,
         h.rent_amount,
         p.name AS plot_name,
         u.name AS owner_name,
+
+        -- Most recent payment on file for this tenant (any method except an
+        -- auto-charge), for the caretaker's "Last Payment" column.
+        (SELECT py.amount FROM payments py
+         WHERE py.tenant_id = t.id AND py.method != 'balance_charge'
+         ORDER BY py.payment_date DESC LIMIT 1) AS last_payment_amount,
+        (SELECT py.payment_date FROM payments py
+         WHERE py.tenant_id = t.id AND py.method != 'balance_charge'
+         ORDER BY py.payment_date DESC LIMIT 1) AS last_payment_date,
+        (SELECT py.method FROM payments py
+         WHERE py.tenant_id = t.id AND py.method != 'balance_charge'
+         ORDER BY py.payment_date DESC LIMIT 1) AS last_payment_method,
 
         -- Months since move-in (minimum 1)
         GREATEST(1,
@@ -64,17 +97,19 @@ router.get('/', auth, async (req, res) => {
       ORDER BY t.full_name
     `, params);
 
-    res.json({ success: true, data: result.rows });
+    const data = await stripSensitiveFields(req, result.rows);
+    res.json({ success: true, data });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 // GET unpaid months — must be BEFORE /:id to avoid route conflict
-router.get('/unpaid-months', auth, async (req, res) => {
+router.get('/unpaid-months', staffAuth, requirePermission('tenants.view'), async (req, res) => {
   try {
-    const isAdmin = req.user.role === 'admin';
+    const visible = await getVisiblePlotIds(req.user);
+    if (visible !== 'ALL' && visible.length === 0) return res.json({ success: true, data: [] });
 
     // Step 1: fetch all active tenants with their rent_amount from houses
-    const tenantQuery = isAdmin
+    const tenantQuery = visible === 'ALL'
       ? `SELECT t.id, t.full_name, t.move_in_date, t.phone,
                 h.rent_amount, h.unit_number, p.name AS plot_name
          FROM tenants t
@@ -87,8 +122,8 @@ router.get('/unpaid-months', auth, async (req, res) => {
          LEFT JOIN houses h ON t.house_id = h.id
          LEFT JOIN plots  p ON h.plot_id  = p.id
          WHERE t.is_active = true AND t.move_in_date IS NOT NULL
-           AND p.user_id = $1`;
-    const tenantParams = isAdmin ? [] : [req.user.id];
+           AND p.id = ANY($1)`;
+    const tenantParams = visible === 'ALL' ? [] : [visible];
     const tenants = await pool.query(tenantQuery, tenantParams);
 
     const tenantIds = tenants.rows.map(t => t.id);
@@ -181,42 +216,60 @@ router.get('/unpaid-months', auth, async (req, res) => {
 });
 
 // GET single tenant
-router.get('/:id', auth, async (req, res) => {
+router.get('/:id', staffAuth, requirePermission('tenants.view'), async (req, res) => {
   try {
     const tenant = await pool.query(
-      `SELECT t.*, p.user_id AS plot_owner FROM tenants t
+      `SELECT
+         t.id, t.user_id, t.house_id, t.full_name, t.national_id, t.phone,
+         t.email, t.emergency_phone, t.move_in_date, t.rent_due_day,
+         t.deposit_paid, t.photo_url, t.lease_url, t.is_active, t.created_at,
+         p.id AS plot_id_actual, p.user_id AS plot_owner
+       FROM tenants t
        LEFT JOIN houses h ON t.house_id = h.id
        LEFT JOIN plots  p ON h.plot_id  = p.id
        WHERE t.id = $1`,
       [req.params.id]
     );
     if (tenant.rows.length === 0) return res.status(404).json({ error: 'Tenant not found' });
-    if (req.user.role !== 'admin' && tenant.rows[0].plot_owner !== req.user.id) return res.status(403).json({ error: 'Access denied' });
+
+    const visible = await getVisiblePlotIds(req.user);
+    const allowed = visible === 'ALL' || visible.includes(tenant.rows[0].plot_id_actual);
+    if (!allowed) return res.status(403).json({ error: 'Access denied' });
 
     const payments = await pool.query(
       'SELECT * FROM payments WHERE tenant_id=$1 ORDER BY payment_date DESC',
       [req.params.id]
     );
-    res.json({ success: true, data: { ...tenant.rows[0], payments: payments.rows } });
+    const [tenantData] = await stripSensitiveFields(req, [tenant.rows[0]]);
+    res.json({ success: true, data: { ...tenantData, payments: payments.rows } });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 // POST add new tenant
-router.post('/', auth, async (req, res) => {
-  const { full_name, phone, email, national_id, house_id, move_in_date, rent_due_day, deposit_paid, emergency_phone } = req.body;
-  if (!full_name || !house_id) return res.status(400).json({ error: 'full_name and house_id are required' });
+router.post('/', staffAuth, requirePermission('tenants.create'), async (req, res) => {
+  const { full_name, phone, email, house_id, move_in_date, rent_due_day, deposit_paid, emergency_phone } = req.body;
+  const national_id = String(req.body.national_id ?? '').trim();
+  if (!full_name || !house_id || !national_id || !phone) {
+    return res.status(400).json({ error: 'full_name, house_id, national_id and phone are all required.' });
+  }
 
-  if (req.user.role === 'landlord') {
-    const check = await pool.query(
-      'SELECT p.user_id FROM houses h LEFT JOIN plots p ON h.plot_id = p.id WHERE h.id = $1',
-      [house_id]
-    );
-    if (check.rows.length === 0 || check.rows[0].user_id !== req.user.id) {
-      return res.status(403).json({ error: 'You do not own this unit' });
+  if (req.user.role !== 'admin' && req.user.role !== 'super_admin') {
+    const visible = await getVisiblePlotIds(req.user);
+    const houseCheck = await pool.query('SELECT plot_id FROM houses WHERE id = $1', [house_id]);
+    const housePlotId = houseCheck.rows[0]?.plot_id;
+    const allowed = visible === 'ALL' || (housePlotId && visible.includes(housePlotId));
+    if (!allowed) {
+      return res.status(403).json({ error: 'You do not have access to this unit.' });
     }
   }
 
   try {
+    // Reject duplicate national IDs with a clear message
+    const dup = await pool.query('SELECT 1 FROM tenants WHERE national_id = $1 LIMIT 1', [national_id]);
+    if (dup.rows.length > 0) {
+      return res.status(409).json({ error: 'A tenant with this ID number already exists.' });
+    }
+
     const result = await pool.query(
       `INSERT INTO tenants (full_name, phone, email, national_id, house_id, move_in_date, rent_due_day, deposit_paid, emergency_phone)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
@@ -231,16 +284,45 @@ router.post('/', auth, async (req, res) => {
       );
     }
     res.status(201).json({ success: true, data: result.rows[0] });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) {
+    // Safety net if two requests arrive at the same moment (unique index)
+    if (err.code === '23505' && err.constraint === 'tenants_national_id_unique') {
+      return res.status(409).json({ error: 'A tenant with this ID number already exists.' });
+    }
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // PUT update tenant
-router.put('/:id', auth, async (req, res) => {
-  const { full_name, phone, email, national_id, house_id, move_in_date, rent_due_day, deposit_paid, emergency_phone, is_active } = req.body;
+router.put('/:id', staffAuth, requirePermission('tenants.edit'), async (req, res) => {
+  const { full_name, phone, email, house_id, move_in_date, rent_due_day, deposit_paid, emergency_phone, is_active } = req.body;
+  const national_id = String(req.body.national_id ?? '').trim();
+  if (!full_name || !house_id || !national_id || !phone) {
+    return res.status(400).json({ error: 'full_name, house_id, national_id and phone are all required.' });
+  }
   try {
     // Get the tenant's previous state before updating (used for house sync + audit diff)
-    const prev = await pool.query('SELECT full_name, phone, house_id, move_in_date, rent_due_day, is_active FROM tenants WHERE id=$1', [req.params.id]);
+    const prev = await pool.query(
+      `SELECT t.full_name, t.phone, t.house_id, t.move_in_date, t.rent_due_day, t.is_active, p.id AS plot_id_actual
+       FROM tenants t LEFT JOIN houses h ON t.house_id = h.id LEFT JOIN plots p ON h.plot_id = p.id
+       WHERE t.id=$1`,
+      [req.params.id]
+    );
     if (prev.rows.length === 0) return res.status(404).json({ error: 'Tenant not found' });
+
+    const visible = await getVisiblePlotIds(req.user);
+    const allowed = visible === 'ALL' || (prev.rows[0].plot_id_actual != null && visible.includes(prev.rows[0].plot_id_actual));
+    if (!allowed) return res.status(403).json({ error: 'Access denied' });
+
+    // Reject a national ID that belongs to a different tenant
+    const dup = await pool.query(
+      'SELECT 1 FROM tenants WHERE national_id = $1 AND id != $2 LIMIT 1',
+      [national_id, req.params.id]
+    );
+    if (dup.rows.length > 0) {
+      return res.status(409).json({ error: 'A tenant with this ID number already exists.' });
+    }
+
     const oldHouseId  = prev.rows[0].house_id;
     const newIsActive = is_active ?? true;
 
@@ -278,14 +360,29 @@ router.put('/:id', auth, async (req, res) => {
     }
 
     res.json({ success: true, data: result.rows[0] });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) {
+    if (err.code === '23505' && err.constraint === 'tenants_national_id_unique') {
+      return res.status(409).json({ error: 'A tenant with this ID number already exists.' });
+    }
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // DELETE (deactivate) tenant
-router.delete('/:id', auth, async (req, res) => {
+router.delete('/:id', staffAuth, requirePermission('tenants.deactivate'), async (req, res) => {
   try {
-    const tenant = await pool.query('SELECT house_id FROM tenants WHERE id=$1', [req.params.id]);
+    const tenant = await pool.query(
+      `SELECT t.house_id, p.id AS plot_id_actual
+       FROM tenants t LEFT JOIN houses h ON t.house_id = h.id LEFT JOIN plots p ON h.plot_id = p.id
+       WHERE t.id=$1`,
+      [req.params.id]
+    );
     if (tenant.rows.length === 0) return res.status(404).json({ error: 'Tenant not found' });
+
+    const visible = await getVisiblePlotIds(req.user);
+    const allowed = visible === 'ALL' || (tenant.rows[0].plot_id_actual != null && visible.includes(tenant.rows[0].plot_id_actual));
+    if (!allowed) return res.status(403).json({ error: 'Access denied' });
+
     await pool.query('UPDATE tenants SET is_active=false WHERE id=$1', [req.params.id]);
     await logAudit({ user: req.user, action: 'tenant.deactivate', entityType: 'tenant', entityId: req.params.id, changes: { is_active: { from: true, to: false } } });
     if (tenant.rows[0].house_id) {

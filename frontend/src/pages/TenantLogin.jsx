@@ -5,7 +5,7 @@ import API from '../services/api';
 // view: 'login' | 'request_otp' | 'verify_otp'
 export default function TenantLogin() {
   const [view,      setView]      = useState('login');
-  const [form,      setForm]      = useState({ phone: '', pin: '' });
+  const [form,      setForm]      = useState({ national_id: '', pin: '' });
   const [otpPhone,  setOtpPhone]  = useState('');
   const [otp,       setOtp]       = useState('');
   const [newPin,    setNewPin]    = useState('');
@@ -17,7 +17,7 @@ export default function TenantLogin() {
 
   // ── Login ──────────────────────────────────────────────────────────────────
   async function handleLogin() {
-    if (!form.phone || !form.pin) { setError('Please enter your phone number and PIN.'); return; }
+    if (!form.national_id || !form.pin) { setError('Please enter your National ID and PIN.'); return; }
     setLoading(true); setError('');
     try {
       const res = await API.post('/auth/tenant-login', form);
@@ -89,8 +89,8 @@ export default function TenantLogin() {
           {view === 'login' && (
             <>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-                <Field label="Phone Number" value={form.phone} onChange={v => setForm(f => ({ ...f, phone: v }))}
-                  type="tel" placeholder="e.g. 0712345678" onEnter={handleLogin} />
+                <Field label="National ID" value={form.national_id} onChange={v => setForm(f => ({ ...f, national_id: v }))}
+                  type="text" placeholder="e.g. 12345678" onEnter={handleLogin} />
                 <Field label="PIN" value={form.pin} onChange={v => setForm(f => ({ ...f, pin: v }))}
                   type="password" placeholder="Enter your PIN" onEnter={handleLogin} />
               </div>
@@ -100,7 +100,7 @@ export default function TenantLogin() {
               </button>
 
               <div style={{ textAlign: 'center', marginTop: 16 }}>
-                <button onClick={() => { setView('request_otp'); setError(''); setSuccess(''); setOtpPhone(form.phone); }}
+                <button onClick={() => { setView('request_otp'); setError(''); setSuccess(''); }}
                   style={{ background: 'none', border: 'none', color: 'var(--primary)', fontWeight: 600, fontSize: 13, cursor: 'pointer' }}>
                   Forgot PIN?
                 </button>

@@ -5,6 +5,9 @@ import { MapContainer, TileLayer, Marker, Popup } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import API from '../services/api';
+// PendingLandlordsAlert / PendingUnitsAlert banners moved to Layout.jsx as
+// floating, dismissible toasts (bottom-right, global across every page)
+// instead of two permanent full-width rows at the top of just this page.
 
 // Leaflet's default marker icon path breaks under most bundlers (webpack
 // strips the relative image URLs it expects) — point it at the CDN version
@@ -286,10 +289,17 @@ function PropertyMap({ properties, isDark }) {
     withCoords.reduce((s, p) => s + p.mapLng, 0) / withCoords.length,
   ];
 
-  const tileUrl = isDark ? 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png' : 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
+  // CARTO's free basemap URL now requires an API key (tiles come back
+  // watermarked "API KEY REQUIRED"), so both themes use OpenStreetMap tiles.
+  // Dark mode darkens them with a CSS filter on the tile layer only, so
+  // markers and popups keep their normal colours.
+  const tileUrl = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
+  const tileClass = isDark ? 'rf-tiles-dark' : '';
+  const tileAttribution = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
 
   return (
     <>
+      <style>{`.rf-tiles-dark { filter: invert(1) hue-rotate(180deg) brightness(0.95) contrast(0.9); }`}</style>
       <div style={shellStyle}>
         <div style={headerStyle}>
           <h2 style={titleStyle}>Property Map</h2>
@@ -298,7 +308,7 @@ function PropertyMap({ properties, isDark }) {
         {!expanded && (
           <div style={{ flex: 1, minHeight: 260 }}>
             <MapContainer center={center} zoom={13} style={{ height: '100%', width: '100%' }} scrollWheelZoom={false}>
-              <TileLayer url={tileUrl} attribution='&copy; OpenStreetMap contributors &copy; CARTO' />
+              <TileLayer key={tileClass || 'light'} url={tileUrl} className={tileClass} attribution={tileAttribution} />
               {withCoords.map(p => <HoverMarker key={p.id} p={p} isDark={isDark} />)}
             </MapContainer>
           </div>
@@ -318,7 +328,7 @@ function PropertyMap({ properties, isDark }) {
                   pick up a container resize without an explicit invalidateSize()
                   call, so a new instance avoids that entirely. */}
               <MapContainer center={center} zoom={14} style={{ height: '100%', width: '100%' }} scrollWheelZoom={true}>
-                <TileLayer url={tileUrl} attribution='&copy; OpenStreetMap contributors &copy; CARTO' />
+                <TileLayer key={tileClass || 'light'} url={tileUrl} className={tileClass} attribution={tileAttribution} />
                 {withCoords.map(p => <HoverMarker key={p.id} p={p} isDark={isDark} />)}
               </MapContainer>
             </div>
@@ -372,20 +382,27 @@ export default function Dashboard() {
         // Expire any stale pending STK rows before loading
         await API.post('/mpesa/expire-pending').catch(() => {});
 
-        const [tr, pr, hr, mr, plr, ur] = await Promise.all([
+        // Promise.allSettled, not Promise.all — a role that's blocked from
+        // one endpoint (e.g. payments.view not granted to a profile) should
+        // still see everything else on the dashboard, not a total failure.
+        // Same fix already applied to Notices.jsx for the same reason.
+        const [tr, pr, hr, mr, plr, ur] = await Promise.allSettled([
           API.get('/tenants'),
           API.get('/payments'),
           API.get('/houses'),
           API.get('/maintenance'),
           API.get('/plots'),
-          API.get('/auth/users').catch(() => ({ data: { data: [] } })),
+          API.get('/auth/users'),
         ]);
-        const tenants  = Array.isArray(tr.data)  ? tr.data  : (tr.data.data  || []);
-        const payments = Array.isArray(pr.data)  ? pr.data  : (pr.data.data  || []);
-        const houses   = Array.isArray(hr.data)  ? hr.data  : (hr.data.data  || []);
-        const requests = Array.isArray(mr.data)  ? mr.data  : (mr.data.data  || []);
-        const plots    = Array.isArray(plr.data) ? plr.data : (plr.data.data || []);
-        const users    = Array.isArray(ur.data)  ? ur.data  : (ur.data.data  || []);
+        const unwrap = (settled) => settled.status === 'fulfilled' ? settled.value : { data: { data: [] } };
+        const [trv, prv, hrv, mrv, plrv, urv] = [tr, pr, hr, mr, plr, ur].map(unwrap);
+
+        const tenants  = Array.isArray(trv.data)  ? trv.data  : (trv.data.data  || []);
+        const payments = Array.isArray(prv.data)  ? prv.data  : (prv.data.data  || []);
+        const houses   = Array.isArray(hrv.data)  ? hrv.data  : (hrv.data.data  || []);
+        const requests = Array.isArray(mrv.data)  ? mrv.data  : (mrv.data.data  || []);
+        const plots    = Array.isArray(plrv.data) ? plrv.data : (plrv.data.data || []);
+        const users    = Array.isArray(urv.data)  ? urv.data  : (urv.data.data  || []);
 
         const now       = new Date();
         const thisMonth = payments.filter(p => {
@@ -541,6 +558,8 @@ export default function Dashboard() {
         <p style={{ color: 'var(--muted)', fontSize: 14 }}>Welcome back. Here's what's happening today.</p>
       </div>
 
+
+
       {/* Stats Grid + Property Map */}
       <div style={{ display: 'flex', gap: 16, marginBottom: 28, alignItems: 'stretch', flexWrap: 'wrap' }}>
         <div style={{ flex: '1 1 600px', display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 14 }}>
@@ -567,7 +586,7 @@ export default function Dashboard() {
 
       {/* Analytics row: Monthly Revenue + Occupancy Rate */}
       <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: 16, marginBottom: 16 }}>
-        <div style={{ background: 'var(--surface)', borderRadius: 'var(--radius)', boxShadow: 'var(--shadow)', border: '1px solid var(--border)', padding: '20px 24px' }}>
+        <div style={{ background: 'var(--surface)', borderRadius: 'var(--radius)', boxShadow: 'var(--shadow)', border: '1px solid var(--border)', padding: '20px 24px', minWidth: 0 }}>
           <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 16 }}>
             <h2 style={{ fontFamily: 'Space Grotesk', fontWeight: 700, fontSize: 16, color: isDark ? 'var(--blue, #2563eb)' : 'var(--text)' }}>Monthly Revenue</h2>
             {revenueChangePct !== null && (
@@ -587,7 +606,7 @@ export default function Dashboard() {
           </ResponsiveContainer>
         </div>
 
-        <div onClick={() => setModal('occupancy')} style={{ background: 'var(--surface)', borderRadius: 'var(--radius)', boxShadow: 'var(--shadow)', border: '1px solid var(--border)', padding: '20px 24px', display: 'flex', flexDirection: 'column', cursor: 'pointer' }}>
+        <div onClick={() => setModal('occupancy')} style={{ background: 'var(--surface)', borderRadius: 'var(--radius)', boxShadow: 'var(--shadow)', border: '1px solid var(--border)', padding: '20px 24px', display: 'flex', flexDirection: 'column', cursor: 'pointer', minWidth: 0 }}>
           <h2 style={{ fontFamily: 'Space Grotesk', fontWeight: 700, fontSize: 16, color: isDark ? 'var(--blue, #2563eb)' : 'var(--text)', marginBottom: 8 }}>Occupancy Rate <span style={{ fontSize: 12, fontWeight: 500, color: 'var(--muted)' }}>(click for details)</span></h2>
           <div style={{ position: 'relative', flex: 1, minHeight: 180 }}>
             <ResponsiveContainer width="100%" height={180}>
@@ -618,7 +637,7 @@ export default function Dashboard() {
 
       {/* Unpaid Rent by Property */}
       {unpaidByPlotData.length > 0 && (
-        <div style={{ background: 'var(--surface)', borderRadius: 'var(--radius)', boxShadow: 'var(--shadow)', border: '1px solid var(--border)', padding: '20px 24px', marginBottom: 16 }}>
+        <div style={{ background: 'var(--surface)', borderRadius: 'var(--radius)', boxShadow: 'var(--shadow)', border: '1px solid var(--border)', padding: '20px 24px', marginBottom: 16, minWidth: 0 }}>
           <h2 style={{ fontFamily: 'Space Grotesk', fontWeight: 700, fontSize: 16, color: isDark ? 'var(--blue, #2563eb)' : 'var(--text)', marginBottom: 16 }}>Unpaid Rent by Property</h2>
           <ResponsiveContainer width="100%" height={200}>
             <BarChart data={unpaidByPlotData} margin={{ top: 4, right: 8, left: -12, bottom: 0 }}>

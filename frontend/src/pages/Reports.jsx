@@ -1,9 +1,11 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import API from '../services/api';
+import { useAuth } from '../context/AuthContext';
 
 // ── Report definitions ────────────────────────────────────────────────────────
 const REPORTS = [
   { id: 'payments',       icon: '💳', label: 'Payment Collection',    desc: 'All rent payments received',           color: 'var(--green)',   light: 'var(--green-light)'   },
+  { id: 'paymenthistory', icon: '🧾', label: 'Payment History',       desc: 'One tenant\'s full rent + deposit timeline', color: 'var(--primary)', light: 'var(--primary-light)' },
   { id: 'unpaid',         icon: '⚠️', label: 'Unpaid Rent',           desc: 'Outstanding balances, with aging',     color: 'var(--red)',     light: 'var(--red-light)'     },
   { id: 'tenants',        icon: '👥', label: 'Tenant List',           desc: 'All active and inactive tenants',      color: 'var(--primary)', light: 'var(--primary-light)' },
   { id: 'maintenance',    icon: '🔧', label: 'Maintenance Records',   desc: 'All maintenance requests by status',   color: 'var(--amber)',   light: 'var(--amber-light)'   },
@@ -16,10 +18,16 @@ const REPORTS = [
   { id: 'rentroll',       icon: '📋', label: 'Rent Roll',             desc: 'Snapshot of every occupied unit',      color: 'var(--blue)',    light: 'var(--blue-light)'    },
   { id: 'paymentmethods', icon: '🏦', label: 'Payment Methods',       desc: 'Collections by mpesa / bank / cash',   color: '#8b5cf6',        light: '#ede9fe'              },
   { id: 'performance',    icon: '🏆', label: 'Property Performance', desc: 'Plots ranked by occupancy & revenue',  color: 'var(--blue)',    light: 'var(--blue-light)'    },
+  { id: 'assignments',    icon: '🗂️', label: 'Property Assignments',  desc: 'Which landlord, agent and caretaker runs each property', color: 'var(--primary)', light: 'var(--primary-light)', adminAgentOnly: true },
   { id: 'tenure',         icon: '⏳', label: 'Tenant Tenure',         desc: 'How long each active tenant has stayed', color: 'var(--primary)', light: 'var(--primary-light)' },
   { id: 'caretakerload',  icon: '🧑‍🔧', label: 'Caretaker Workload',   desc: 'Maintenance requests per caretaker',   color: 'var(--amber)',   light: 'var(--amber-light)'   },
   { id: 'comparison',     icon: '🔁', label: 'Period Comparison',     desc: 'This month vs last, or year vs year',  color: 'var(--green)',   light: 'var(--green-light)'   },
   { id: 'depositledger',  icon: '🔐', label: 'Deposit Ledger',        desc: 'Deposits collected, refunded, forfeited', color: 'var(--blue)',  light: 'var(--blue-light)'    },
+  { id: 'profitloss',    icon: '💹', label: 'Profit & Loss by Plot',  desc: 'Income vs expenses and net per plot',    color: 'var(--green)'   },
+  { id: 'collection',    icon: '🎯', label: 'Collection Efficiency',  desc: 'Rent expected vs collected, by month',   color: 'var(--blue)'    },
+  { id: 'agentscore',    icon: '🧑‍💼', label: 'Agent Scorecard',        desc: 'Plots, occupancy and collections per agent', color: 'var(--primary)' },
+  { id: 'vacancyloss',   icon: '🕳️', label: 'Vacancy Loss',           desc: 'Rent lost to empty units',               color: 'var(--red)'     },
+  { id: 'dataquality',   icon: '🧹', label: 'Data Quality Exceptions', desc: 'Missing or conflicting records to fix', color: 'var(--amber)'   },
   { id: 'audittrail',     icon: '🕵️', label: 'Audit Trail',           desc: 'Who changed what, and when (admin only)', color: '#8b5cf6',      light: '#ede9fe'              },
 ];
 
@@ -29,7 +37,7 @@ function getThisMonth() { return new Date().getMonth() + 1; }
 // Reports that don't use the period/month selectors at all — they're either
 // current-state snapshots (rentroll, performance, tenure) or have their own
 // dedicated month/year controls (comparison).
-const NO_PERIOD_FILTER = ['properties', 'occupancy', 'expiring', 'revenue', 'rentroll', 'performance', 'tenure', 'comparison', 'depositledger', 'audittrail'];
+const NO_PERIOD_FILTER = ['properties', 'occupancy', 'expiring', 'revenue', 'rentroll', 'performance', 'tenure', 'comparison', 'depositledger', 'audittrail', 'collection', 'agentscore', 'vacancyloss', 'dataquality', 'paymenthistory', 'assignments'];
 
 function daysBetween(a, b) { return Math.floor((a - b) / (1000 * 60 * 60 * 24)); }
 
@@ -76,15 +84,385 @@ function MiniBarChart({ data, color = 'var(--primary, #7c3aed)' }) {
   );
 }
 
+
+// ── Theme-safe colours ───────────────────────────────────────────────────────
+// The report definitions and summary cards use theme variables (--green,
+// --blue, ...) that vanish or turn dark on a dark background. `tone` maps them
+// to scoped, theme-aware colours; `soft` makes a translucent tint of any colour.
+const TONES = {
+  'var(--green)': 'var(--rp-green)', 'var(--red)': 'var(--rp-red)', 'var(--blue)': 'var(--rp-blue)',
+  'var(--amber)': 'var(--rp-amber)', 'var(--primary)': 'var(--rp-primary)', 'var(--muted)': 'var(--rp-muted)',
+};
+const tone = (c) => TONES[c] || c;
+const soft = (c, pct = 16) => `color-mix(in srgb, ${tone(c)} ${pct}%, transparent)`;
+
+const statusKind = (v) =>
+  ['Active', 'matched', 'completed', 'Paid Up'].includes(v) ? 'green' :
+  ['Inactive', 'Moved Out', 'Owing', 'High'].includes(v) ? 'red' :
+  ['Low'].includes(v) ? 'blue' : 'amber';
+
+// Money columns that represent a cost/shortfall are shown in red.
+const isNegativeCol = (c) => /Arrears|Loss|Expenses|Gap/.test(c);
+
+const STYLES = `
+.rp-page {
+  --rp-text: var(--text, #0f172a);
+  --rp-muted: var(--muted, #64748b);
+  --rp-surface: var(--surface, #ffffff);
+  --rp-surface2: var(--surface2, #f1f5f9);
+  --rp-border: var(--border, #e2e8f0);
+  --rp-accent: var(--primary, #7c3aed);
+  --rp-primary: #7c3aed; --rp-green: #15803d; --rp-red: #dc2626; --rp-blue: #2563eb; --rp-amber: #b45309;
+  --rp-shadow: 0 1px 2px rgba(15,23,42,.04), 0 6px 20px rgba(15,23,42,.06);
+  color: var(--rp-text);
+}
+:root[data-theme="dark"] .rp-page {
+  --rp-text: var(--text, #e8eaf6);
+  --rp-muted: var(--muted, #8b91b0);
+  --rp-surface: var(--surface, #1a1d27);
+  --rp-surface2: var(--surface2, #21253a);
+  --rp-border: var(--border, #2a2f45);
+  --rp-primary: #a78bfa; --rp-green: #4ade80; --rp-red: #f87171; --rp-blue: #60a5fa; --rp-amber: #fbbf24;
+  --rp-shadow: 0 1px 2px rgba(0,0,0,.3), 0 8px 24px rgba(0,0,0,.35);
+}
+.rp-page * { box-sizing: border-box; }
+.rp-page button { font-family: inherit; cursor: pointer; }
+.rp-page button:focus-visible, .rp-page select:focus-visible, .rp-page input:focus-visible { outline: 2px solid var(--rp-accent); outline-offset: 2px; }
+
+.rp-head { margin-bottom: 22px; }
+.rp-title { font-family: 'Space Grotesk', sans-serif; font-size: 28px; font-weight: 700; letter-spacing: -0.01em; margin: 0 0 4px; color: var(--rp-text); }
+.rp-sub { margin: 0; font-size: 14px; color: var(--rp-muted); }
+
+.rp-layout { display: flex; gap: 20px; align-items: flex-start; }
+.rp-main { flex: 1; min-width: 0; }
+.rp-card { background: var(--rp-surface); border: 1px solid var(--rp-border); border-radius: 16px; box-shadow: var(--rp-shadow); }
+
+/* Report picker */
+.rp-list { width: 248px; flex-shrink: 0; display: flex; flex-direction: column; gap: 4px; padding: 10px;
+  position: sticky; top: 76px; max-height: calc(100vh - 100px); overflow-y: auto;
+  background: var(--rp-surface); border: 1px solid var(--rp-border); border-radius: 16px; box-shadow: var(--rp-shadow); }
+.rp-group { font-size: 12px; font-weight: 600; color: var(--rp-muted); padding: 6px 8px 2px; }
+.rp-sep { height: 1px; background: var(--rp-border); margin: 6px 4px; }
+.rp-item { position: relative; display: flex; align-items: center; border-radius: 12px; border: 1px solid transparent; transition: background .15s, border-color .15s; }
+.rp-item:hover { background: var(--rp-surface2); }
+.rp-item.on { background: var(--rp-tint); border-color: var(--rp-tone); }
+.rp-item-main { flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; padding: 8px 6px 8px 8px; border: none; background: transparent; color: var(--rp-text); text-align: left; }
+.rp-ico { flex: none; width: 32px; height: 32px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 16px; background: var(--rp-tint); }
+.rp-item-text { min-width: 0; }
+.rp-item-label { font-size: 13px; font-weight: 600; color: var(--rp-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rp-item-desc { font-size: 11px; color: var(--rp-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 1px; }
+.rp-star { flex: none; width: 30px; height: 30px; margin-right: 4px; border: none; background: transparent; border-radius: 8px; font-size: 15px; color: var(--rp-muted); opacity: 0; transition: opacity .15s; }
+.rp-item:hover .rp-star, .rp-item:focus-within .rp-star, .rp-star.pinned { opacity: 1; }
+.rp-star.pinned { color: var(--rp-amber); }
+@media (hover: none) { .rp-star { opacity: 1; } }
+
+/* Report header */
+.rp-top { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 14px; padding: 16px 20px; margin-bottom: 16px; }
+.rp-top-title { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.rp-chip { flex: none; width: 40px; height: 40px; border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 20px; background: var(--rp-tint); }
+.rp-h2 { font-family: 'Space Grotesk', sans-serif; font-weight: 700; font-size: 18px; color: var(--rp-text); }
+.rp-desc { font-size: 12.5px; color: var(--rp-muted); margin-top: 2px; }
+.rp-controls { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.rp-select { padding: 8px 12px; height: 38px; border-radius: 10px; border: 1px solid var(--rp-border); background: var(--rp-surface2); font-size: 13px; font-weight: 500; color: var(--rp-text); outline: none; cursor: pointer; }
+.rp-to { color: var(--rp-muted); font-size: 13px; }
+.rp-btn { display: inline-flex; align-items: center; gap: 6px; height: 38px; padding: 0 14px; border-radius: 10px; border: 1px solid var(--rp-border); background: var(--rp-surface); color: var(--rp-text); font-weight: 600; font-size: 13px; transition: background .15s; }
+.rp-btn:hover:not(:disabled) { background: var(--rp-surface2); }
+.rp-btn-primary { border-color: transparent; background: var(--rp-accent); color: #fff; }
+.rp-btn-primary:hover:not(:disabled) { background: var(--rp-accent); filter: brightness(1.08); }
+.rp-btn:disabled { opacity: .55; cursor: default; }
+
+/* Expandable search */
+.rp-search { display: flex; align-items: center; height: 38px; width: 38px; flex: none; overflow: hidden; border-radius: 10px; border: 1px solid var(--rp-border); background: var(--rp-surface); transition: width .2s ease, border-color .15s; }
+.rp-search.open { width: 240px; max-width: 100%; border-color: var(--rp-accent); }
+.rp-search button { flex: none; width: 36px; height: 36px; border: none; background: transparent; font-size: 15px; color: var(--rp-muted); }
+.rp-search input { flex: 1; min-width: 0; border: none; background: transparent; outline: none; color: var(--rp-text); font-size: 13px; padding-right: 8px; }
+.rp-search input::placeholder { color: var(--rp-muted); }
+
+/* Summary cards */
+.rp-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 16px; }
+.rp-kpi { position: relative; overflow: hidden; padding: 14px 18px 14px 20px; }
+.rp-kpi::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 4px; background: var(--rp-tone); }
+.rp-kpi-label { font-size: 12.5px; color: var(--rp-muted); margin-bottom: 4px; }
+.rp-kpi-value { font-family: 'Space Grotesk', sans-serif; font-weight: 700; font-size: 22px; line-height: 1.2; color: var(--rp-tone); word-break: break-word; }
+
+.rp-chart { padding: 16px 20px; margin-bottom: 16px; }
+.rp-chart-head { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+.rp-chart-title { font-size: 13px; font-weight: 600; color: var(--rp-text); }
+.rp-legend { display: flex; gap: 14px; font-size: 12px; color: var(--rp-muted); }
+.rp-legend i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; }
+.rp-hbars { display: flex; flex-direction: column; gap: 10px; }
+.rp-hrow { display: grid; grid-template-columns: 140px 1fr; gap: 12px; align-items: center; }
+.rp-hlabel { font-size: 12.5px; color: var(--rp-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rp-hlines { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.rp-hline { display: flex; align-items: center; gap: 8px; height: 12px; }
+.rp-hbar { height: 10px; border-radius: 5px; transition: width .4s ease; flex: none; max-width: calc(100% - 70px); }
+.rp-hval { font-size: 11px; color: var(--rp-muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+/* Audit trail */
+.au td { vertical-align: top; }
+.rp-table.au tbody tr:nth-child(even) { background: transparent; }
+.au-day td { background: var(--rp-surface2); padding: 8px 16px; font-size: 12px; font-weight: 600; color: var(--rp-muted); border-top: 1px solid var(--rp-border); }
+.au-time { font-weight: 600; font-variant-numeric: tabular-nums; }
+.au-ago { font-size: 11px; color: var(--rp-muted); margin-top: 1px; }
+.au-user { display: flex; align-items: center; gap: 8px; font-weight: 500; }
+.au-avatar { flex: none; width: 26px; height: 26px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; background: color-mix(in srgb, var(--rp-accent) 22%, transparent); color: var(--rp-primary); }
+.au-rec { display: inline-block; padding: 2px 9px; border-radius: 8px; background: var(--rp-surface2); border: 1px solid var(--rp-border); font-size: 12px; font-weight: 600; }
+.au-changes { display: flex; flex-direction: column; gap: 5px; white-space: normal; min-width: 260px; }
+.au-change { font-size: 12.5px; line-height: 1.6; }
+.au-field { color: var(--rp-muted); margin-right: 8px; }
+.au-old, .au-new { display: inline-block; padding: 0 7px; border-radius: 6px; max-width: 220px; vertical-align: bottom; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.au-old { text-decoration: line-through; color: var(--rp-red); background: color-mix(in srgb, var(--rp-red) 12%, transparent); }
+.au-new { color: var(--rp-green); background: color-mix(in srgb, var(--rp-green) 13%, transparent); font-weight: 600; }
+.au-arrow { margin: 0 5px; color: var(--rp-muted); }
+.au-muted { color: var(--rp-muted); }
+.au-more { align-self: flex-start; background: none; border: none; padding: 0; color: var(--rp-accent); font-size: 12px; font-weight: 600; }
+.rp-chart-note, .rp-note { margin-top: 10px; font-size: 12px; color: var(--rp-muted); }
+.rp-note { margin: 0 0 14px; padding: 10px 14px; border-radius: 12px; border: 1px dashed var(--rp-border); }
+
+/* Table */
+.rp-table-card { overflow: hidden; }
+.rp-scroll { overflow-x: auto; }
+.rp-table { width: 100%; border-collapse: collapse; min-width: 600px; }
+.rp-table th { padding: 11px 16px; text-align: left; font-size: 12px; font-weight: 600; color: var(--rp-muted); white-space: nowrap; cursor: pointer; user-select: none; background: var(--rp-surface2); }
+.rp-table th:hover { color: var(--rp-text); }
+.rp-table th.static { cursor: default; }
+.rp-table td { padding: 11px 16px; font-size: 13px; color: var(--rp-text); white-space: nowrap; border-top: 1px solid var(--rp-border); }
+.rp-table tbody tr:nth-child(even) { background: color-mix(in srgb, var(--rp-surface2) 55%, transparent); }
+.rp-table tbody tr:hover { background: color-mix(in srgb, var(--rp-accent) 9%, transparent); }
+.rp-money { font-weight: 700; color: var(--rp-green); }
+.rp-money.neg { color: var(--rp-red); }
+.rp-badge { display: inline-block; padding: 3px 10px; border-radius: 99px; font-size: 12px; font-weight: 600; }
+.rp-badge-green { background: color-mix(in srgb, var(--rp-green) 16%, transparent); color: var(--rp-green); }
+.rp-badge-red   { background: color-mix(in srgb, var(--rp-red) 16%, transparent);   color: var(--rp-red); }
+.rp-badge-blue  { background: color-mix(in srgb, var(--rp-blue) 16%, transparent);  color: var(--rp-blue); }
+.rp-badge-amber { background: color-mix(in srgb, var(--rp-amber) 18%, transparent); color: var(--rp-amber); }
+.rp-mini { padding: 4px 10px; border-radius: 8px; border: 1px solid var(--rp-border); background: var(--rp-surface2); color: var(--rp-accent); font-size: 12px; font-weight: 600; }
+.rp-state { padding: 56px 20px; text-align: center; color: var(--rp-muted); font-size: 14px; }
+.rp-state strong { display: block; color: var(--rp-text); font-size: 16px; margin-bottom: 4px; }
+.rp-skel { height: 14px; border-radius: 6px; background: var(--rp-surface2); animation: rp-pulse 1.3s ease-in-out infinite; }
+@keyframes rp-pulse { 0%,100% { opacity: .5; } 50% { opacity: 1; } }
+.rp-count { margin-top: 8px; font-size: 12px; color: var(--rp-muted); text-align: right; }
+
+/* Tablet / phone: report picker becomes a swipeable row of chips */
+@media (max-width: 900px) {
+  .rp-layout { flex-direction: column; gap: 14px; }
+  .rp-list { width: 100%; position: static; max-height: none; flex-direction: row; align-items: center; gap: 8px; padding: 8px; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; }
+  .rp-list::-webkit-scrollbar { display: none; }
+  .rp-group, .rp-sep, .rp-item-desc { display: none; }
+  .rp-item { flex: none; border-color: var(--rp-border); }
+  .rp-item.on { border-color: var(--rp-tone); }
+  .rp-item-main { padding: 6px 8px; }
+  .rp-ico { width: 26px; height: 26px; font-size: 14px; border-radius: 8px; }
+  .rp-star { display: none; }
+  .rp-main { width: 100%; }
+}
+@media (max-width: 640px) {
+  .rp-title { font-size: 24px; }
+  .rp-top { padding: 14px; }
+  .rp-controls { width: 100%; }
+  .rp-btn { flex: 1; justify-content: center; }
+  .rp-kpis { grid-template-columns: repeat(2, 1fr); }
+  .rp-hrow { grid-template-columns: 96px 1fr; gap: 8px; }
+}
+
+@media (prefers-reduced-motion: reduce) { .rp-search, .rp-item, .rp-star, .rp-skel { transition: none; animation: none; } }
+
+/* Printing: always black on white, no shadows, no UI chrome */
+@media print {
+  .no-print { display: none !important; }
+  :root .rp-page, :root[data-theme] .rp-page {
+    --rp-text: #111; --rp-muted: #555; --rp-surface: #fff; --rp-surface2: #f3f4f6; --rp-border: #d1d5db;
+    --rp-primary: #6d28d9; --rp-green: #15803d; --rp-red: #b91c1c; --rp-blue: #1d4ed8; --rp-amber: #b45309; --rp-shadow: none;
+  }
+  .rp-layout { display: block; }
+  .rp-card { box-shadow: none; }
+}
+`;
+
+// ── Audit trail helpers ──────────────────────────────────────────────────────
+const SENSITIVE_FIELD = /(^|_)(pin|password|passwd|token|secret|hash|otp)(_|$)/i;
+const MONEY_FIELD = /amount|balance|rent|price|total|deposit|cost/i;
+
+const prettify = (s) => {
+  const t = String(s ?? '').replace(/_/g, ' ').replace(/\s+/g, ' ').trim().toLowerCase();
+  return t ? t.charAt(0).toUpperCase() + t.slice(1) : '—';
+};
+
+function actionKind(action) {
+  const a = String(action || '');
+  if (/delet|remov|archiv/i.test(a)) return 'red';
+  if (/creat|add|insert|record|register/i.test(a)) return 'green';
+  if (/updat|edit|chang|assign|move/i.test(a)) return 'blue';
+  return 'amber';
+}
+
+// Formats one audit value for display. Anything that looks like a secret is masked.
+function fmtVal(field, v) {
+  if (SENSITIVE_FIELD.test(field)) return '••••••';
+  if (v === null || v === undefined || v === '') return 'empty';
+  if (typeof v === 'boolean') return v ? 'Yes' : 'No';
+  if (typeof v === 'object') return JSON.stringify(v);
+  const str = String(v);
+  if (MONEY_FIELD.test(field) && /^-?\d+(\.\d+)?$/.test(str)) return `KES ${Number(str).toLocaleString()}`;
+  if (/^\d{4}-\d{2}-\d{2}(T|$)/.test(str)) { const d = new Date(str); if (!isNaN(d)) return d.toLocaleDateString('en-KE'); }
+  return str.length > 48 ? `${str.slice(0, 45)}…` : str;
+}
+
+function changesText(changes) {
+  if (!changes || typeof changes !== 'object') return '—';
+  const parts = Object.entries(changes).map(([f, v]) => {
+    const isDiff = v && typeof v === 'object' && ('from' in v || 'to' in v);
+    if (!isDiff) return `${prettify(f)}: ${fmtVal(f, v)}`;
+    const hasFrom = v.from != null && v.from !== '';
+    return hasFrom ? `${prettify(f)}: ${fmtVal(f, v.from)} → ${fmtVal(f, v.to)}` : `${prettify(f)}: ${fmtVal(f, v.to)}`;
+  });
+  return parts.length ? parts.join('; ') : '—';
+}
+
+function timeAgo(d) {
+  const sec = Math.floor((Date.now() - d) / 1000);
+  if (sec < 60) return 'Just now';
+  const m = Math.floor(sec / 60); if (m < 60) return `${m} min ago`;
+  const h = Math.floor(m / 60); if (h < 24) return `${h} hr ago`;
+  const days = Math.floor(h / 24); if (days < 7) return `${days} day${days > 1 ? 's' : ''} ago`;
+  return d.toLocaleDateString('en-KE');
+}
+
+function dayLabel(d) {
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const yesterday = new Date(today); yesterday.setDate(yesterday.getDate() - 1);
+  const day = new Date(d); day.setHours(0, 0, 0, 0);
+  if (+day === +today) return 'Today';
+  if (+day === +yesterday) return 'Yesterday';
+  return day.toLocaleDateString('en-KE', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+}
+
+const initials = (name) => String(name || '?').split(/\s+/).filter(Boolean).slice(0, 2).map(w => w[0].toUpperCase()).join('') || '?';
+
+function AuditChanges({ changes, expanded, onToggle }) {
+  const entries = changes && typeof changes === 'object' ? Object.entries(changes) : [];
+  if (!entries.length) return <span className="au-muted">—</span>;
+  const shown = expanded ? entries : entries.slice(0, 3);
+  return (
+    <div className="au-changes">
+      {shown.map(([field, v]) => {
+        const isDiff = v && typeof v === 'object' && ('from' in v || 'to' in v);
+        const hasFrom = isDiff && v.from != null && v.from !== '';
+        const hasTo = isDiff ? (v.to != null && v.to !== '') : true;
+        const to = isDiff ? v.to : v;
+        return (
+          <div className="au-change" key={field}>
+            <span className="au-field">{prettify(field)}</span>
+            {hasFrom && <span className="au-old" title={SENSITIVE_FIELD.test(field) ? undefined : String(v.from)}>{fmtVal(field, v.from)}</span>}
+            {hasFrom && hasTo && <span className="au-arrow">→</span>}
+            {hasTo ? <span className="au-new" title={SENSITIVE_FIELD.test(field) ? undefined : String(to)}>{fmtVal(field, to)}</span>
+                   : (!hasFrom && <span className="au-muted">empty</span>)}
+          </div>
+        );
+      })}
+      {entries.length > 3 && (
+        <button type="button" className="au-more" onClick={onToggle}>{expanded ? 'Show less' : `+${entries.length - 3} more`}</button>
+      )}
+    </div>
+  );
+}
+
+// Activity feed: grouped by day, with a readable before → after view of every change.
+function AuditTable({ rows, open, toggle }) {
+  let lastDay = '';
+  return (
+    <div className="rp-scroll">
+      <table className="rp-table au">
+        <thead>
+          <tr>
+            {['Time', 'User', 'Action', 'Record', 'Changes'].map(h => <th key={h} className="static">{h}</th>)}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.flatMap(r => {
+            const a = r._entry;
+            const out = [];
+            const day = dayLabel(a._d);
+            if (day !== lastDay) {
+              lastDay = day;
+              out.push(<tr className="au-day" key={`day-${day}`}><td colSpan={5}>{day}</td></tr>);
+            }
+            out.push(
+              <tr key={a._id}>
+                <td>
+                  <div className="au-time">{a._d.toLocaleTimeString('en-KE', { hour: '2-digit', minute: '2-digit' })}</div>
+                  <div className="au-ago" title={a._d.toLocaleString('en-KE')}>{timeAgo(a._d)}</div>
+                </td>
+                <td>
+                  <div className="au-user"><span className="au-avatar" aria-hidden="true">{initials(r._user)}</span>{r._user}</div>
+                </td>
+                <td><span className={`rp-badge rp-badge-${actionKind(a.action)}`}>{prettify(a.action)}</span></td>
+                <td>
+                  <span className="au-rec">{prettify(a.entity_type)}{a.entity_id ? ` #${a.entity_id}` : ''}</span>
+                </td>
+                <td><AuditChanges changes={a.changes} expanded={!!open[a._id]} onToggle={() => toggle(a._id)} /></td>
+              </tr>
+            );
+            return out;
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+// Compact horizontal bar chart: one or two bars per row (e.g. income vs expenses).
+// data: [{ label, values: [n, ...] }], series: [{ name, color }]
+function HBarChart({ title, data, series, format = (v) => Number(v).toLocaleString(), max: maxProp, note }) {
+  const rowsData = data.slice(0, 8);
+  const max = maxProp || Math.max(1, ...rowsData.flatMap(d => d.values));
+  return (
+    <div>
+      <div className="rp-chart-head">
+        <div className="rp-chart-title">{title}</div>
+        {series.length > 1 && (
+          <div className="rp-legend">
+            {series.map(sr => (
+              <span key={sr.name}><i style={{ background: tone(sr.color) }} />{sr.name}</span>
+            ))}
+          </div>
+        )}
+      </div>
+      <div className="rp-hbars">
+        {rowsData.map(d => (
+          <div className="rp-hrow" key={d.label}>
+            <div className="rp-hlabel" title={d.label}>{d.label}</div>
+            <div className="rp-hlines">
+              {d.values.map((v, i) => (
+                <div className="rp-hline" key={i}>
+                  <div className="rp-hbar" style={{ width: `${v > 0 ? Math.max(2, (v / max) * 100) : 0}%`, background: tone(series[i].color) }} />
+                  <span className="rp-hval">{format(v)}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+      {(data.length > 8 || note) && <div className="rp-chart-note">{data.length > 8 ? `Top 8 of ${data.length}. ` : ''}{note}</div>}
+    </div>
+  );
+}
+
 export default function Reports() {
+  const { user: me } = useAuth();
+  const isAdminOrAgent = me?.role === 'admin' || me?.role === 'super_admin' || me?.role === 'agent';
   const [active,   setActive]   = useState('payments');
   const [data,     setData]     = useState({});
   const [loading,  setLoading]  = useState(false);
   const [filters,  setFilters]  = useState({
     period: 'month', month: getThisMonth(), year: getThisYear(), status: 'all',
     propertyName: 'all', location: 'all', fromDate: '', toDate: '', comparisonMode: 'mom', landlord: 'all',
+    agent: 'all', caretaker: 'all',
   });
   const [tableSearch, setTableSearch] = useState('');
+  // Audit trail has its own filters (kept out of `filters` so changing them doesn't refetch everything)
+  const [audit, setAudit] = useState({ range: '30d', action: 'all', entity: 'all', user: 'all' });
+  const [historyTenantId, setHistoryTenantId] = useState('');
+  const [auditOpen, setAuditOpen] = useState({});
   const [sortCol, setSortCol] = useState(null);
   const [sortDir, setSortDir] = useState('asc');
   const [pinned, setPinned] = useState(() => {
@@ -140,15 +518,15 @@ export default function Reports() {
         deposits = arr(dr.data);
       } catch { deposits = []; }
 
-      let auditLog = [];
+      let auditLog = [], auditDenied = false;
       try {
         const ar = await API.get('/audit-log');
         auditLog = arr(ar.data);
-      } catch { auditLog = []; } // 403 for non-admins — expected, not an error
+      } catch (e) { auditLog = []; auditDenied = e?.response?.status === 403; } // 403 for non-admins — expected, not an error
 
       setData({
         tenants: arr(tr.data), payments: arr(pr.data), houses: arr(hr.data),
-        requests: arr(mr.data), plots: arr(plr.data), expenses: arr(er.data), users, deposits, auditLog, caretakerPlots,
+        requests: arr(mr.data), plots: arr(plr.data), expenses: arr(er.data), users, deposits, auditLog, auditDenied, caretakerPlots,
       });
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
@@ -216,10 +594,255 @@ export default function Reports() {
   const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
   // ── Compute report rows ────────────────────────────────────────────────────
-  let rows = [], columns = [], title = '', summary = null, chart = null;
+  let rows = [], columns = [], title = '', summary = null, chart = null, note = '';
+  let auditOptions = { actions: [], entities: [], users: [] };
 
   if (data.payments) {
     const { tenants, payments, houses, requests, plots, expenses, users, deposits, auditLog, caretakerPlots } = data;
+
+    // Shared lookups for the analytical reports below
+    const houseById = Object.fromEntries(houses.map(h => [h.id, h]));
+    const plotById  = Object.fromEntries(plots.map(p => [p.id, p]));
+    const landlordOK = (plot) => filters.landlord === 'all' || (plot && plot.owner_name === filters.landlord);
+    const plotOfHouse = (houseId) => { const h = houseById[houseId]; return h ? plotById[h.plot_id] : undefined; };
+    const num = (v) => parseFloat(v || 0);
+
+    // ── Profit & Loss by plot ───────────────────────────────────────────────
+    if (active === 'profitloss') {
+      const byPlot = {};
+      const bucket = (key, name) => (byPlot[key] = byPlot[key] || { name, owner: '', income: 0, expense: 0 });
+      plots.filter(pl => landlordOK(pl)).forEach(pl => { bucket(pl.id, pl.name).owner = pl.owner_name || '—'; });
+
+      filterByPeriod(payments, 'payment_date').forEach(pay => {
+        const pl = plotOfHouse(pay.house_id);
+        if (pl) { if (landlordOK(pl)) bucket(pl.id, pl.name).income += num(pay.amount); }
+        else if (filters.landlord === 'all') bucket('none', 'Unassigned').income += num(pay.amount);
+      });
+      filterByPeriod(expenses, 'expense_date').forEach(e => {
+        const pl = e.plot_id != null ? plotById[e.plot_id] : plots.find(x => x.name === e.plot_name);
+        if (pl) { if (landlordOK(pl)) bucket(pl.id, pl.name).expense += num(e.amount); }
+        else if (filters.landlord === 'all') bucket('none', 'Unassigned').expense += num(e.amount);
+      });
+
+      const list = Object.values(byPlot).map(b => ({ ...b, net: b.income - b.expense })).sort((a, b) => b.net - a.net);
+      const totalIncome = list.reduce((s, b) => s + b.income, 0);
+      const totalExpense = list.reduce((s, b) => s + b.expense, 0);
+      const net = totalIncome - totalExpense;
+      columns = ['Plot', 'Owner', 'Income (KES)', 'Expenses (KES)', 'Net (KES)', 'Margin'];
+      rows = list.map(b => ({
+        Plot: b.name, Owner: b.owner || '—',
+        'Income (KES)': b.income.toLocaleString(), 'Expenses (KES)': b.expense.toLocaleString(),
+        'Net (KES)': b.net.toLocaleString(),
+        Margin: b.income ? `${Math.round((b.net / b.income) * 100)}%` : '—',
+      }));
+      summary = [
+        { label: 'Income', value: `KES ${totalIncome.toLocaleString()}`, color: 'var(--green)' },
+        { label: 'Expenses', value: `KES ${totalExpense.toLocaleString()}`, color: 'var(--red)' },
+        { label: 'Net Profit', value: `KES ${net.toLocaleString()}`, color: net >= 0 ? 'var(--green)' : 'var(--red)' },
+        { label: 'Margin', value: totalIncome ? `${Math.round((net / totalIncome) * 100)}%` : '—', color: 'var(--blue)' },
+      ];
+      chart = <HBarChart title="Income vs expenses by plot" series={[{ name: 'Income', color: 'var(--green)' }, { name: 'Expenses', color: 'var(--red)' }]}
+        data={[...list].sort((a, b) => b.income - a.income).filter(b => b.income || b.expense).map(b => ({ label: b.name, values: [b.income, b.expense] }))}
+        format={v => `KES ${v.toLocaleString()}`} />;
+      title = 'Profit & Loss by Plot';
+      note = 'Income is rent payments recorded in the selected period, matched to a plot through the unit. Expenses are matched by plot. Anything that cannot be matched appears under "Unassigned".';
+    }
+
+    // ── Collection efficiency (expected vs collected, by month) ─────────────
+    if (active === 'collection') {
+      const yr = filters.year, now = new Date();
+      const lastMonth = yr < now.getFullYear() ? 11 : yr > now.getFullYear() ? -1 : now.getMonth();
+      const list = [];
+      months.forEach((m, i) => {
+        if (i > lastMonth) return;
+        const endOfMonth = new Date(yr, i + 1, 0, 23, 59, 59);
+        let expected = 0, collected = 0;
+        tenants.forEach(t => {
+          if (!t.is_active || !t.move_in_date || new Date(t.move_in_date) > endOfMonth) return;
+          const h = houseById[t.house_id];
+          if (h && landlordOK(plotById[h.plot_id])) expected += num(h.rent_amount);
+        });
+        payments.forEach(pay => {
+          const d = new Date(pay.payment_date);
+          if (d.getFullYear() !== yr || d.getMonth() !== i) return;
+          const pl = plotOfHouse(pay.house_id);
+          if (filters.landlord !== 'all' && !(pl && pl.owner_name === filters.landlord)) return;
+          collected += num(pay.amount);
+        });
+        list.push({ m, expected, collected });
+      });
+      const totalExp = list.reduce((s, x) => s + x.expected, 0);
+      const totalCol = list.reduce((s, x) => s + x.collected, 0);
+      const eff = totalExp ? Math.round((totalCol / totalExp) * 100) : 0;
+      columns = ['Month', 'Expected (KES)', 'Collected (KES)', 'Gap (KES)', 'Efficiency'];
+      rows = list.map(x => ({
+        Month: `${x.m} ${yr}`,
+        'Expected (KES)': x.expected.toLocaleString(),
+        'Collected (KES)': x.collected.toLocaleString(),
+        'Gap (KES)': (x.expected - x.collected).toLocaleString(),
+        Efficiency: x.expected ? `${Math.round((x.collected / x.expected) * 100)}%` : '—',
+      }));
+      summary = [
+        { label: 'Expected', value: `KES ${totalExp.toLocaleString()}`, color: 'var(--blue)' },
+        { label: 'Collected', value: `KES ${totalCol.toLocaleString()}`, color: 'var(--green)' },
+        { label: 'Shortfall', value: `KES ${(totalExp - totalCol).toLocaleString()}`, color: 'var(--red)' },
+        { label: 'Efficiency', value: totalExp ? `${eff}%` : '—', color: eff >= 90 ? 'var(--green)' : eff >= 70 ? 'var(--amber)' : 'var(--red)' },
+      ];
+      chart = <HBarChart title={`Expected vs collected, ${yr}`} series={[{ name: 'Expected', color: 'var(--blue)' }, { name: 'Collected', color: 'var(--green)' }]}
+        data={list.map(x => ({ label: x.m, values: [x.expected, x.collected] }))} format={v => `KES ${v.toLocaleString()}`} />;
+      title = `Collection Efficiency ${yr}`;
+      note = 'Expected rent is estimated from currently active tenants and their move-in dates. Tenants who have since moved out are not included, so earlier months may be understated. Over 100% means arrears or advance payments were received.';
+    }
+
+    // ── Agent scorecard ─────────────────────────────────────────────────────
+    if (active === 'agentscore') {
+      const now = new Date();
+      const agents = {};
+      const agentRow = (id, name) => {
+        const k = id == null ? 'none' : String(id);
+        if (!agents[k]) agents[k] = { name: id == null ? 'No agent assigned' : name, plots: 0, units: 0, occupied: 0, rentRoll: 0, collected: 0, arrears: 0, open: 0 };
+        return agents[k];
+      };
+      (users || []).filter(u => u.role === 'agent').forEach(u => agentRow(u.id, u.name));
+      const agentOfPlot = (pl) => pl ? (pl.agent_id != null ? agentRow(pl.agent_id, pl.agent_name || `Agent #${pl.agent_id}`) : agentRow(null)) : null;
+
+      plots.forEach(pl => { agentOfPlot(pl).plots += 1; });
+      houses.forEach(h => {
+        const a = agentOfPlot(plotById[h.plot_id]); if (!a) return;
+        a.units += 1;
+        if (h.status === 'occupied') { a.occupied += 1; a.rentRoll += num(h.rent_amount); }
+      });
+      tenants.forEach(t => {
+        if (!t.is_active) return;
+        const a = agentOfPlot(plotOfHouse(t.house_id)); if (a) a.arrears += num(t.balance);
+      });
+      payments.forEach(pay => {
+        const d = new Date(pay.payment_date);
+        if (d.getFullYear() !== now.getFullYear() || d.getMonth() !== now.getMonth()) return;
+        const a = agentOfPlot(plotOfHouse(pay.house_id)); if (a) a.collected += num(pay.amount);
+      });
+      requests.forEach(r => {
+        if (r.status === 'completed') return;
+        const a = agentOfPlot(plotOfHouse(r.house_id)); if (a) a.open += 1;
+      });
+
+      const list = Object.values(agents).filter(a => a.name !== 'No agent assigned' || a.plots > 0).sort((a, b) => b.rentRoll - a.rentRoll);
+      const roll = list.reduce((s, a) => s + a.rentRoll, 0), coll = list.reduce((s, a) => s + a.collected, 0);
+      columns = ['Agent', 'Plots', 'Units', 'Occupancy', 'Rent Roll (KES)', 'Collected This Month (KES)', 'Collection Rate', 'Arrears (KES)', 'Open Requests'];
+      rows = list.map(a => ({
+        Agent: a.name, Plots: a.plots, Units: a.units,
+        Occupancy: a.units ? `${Math.round((a.occupied / a.units) * 100)}%` : '—',
+        'Rent Roll (KES)': a.rentRoll.toLocaleString(),
+        'Collected This Month (KES)': a.collected.toLocaleString(),
+        'Collection Rate': a.rentRoll ? `${Math.round((a.collected / a.rentRoll) * 100)}%` : '—',
+        'Arrears (KES)': a.arrears.toLocaleString(),
+        'Open Requests': a.open,
+      }));
+      summary = [
+        { label: 'Agents with plots', value: list.filter(a => a.plots > 0 && a.name !== 'No agent assigned').length, color: 'var(--primary)' },
+        { label: 'Plots managed', value: list.filter(a => a.name !== 'No agent assigned').reduce((s, a) => s + a.plots, 0), color: 'var(--blue)' },
+        { label: 'Collection rate (this month)', value: roll ? `${Math.round((coll / roll) * 100)}%` : '—', color: 'var(--green)' },
+        { label: 'Total arrears', value: `KES ${list.reduce((s, a) => s + a.arrears, 0).toLocaleString()}`, color: 'var(--red)' },
+      ];
+      chart = <HBarChart title="Rent roll vs collected this month" series={[{ name: 'Rent roll', color: 'var(--blue)' }, { name: 'Collected', color: 'var(--green)' }]}
+        data={list.filter(a => a.rentRoll || a.collected).map(a => ({ label: a.name, values: [a.rentRoll, a.collected] }))} format={v => `KES ${v.toLocaleString()}`} />;
+      title = 'Agent Scorecard';
+      note = 'Each plot belongs to the agent assigned on the plot. Collection rate compares this month\'s payments with the monthly rent of occupied units. Plots without an agent are grouped under "No agent assigned".';
+    }
+
+    // ── Vacancy loss ────────────────────────────────────────────────────────
+    if (active === 'vacancyloss') {
+      const now = new Date();
+      const items = houses.filter(h => h.status === 'vacant' && landlordOK(plotById[h.plot_id])).map(h => {
+        const days = h.status_changed_at ? Math.max(0, daysBetween(now, new Date(h.status_changed_at))) : null;
+        const rent = num(h.rent_amount);
+        return { h, rent, days, loss: days != null ? Math.round((rent * days) / 30) : null, plotName: h.plot_name || plotById[h.plot_id]?.name || '—' };
+      }).sort((a, b) => (b.loss ?? -1) - (a.loss ?? -1));
+      columns = ['Plot', 'Unit', 'Type', 'Rent (KES)', 'Days Vacant', 'Est. Loss (KES)'];
+      rows = items.map(x => ({
+        Plot: x.plotName, Unit: `Unit ${x.h.unit_number}`, Type: x.h.house_type || '—',
+        'Rent (KES)': x.rent.toLocaleString(),
+        'Days Vacant': x.days ?? '—',
+        'Est. Loss (KES)': x.loss != null ? x.loss.toLocaleString() : '—',
+      }));
+      const dated = items.filter(x => x.days != null);
+      const longest = dated.length ? dated.reduce((a, b) => (b.days > a.days ? b : a)) : null;
+      summary = [
+        { label: 'Vacant units', value: items.length, color: 'var(--amber)' },
+        { label: 'Rent idle per month', value: `KES ${items.reduce((s, x) => s + x.rent, 0).toLocaleString()}`, color: 'var(--blue)' },
+        { label: 'Estimated loss so far', value: `KES ${items.reduce((s, x) => s + (x.loss || 0), 0).toLocaleString()}`, color: 'var(--red)' },
+        ...(longest ? [{ label: 'Longest vacant', value: `${longest.days} days`, color: 'var(--red)' }] : []),
+      ];
+      const lossByPlot = {};
+      items.forEach(x => { lossByPlot[x.plotName] = (lossByPlot[x.plotName] || 0) + (x.loss || 0); });
+      chart = <HBarChart title="Estimated rent lost to vacancy, by plot" series={[{ name: 'Estimated loss', color: 'var(--red)' }]}
+        data={Object.entries(lossByPlot).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]).map(([label, v]) => ({ label, values: [v] }))}
+        format={v => `KES ${v.toLocaleString()}`} />;
+      title = 'Vacancy Loss';
+      note = 'Estimated as monthly rent × days vacant ÷ 30, counted from when each unit was last marked vacant. Units with no recorded vacancy date show — and are not included in the loss.';
+    }
+
+    // ── Data quality exceptions ─────────────────────────────────────────────
+    if (active === 'dataquality') {
+      const issues = [];
+      const add = (Severity, Issue, Record, Plot, Detail) => issues.push({ Severity, Issue, Record, Plot: Plot || '—', Detail: Detail || '—' });
+      const activeTenants = tenants.filter(t => t.is_active);
+      const blank = (v) => !(v && String(v).trim());
+
+      activeTenants.forEach(t => {
+        const plotName = t.plot_name || plotOfHouse(t.house_id)?.name;
+        if (blank(t.phone) && blank(t.email)) add('High', 'No contact details', t.full_name, plotName, 'No phone number or email on file');
+        else if (blank(t.phone)) add('Medium', 'Missing phone number', t.full_name, plotName);
+        else if (blank(t.email)) add('Low', 'Missing email', t.full_name, plotName);
+        if (!t.move_in_date) add('Medium', 'No move-in date', t.full_name, plotName, 'Rent balance cannot be calculated without it');
+        if (t.house_id == null) add('High', 'No unit assigned', t.full_name, plotName, 'Active tenant is not linked to a unit');
+      });
+
+      const byPhone = {};
+      activeTenants.forEach(t => { const ph = String(t.phone || '').replace(/\s+/g, ''); if (ph) (byPhone[ph] = byPhone[ph] || []).push(t); });
+      Object.entries(byPhone).forEach(([ph, list]) => {
+        if (list.length > 1) add('Medium', 'Duplicate phone number', list.map(t => t.full_name).join(', '), null, ph);
+      });
+
+      const activeByHouse = {};
+      activeTenants.forEach(t => { if (t.house_id != null) (activeByHouse[t.house_id] = activeByHouse[t.house_id] || []).push(t); });
+      houses.forEach(h => {
+        const pl = plotById[h.plot_id]?.name, unit = `Unit ${h.unit_number}`, here = activeByHouse[h.id] || [];
+        if (h.status === 'occupied' && here.length === 0) add('High', 'Occupied unit has no tenant', unit, pl, 'Marked occupied, but no active tenant is linked');
+        if (h.status === 'vacant' && here.length > 0) add('High', 'Vacant unit has a tenant', unit, pl, `${here.map(t => t.full_name).join(', ')} linked to a unit marked vacant`);
+        if (here.length > 1) add('Medium', 'Several active tenants in one unit', unit, pl, here.map(t => t.full_name).join(', '));
+        if (!(num(h.rent_amount) > 0)) add('Medium', 'Unit has no rent amount', unit, pl);
+      });
+
+      // Staffing gaps. The caretaker check needs the user list (admin only).
+      const caretakerCovered = new Set();
+      (users || []).filter(u => u.role === 'caretaker').forEach(u => {
+        if (u.plot_id != null) caretakerCovered.add(u.plot_id);
+        ((caretakerPlots || {})[u.id] || []).forEach(x => caretakerCovered.add(x.id ?? x.plot_id));
+      });
+      plots.forEach(pl => {
+        if (pl.agent_id == null) add('Low', 'Plot has no agent', pl.name, pl.name, 'No agent assigned to this plot');
+        if ((users || []).length && !caretakerCovered.has(pl.id)) add('Low', 'Plot has no caretaker', pl.name, pl.name, 'No caretaker assigned to this plot');
+      });
+
+      const order = { High: 0, Medium: 1, Low: 2 };
+      issues.sort((a, b) => order[a.Severity] - order[b.Severity] || a.Issue.localeCompare(b.Issue));
+      columns = ['Severity', 'Issue', 'Record', 'Plot', 'Detail'];
+      rows = issues;
+      const count = (sev) => issues.filter(i => i.Severity === sev).length;
+      summary = [
+        { label: 'Total issues', value: issues.length, color: 'var(--primary)' },
+        { label: 'High', value: count('High'), color: 'var(--red)' },
+        { label: 'Medium', value: count('Medium'), color: 'var(--amber)' },
+        { label: 'Low', value: count('Low'), color: 'var(--blue)' },
+      ];
+      const byIssue = {};
+      issues.forEach(i => { byIssue[i.Issue] = (byIssue[i.Issue] || 0) + 1; });
+      chart = <HBarChart title="Issues by type" series={[{ name: 'Issues', color: 'var(--amber)' }]}
+        data={Object.entries(byIssue).sort((a, b) => b[1] - a[1]).map(([label, v]) => ({ label, values: [v] }))} format={v => v} />;
+      title = 'Data Quality Exceptions';
+      note = 'High: breaks balances, billing or reporting. Medium: should be fixed soon. Low: housekeeping. The caretaker check only runs when the user list is available (admin).';
+    }
 
     if (active === 'payments') {
       const filtered = filterByPeriod(payments, 'payment_date');
@@ -235,6 +858,60 @@ export default function Reports() {
       }));
       summary = [{ label: 'Total Collected', value: `KES ${total.toLocaleString()}`, color: 'var(--green)' }, { label: 'Transactions', value: filtered.length, color: 'var(--blue)' }];
       title = `Payment Collection Report`;
+    }
+
+    if (active === 'paymenthistory') {
+      const tenant = (tenants || []).find(t => String(t.id) === String(historyTenantId));
+      if (!tenant) {
+        columns = []; rows = []; summary = [];
+        title = 'Payment History';
+      } else {
+        const monthName = (y, m) => new Date(y, m - 1, 1).toLocaleString('en-KE', { month: 'long', year: 'numeric' });
+
+        // Rent side — every payment row for this tenant, whatever its status,
+        // so a failed or unallocated one is still visible in their history,
+        // not silently hidden.
+        const rentRows = (payments || [])
+          .filter(p => String(p.tenant_id) === String(tenant.id))
+          .map(p => ({
+            _date: new Date(p.payment_date),
+            Date: new Date(p.payment_date).toLocaleDateString('en-KE'),
+            Type: 'Rent',
+            'Amount (KES)': parseFloat(p.amount || 0).toLocaleString(),
+            'Allocated To': (p.for_year && p.for_month) ? monthName(p.for_year, p.for_month) : '—',
+            Method: p.method || 'mpesa',
+            Reference: p.receipt_no || p.transaction_id || '—',
+            Status: p.status,
+          }));
+
+        // Deposit side — collected/refunded/forfeited, same tenant.
+        const depositRows = (deposits || [])
+          .filter(d => String(d.tenant_id) === String(tenant.id))
+          .map(d => ({
+            _date: new Date(d.created_at),
+            Date: new Date(d.created_at).toLocaleDateString('en-KE'),
+            Type: `Deposit — ${d.type.charAt(0).toUpperCase()}${d.type.slice(1)}`,
+            'Amount (KES)': parseFloat(d.amount || 0).toLocaleString(),
+            'Allocated To': 'Security Deposit',
+            Method: '—',
+            Reference: '—',
+            Status: '—',
+          }));
+
+        const combined = [...rentRows, ...depositRows].sort((a, b) => a._date - b._date);
+        columns = ['Date', 'Type', 'Amount (KES)', 'Allocated To', 'Method', 'Reference', 'Status'];
+        rows = combined.map(({ _date, ...r }) => r);
+
+        const totalRent     = rentRows.filter(r => r.Status === 'matched').reduce((s, r) => s + parseFloat(r['Amount (KES)'].replace(/,/g, '')), 0);
+        const depositNet    = (deposits || []).filter(d => String(d.tenant_id) === String(tenant.id))
+          .reduce((s, d) => s + (d.type === 'collected' ? 1 : -1) * parseFloat(d.amount || 0), 0);
+        summary = [
+          { label: 'Total Rent Paid', value: `KES ${totalRent.toLocaleString()}`, color: 'var(--green)' },
+          { label: 'Deposit Held (Net)', value: `KES ${depositNet.toLocaleString()}`, color: 'var(--blue)' },
+          { label: 'Current Balance', value: `KES ${parseFloat(tenant.balance || 0).toLocaleString()}`, color: parseFloat(tenant.balance || 0) > 0 ? 'var(--red)' : 'var(--green)' },
+        ];
+        title = `Payment History — ${tenant.full_name}`;
+      }
     }
 
     if (active === 'unpaid') {
@@ -279,6 +956,8 @@ export default function Reports() {
         { label: '90+ days', value: bucketCount('90+ days'), color: 'var(--red)' },
       ];
       title = 'Unpaid Rent Report';
+      chart = <HBarChart title="Tenants by aging bucket" series={[{ name: 'Tenants', color: 'var(--red)' }]}
+        data={['0–30 days', '31–60 days', '61–90 days', '90+ days'].map(b => ({ label: b, values: [bucketCount(b)] }))} format={v => v} />;
     }
 
     if (active === 'tenants') {
@@ -381,6 +1060,10 @@ export default function Reports() {
       }));
       summary = [{ label: 'Total Expenses', value: `KES ${total.toLocaleString()}`, color: 'var(--red)' }, { label: 'Records', value: filtered.length, color: 'var(--muted)' }];
       title = 'Expenses Report';
+      const byCategory = {};
+      filtered.forEach(e => { const k = e.category || 'Uncategorised'; byCategory[k] = (byCategory[k] || 0) + parseFloat(e.amount || 0); });
+      chart = <HBarChart title="Expenses by category" series={[{ name: 'Expenses', color: 'var(--red)' }]}
+        data={Object.entries(byCategory).sort((a, b) => b[1] - a[1]).map(([label, v]) => ({ label, values: [v] }))} format={v => `KES ${v.toLocaleString()}`} />;
     }
 
     if (active === 'revenue') {
@@ -474,6 +1157,8 @@ export default function Reports() {
       }));
       summary = [{ label: 'Total Collected', value: `KES ${grandTotal.toLocaleString()}`, color: 'var(--green)' }, { label: 'Transactions', value: filtered.length, color: 'var(--blue)' }];
       title = 'Payment Method Breakdown';
+      chart = <HBarChart title="Collections by payment method" series={[{ name: 'Collected', color: 'var(--green)' }]}
+        data={Object.entries(byMethod).sort((a, b) => b[1].total - a[1].total).map(([label, v]) => ({ label, values: [v.total] }))} format={v => `KES ${v.toLocaleString()}`} />;
     }
 
     if (active === 'performance') {
@@ -498,6 +1183,8 @@ export default function Reports() {
         { label: 'Needs Attention', value: ranked[ranked.length - 1].plot.name, color: 'var(--red)' },
       ] : null;
       title = 'Property Performance — Ranked by Occupancy';
+      chart = <HBarChart title="Occupancy rate by plot" series={[{ name: 'Occupancy', color: 'var(--blue)' }]} max={100}
+        data={ranked.map(r => ({ label: r.plot.name, values: [r.rate] }))} format={v => `${v}%`} />;
     }
 
     if (active === 'tenure') {
@@ -519,6 +1206,64 @@ export default function Reports() {
         { label: 'Longest-Staying', value: withTenure[0].t.full_name, color: 'var(--green)' },
       ] : null;
       title = 'Tenant Tenure Report';
+    }
+
+    if (active === 'assignments') {
+      if (!isAdminOrAgent) {
+        // Defense in depth — the sidebar already hides this entry for
+        // landlord/caretaker, this just covers a stale pin or direct state
+        // change. The underlying plots/users data is already scoped by the
+        // backend to begin with, so there's no actual data exposure risk
+        // either way; this is purely about keeping the menu uncluttered
+        // for roles that don't need an org-wide view.
+        columns = []; rows = []; summary = [];
+        title = 'Property Assignments';
+      } else {
+        // Invert the caretaker->plots map (fetched per caretaker via
+        // /auth/users/:id/plots) into plot->caretaker(s), same data the
+        // Caretaker Workload report below already relies on. Falls back to
+        // each caretaker's single legacy plot_id if they have no junction
+        // rows at all.
+        const caretakerByPlot = {};
+        Object.entries(caretakerPlots || {}).forEach(([caretakerId, assignedPlots]) => {
+          const caretaker = users.find(u => String(u.id) === String(caretakerId));
+          const name = caretaker?.name || caretaker?.full_name;
+          if (!name) return;
+          (assignedPlots || []).forEach(p => {
+            (caretakerByPlot[p.id] ||= []).push(name);
+          });
+        });
+        users.filter(u => u.role === 'caretaker' && u.plot_id && !(caretakerPlots?.[u.id]?.length)).forEach(c => {
+          (caretakerByPlot[c.plot_id] ||= []).push(c.name || c.full_name);
+        });
+
+        const filteredPlots = plots.filter(p =>
+          (filters.landlord === 'all' || p.owner_name === filters.landlord) &&
+          (filters.agent === 'all' || p.agent_name === filters.agent) &&
+          (filters.caretaker === 'all' || (caretakerByPlot[p.id] || []).includes(filters.caretaker))
+        );
+
+        columns = ['Property', 'Location', 'Owner (Landlord)', 'Agent', 'Caretaker(s)', 'Units'];
+        rows = filteredPlots.map(p => ({
+          Property: p.name,
+          Location: p.location || '—',
+          'Owner (Landlord)': p.owner_name || '—',
+          Agent: p.agent_name || '— none —',
+          'Caretaker(s)': (caretakerByPlot[p.id] || []).join(', ') || '— none —',
+          Units: houses.filter(h => h.plot_id === p.id).length,
+        }));
+
+        const withAgent     = filteredPlots.filter(p => p.agent_name).length;
+        const withCaretaker = filteredPlots.filter(p => (caretakerByPlot[p.id] || []).length > 0).length;
+        summary = [
+          { label: 'Properties', value: filteredPlots.length, color: 'var(--primary)' },
+          { label: 'With Agent', value: withAgent, color: 'var(--blue)' },
+          { label: 'With Caretaker', value: withCaretaker, color: 'var(--green)' },
+          { label: 'No Caretaker Yet', value: filteredPlots.length - withCaretaker, color: 'var(--red)' },
+        ];
+        title = filters.landlord !== 'all' || filters.agent !== 'all' || filters.caretaker !== 'all'
+          ? `Property Assignments (filtered)` : 'Property Assignments';
+      }
     }
 
     if (active === 'caretakerload') {
@@ -570,16 +1315,64 @@ export default function Reports() {
     }
 
     if (active === 'audittrail') {
-      columns = ['When', 'User', 'Action', 'Entity', 'Changes'];
-      rows = (auditLog || []).map(a => ({
-        When: new Date(a.created_at).toLocaleString('en-KE'),
-        User: a.user_name || `User #${a.user_id}` || '—',
-        Action: a.action,
-        Entity: `${a.entity_type}${a.entity_id ? ' #' + a.entity_id : ''}`,
-        Changes: a.changes ? Object.entries(a.changes).map(([f, v]) => `${f}: ${v.from ?? '—'} → ${v.to ?? '—'}`).join('; ') : '—',
+      const now = new Date();
+      const userOf = (x) => x.user_name || (x.user_id != null ? `User #${x.user_id}` : 'System');
+      const all = (auditLog || [])
+        .map((x, i) => ({ ...x, _d: new Date(x.created_at), _id: x.id ?? `i${i}` }))
+        .sort((x, y) => y._d - x._d);
+
+      auditOptions = {
+        actions:  [...new Set(all.map(x => x.action).filter(Boolean))].sort(),
+        entities: [...new Set(all.map(x => x.entity_type).filter(Boolean))].sort(),
+        users:    [...new Set(all.map(userOf))].sort(),
+      };
+
+      const todayStart = new Date(now); todayStart.setHours(0, 0, 0, 0);
+      const rangeStart = audit.range === 'today' ? todayStart
+        : audit.range === '7d' ? new Date(now - 7 * 864e5)
+        : audit.range === '30d' ? new Date(now - 30 * 864e5) : null;
+
+      const matches = (x) =>
+        (audit.action === 'all' || x.action === audit.action) &&
+        (audit.entity === 'all' || x.entity_type === audit.entity) &&
+        (audit.user === 'all' || userOf(x) === audit.user);
+
+      const base = all.filter(matches);                                   // ignores the date range (used by the chart)
+      const filtered = base.filter(x => !rangeStart || x._d >= rangeStart);
+
+      columns = ['When', 'User', 'Action', 'Record', 'Changes'];
+      rows = filtered.map(x => ({
+        When: x._d.toLocaleString('en-KE'),
+        User: userOf(x),
+        Action: prettify(x.action),
+        Record: `${prettify(x.entity_type)}${x.entity_id ? ' #' + x.entity_id : ''}`,
+        Changes: changesText(x.changes),
+        _entry: x, _user: userOf(x),
       }));
-      summary = [{ label: 'Logged Actions', value: (auditLog || []).length, color: 'var(--primary)' }];
+
+      const tally = (keyFn) => {
+        const c = {};
+        filtered.forEach(x => { const k = keyFn(x); c[k] = (c[k] || 0) + 1; });
+        return Object.entries(c).sort((p, q) => q[1] - p[1])[0];
+      };
+      const topUser = tally(userOf), topEntity = tally(x => prettify(x.entity_type));
+      summary = [
+        { label: 'Actions', value: filtered.length, color: 'var(--primary)' },
+        { label: 'Active users', value: new Set(filtered.map(userOf)).size, color: 'var(--blue)' },
+        { label: 'Most active user', value: topUser ? `${topUser[0]} (${topUser[1]})` : '—', color: 'var(--green)' },
+        { label: 'Most changed record', value: topEntity ? `${topEntity[0]} (${topEntity[1]})` : '—', color: 'var(--amber)' },
+      ];
+
+      const days = Array.from({ length: 14 }, (_, i) => { const d = new Date(now); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() - (13 - i)); return d; });
+      chart = (
+        <div>
+          <div className="rp-chart-head"><div className="rp-chart-title">Activity, last 14 days</div></div>
+          <MiniBarChart color="var(--rp-primary)"
+            data={days.map(d => ({ label: `${d.getDate()}/${d.getMonth() + 1}`, value: base.filter(x => x._d.toDateString() === d.toDateString()).length }))} />
+        </div>
+      );
       title = 'Audit Trail';
+      note = 'Newest first. PINs, passwords and similar sensitive values are always masked.';
     }
 
     if (active === 'comparison') {
@@ -636,7 +1429,7 @@ export default function Reports() {
   let visibleRows = tableSearch
     ? rows.filter(r => columns.some(c => String(r[c] ?? '').toLowerCase().includes(tableSearch.toLowerCase())))
     : rows;
-  if (sortCol) {
+  if (sortCol && active !== 'audittrail') {
     visibleRows = [...visibleRows].sort((a, b) => {
       const av = sortableValue(a[sortCol]), bv = sortableValue(b[sortCol]);
       const cmp = (typeof av === 'number' && typeof bv === 'number') ? av - bv : String(av).localeCompare(String(bv));
@@ -649,171 +1442,218 @@ export default function Reports() {
     else { setSortCol(col); setSortDir('asc'); }
   }
 
-  const pinnedReports = REPORTS.filter(r => pinned.includes(r.id));
-  const otherReports   = REPORTS.filter(r => !pinned.includes(r.id));
+  const visibleReports = REPORTS.filter(r => !r.adminAgentOnly || isAdminOrAgent);
+  const pinnedReports = visibleReports.filter(r => pinned.includes(r.id));
+  const otherReports   = visibleReports.filter(r => !pinned.includes(r.id));
 
-  function ReportButton({ r }) {
+  function renderReportItem(r) {
+    const on = active === r.id;
+    const isPinned = pinned.includes(r.id);
     return (
-      <button key={r.id} onClick={() => setActive(r.id)} style={{
-        display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px',
-        borderRadius: 10, border: active === r.id ? `1.5px solid ${r.color}` : '1px solid var(--border)',
-        background: active === r.id ? r.light : 'var(--surface)',
-        cursor: 'pointer', textAlign: 'left', transition: 'all 0.15s', width: '100%',
-      }}>
-        <span style={{ fontSize: 18 }}>{r.icon}</span>
-        <div style={{ flex: 1 }}>
-          <div style={{ fontSize: 13, fontWeight: 600, color: active === r.id ? r.color : 'var(--text)' }}>{r.label}</div>
-          <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 1 }}>{r.desc}</div>
-        </div>
-        <span onClick={e => { e.stopPropagation(); togglePin(r.id); }} title={pinned.includes(r.id) ? 'Unpin' : 'Pin to top'}
-          style={{ fontSize: 14, cursor: 'pointer', color: pinned.includes(r.id) ? 'var(--amber, #d97706)' : 'var(--border)' }}>
-          {pinned.includes(r.id) ? '★' : '☆'}
-        </span>
-      </button>
+      <div key={r.id} className={`rp-item${on ? ' on' : ''}`} style={{ '--rp-tone': tone(r.color), '--rp-tint': soft(r.color, 16) }}>
+        <button type="button" className="rp-item-main" onClick={() => setActive(r.id)} aria-current={on ? 'true' : undefined} title={r.desc}>
+          <span className="rp-ico" aria-hidden="true">{r.icon}</span>
+          <span className="rp-item-text">
+            <div className="rp-item-label">{r.label}</div>
+            <div className="rp-item-desc">{r.desc}</div>
+          </span>
+        </button>
+        <button type="button" className={`rp-star${isPinned ? ' pinned' : ''}`} onClick={() => togglePin(r.id)}
+          aria-label={isPinned ? `Unpin ${r.label}` : `Pin ${r.label} to top`} title={isPinned ? 'Unpin' : 'Pin to top'}>
+          {isPinned ? '★' : '☆'}
+        </button>
+      </div>
     );
   }
 
   return (
-    <div>
-      <style>{`@media print { .no-print { display: none !important; } }`}</style>
-      <div style={{ marginBottom: 28 }} className="no-print">
-        <h1 style={{ fontFamily: 'Space Grotesk', fontSize: 26, fontWeight: 700, marginBottom: 4 }}>Reports</h1>
-        <p style={{ color: 'var(--muted)', fontSize: 14 }}>Generate, filter and download reports</p>
+    <div className="rp-page">
+      <style>{STYLES}</style>
+
+      <div className="rp-head no-print">
+        <h1 className="rp-title">Reports</h1>
+        <p className="rp-sub">Generate, filter and download reports</p>
       </div>
 
-      <div style={{ display: 'flex', gap: 20, alignItems: 'flex-start' }}>
+      <div className="rp-layout">
 
-        {/* ── Left: Report List ── */}
-        <div style={{ width: 220, flexShrink: 0, display: 'flex', flexDirection: 'column', gap: 6 }} className="no-print">
+        {/* ── Left: report picker ── */}
+        <nav className="rp-list no-print" aria-label="Reports">
           {pinnedReports.length > 0 && (
             <>
-              <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.5px', margin: '2px 0' }}>Pinned</div>
-              {pinnedReports.map(r => <ReportButton key={r.id} r={r} />)}
-              <div style={{ height: 1, background: 'var(--border)', margin: '6px 0' }} />
+              <div className="rp-group">Pinned</div>
+              {pinnedReports.map(renderReportItem)}
+              <div className="rp-sep" />
+              <div className="rp-group">All reports</div>
             </>
           )}
-          {otherReports.map(r => <ReportButton key={r.id} r={r} />)}
-        </div>
+          {otherReports.map(renderReportItem)}
+        </nav>
 
-        {/* ── Right: Report Content ── */}
-        <div style={{ flex: 1, minWidth: 0 }}>
+        {/* ── Right: report content ── */}
+        <div className="rp-main">
+
           {/* Header */}
-          <div style={{ background: 'var(--surface)', borderRadius: 'var(--radius)', border: '1px solid var(--border)', padding: '18px 22px', marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>
-            <div style={{ fontFamily: 'Space Grotesk', fontWeight: 700, fontSize: 17 }}>{report?.icon} {title || report?.label}</div>
-            <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }} className="no-print">
+          <div className="rp-card rp-top" style={{ '--rp-tone': tone(report?.color), '--rp-tint': soft(report?.color, 16) }}>
+            <div className="rp-top-title">
+              <span className="rp-chip" aria-hidden="true">{report?.icon}</span>
+              <div>
+                <div className="rp-h2">{title || report?.label}</div>
+                <div className="rp-desc">{report?.desc}</div>
+              </div>
+            </div>
 
-              {/* Period filter */}
-              {!NO_PERIOD_FILTER.includes(active) && (
-                <select value={filters.period} onChange={e => setFilters(f => ({ ...f, period: e.target.value }))} style={selectStyle}>
-                  <option value="all">All Time</option>
-                  <option value="month">By Month</option>
-                  <option value="year">By Year</option>
-                  <option value="range">Custom Range</option>
-                </select>
-              )}
+            <div className="rp-controls no-print">
+              {rows.length > 0 && <ExpandableSearch value={tableSearch} onChange={setTableSearch} />}
 
-              {/* Custom date range */}
-              {filters.period === 'range' && !NO_PERIOD_FILTER.includes(active) && (
-                <>
-                  <input type="date" value={filters.fromDate} onChange={e => setFilters(f => ({ ...f, fromDate: e.target.value }))} style={selectStyle} />
-                  <span style={{ color: 'var(--muted)', fontSize: 13 }}>to</span>
-                  <input type="date" value={filters.toDate} onChange={e => setFilters(f => ({ ...f, toDate: e.target.value }))} style={selectStyle} />
-                </>
-              )}
+          {active === 'audittrail' && (
+            <>
+              <select className="rp-select" value={audit.range} onChange={e => setAudit(a => ({ ...a, range: e.target.value }))}>
+                <option value="today">Today</option>
+                <option value="7d">Last 7 days</option>
+                <option value="30d">Last 30 days</option>
+                <option value="all">All time</option>
+              </select>
+              <select className="rp-select" value={audit.action} onChange={e => setAudit(a => ({ ...a, action: e.target.value }))}>
+                <option value="all">All actions</option>
+                {auditOptions.actions.map(x => <option key={x} value={x}>{prettify(x)}</option>)}
+              </select>
+              <select className="rp-select" value={audit.entity} onChange={e => setAudit(a => ({ ...a, entity: e.target.value }))}>
+                <option value="all">All records</option>
+                {auditOptions.entities.map(x => <option key={x} value={x}>{prettify(x)}</option>)}
+              </select>
+              <select className="rp-select" value={audit.user} onChange={e => setAudit(a => ({ ...a, user: e.target.value }))}>
+                <option value="all">All users</option>
+                {auditOptions.users.map(x => <option key={x} value={x}>{x}</option>)}
+              </select>
+            </>
+          )}
 
-              {/* Month picker */}
-              {((filters.period === 'month' && !NO_PERIOD_FILTER.includes(active)) || active === 'comparison') && (
-                <select value={filters.month} onChange={e => setFilters(f => ({ ...f, month: parseInt(e.target.value) }))} style={selectStyle}>
-                  {months.map((m, i) => <option key={i} value={i + 1}>{m}</option>)}
-                </select>
-              )}
+          {active === 'paymenthistory' && (
+            <select className="rp-select" value={historyTenantId} onChange={e => setHistoryTenantId(e.target.value)}>
+              <option value="">— Select a tenant —</option>
+              {(data.tenants || []).slice().sort((a, b) => a.full_name.localeCompare(b.full_name)).map(t => (
+                <option key={t.id} value={t.id}>{t.full_name} — {t.unit_number ? `Unit ${t.unit_number}` : `#${t.house_id || '—'}`}</option>
+              ))}
+            </select>
+          )}
 
-              {/* Year picker */}
-              {(filters.period !== 'all' || active === 'revenue' || active === 'comparison') && (
-                <select value={filters.year} onChange={e => setFilters(f => ({ ...f, year: parseInt(e.target.value) }))} style={selectStyle}>
-                  {years.map(y => <option key={y} value={y}>{y}</option>)}
-                </select>
-              )}
+          {/* Period filter */}
+          {!NO_PERIOD_FILTER.includes(active) && (
+            <select value={filters.period} onChange={e => setFilters(f => ({ ...f, period: e.target.value }))} className="rp-select">
+              <option value="all">All Time</option>
+              <option value="month">By Month</option>
+              <option value="year">By Year</option>
+              <option value="range">Custom Range</option>
+            </select>
+          )}
 
-              {/* Comparison mode */}
-              {active === 'comparison' && (
-                <select value={filters.comparisonMode} onChange={e => setFilters(f => ({ ...f, comparisonMode: e.target.value }))} style={selectStyle}>
-                  <option value="mom">Month over Month</option>
-                  <option value="yoy">Year over Year</option>
-                </select>
-              )}
+          {/* Custom date range */}
+          {filters.period === 'range' && !NO_PERIOD_FILTER.includes(active) && (
+            <>
+              <input type="date" value={filters.fromDate} onChange={e => setFilters(f => ({ ...f, fromDate: e.target.value }))} className="rp-select" />
+              <span className="rp-to">to</span>
+              <input type="date" value={filters.toDate} onChange={e => setFilters(f => ({ ...f, toDate: e.target.value }))} className="rp-select" />
+            </>
+          )}
 
-              {/* Property + Location filters for Property Summary */}
-              {active === 'properties' && (
-                <>
-                  <select value={filters.propertyName} onChange={e => setFilters(f => ({ ...f, propertyName: e.target.value }))} style={selectStyle}>
-                    <option value="all">All Properties</option>
-                    {[...new Set((data.plots || []).map(p => p.name))].sort().map(name => (
-                      <option key={name} value={name}>{name}</option>
-                    ))}
-                  </select>
-                  <select value={filters.location} onChange={e => setFilters(f => ({ ...f, location: e.target.value }))} style={selectStyle}>
-                    <option value="all">All Locations</option>
-                    {[...new Set((data.plots || []).map(p => p.location).filter(Boolean))].sort().map(loc => (
-                      <option key={loc} value={loc}>{loc}</option>
-                    ))}
-                  </select>
-                </>
-              )}
+          {/* Month picker */}
+          {((filters.period === 'month' && !NO_PERIOD_FILTER.includes(active)) || active === 'comparison') && (
+            <select value={filters.month} onChange={e => setFilters(f => ({ ...f, month: parseInt(e.target.value) }))} className="rp-select">
+              {months.map((m, i) => <option key={i} value={i + 1}>{m}</option>)}
+            </select>
+          )}
 
-              {/* Landlord filter — only meaningful when more than one landlord's data is visible (admin view) */}
-              {['properties', 'tenants', 'performance', 'rentroll'].includes(active) && [...new Set((data.plots || []).map(p => p.owner_name).filter(Boolean))].length > 1 && (
-                <select value={filters.landlord} onChange={e => setFilters(f => ({ ...f, landlord: e.target.value }))} style={selectStyle}>
-                  <option value="all">All Landlords</option>
-                  {[...new Set((data.plots || []).map(p => p.owner_name).filter(Boolean))].sort().map(name => (
-                    <option key={name} value={name}>{name}</option>
-                  ))}
-                </select>
-              )}
+          {/* Year picker */}
+          {((!NO_PERIOD_FILTER.includes(active) && filters.period !== 'all') || ['revenue', 'comparison', 'collection'].includes(active)) && (
+            <select value={filters.year} onChange={e => setFilters(f => ({ ...f, year: parseInt(e.target.value) }))} className="rp-select">
+              {years.map(y => <option key={y} value={y}>{y}</option>)}
+            </select>
+          )}
 
-              {/* Status filter for tenants and maintenance */}
-              {active === 'tenants' && (
-                <select value={filters.status} onChange={e => setFilters(f => ({ ...f, status: e.target.value }))} style={selectStyle}>
-                  <option value="all">All Tenants</option>
-                  <option value="active">Active Only</option>
-                  <option value="inactive">Inactive Only</option>
-                </select>
-              )}
-              {active === 'maintenance' && (
-                <select value={filters.status} onChange={e => setFilters(f => ({ ...f, status: e.target.value }))} style={selectStyle}>
-                  <option value="all">All Status</option>
-                  <option value="pending">Pending</option>
-                  <option value="in_progress">In Progress</option>
-                  <option value="completed">Completed</option>
-                </select>
-              )}
+          {/* Comparison mode */}
+          {active === 'comparison' && (
+            <select value={filters.comparisonMode} onChange={e => setFilters(f => ({ ...f, comparisonMode: e.target.value }))} className="rp-select">
+              <option value="mom">Month over Month</option>
+              <option value="yoy">Year over Year</option>
+            </select>
+          )}
+
+          {/* Property + Location filters for Property Summary */}
+          {active === 'properties' && (
+            <>
+              <select value={filters.propertyName} onChange={e => setFilters(f => ({ ...f, propertyName: e.target.value }))} className="rp-select">
+                <option value="all">All Properties</option>
+                {[...new Set((data.plots || []).map(p => p.name))].sort().map(name => (
+                  <option key={name} value={name}>{name}</option>
+                ))}
+              </select>
+              <select value={filters.location} onChange={e => setFilters(f => ({ ...f, location: e.target.value }))} className="rp-select">
+                <option value="all">All Locations</option>
+                {[...new Set((data.plots || []).map(p => p.location).filter(Boolean))].sort().map(loc => (
+                  <option key={loc} value={loc}>{loc}</option>
+                ))}
+              </select>
+            </>
+          )}
+
+          {/* Landlord filter — only meaningful when more than one landlord's data is visible (admin view) */}
+          {['properties', 'tenants', 'performance', 'rentroll', 'profitloss', 'collection', 'vacancyloss', 'assignments'].includes(active) && [...new Set((data.plots || []).map(p => p.owner_name).filter(Boolean))].length > 1 && (
+            <select value={filters.landlord} onChange={e => setFilters(f => ({ ...f, landlord: e.target.value }))} className="rp-select">
+              <option value="all">All Landlords</option>
+              {[...new Set((data.plots || []).map(p => p.owner_name).filter(Boolean))].sort().map(name => (
+                <option key={name} value={name}>{name}</option>
+              ))}
+            </select>
+          )}
+
+          {/* Agent filter — Property Assignments only */}
+          {active === 'assignments' && [...new Set((data.plots || []).map(p => p.agent_name).filter(Boolean))].length > 1 && (
+            <select value={filters.agent} onChange={e => setFilters(f => ({ ...f, agent: e.target.value }))} className="rp-select">
+              <option value="all">All Agents</option>
+              {[...new Set((data.plots || []).map(p => p.agent_name).filter(Boolean))].sort().map(name => (
+                <option key={name} value={name}>{name}</option>
+              ))}
+            </select>
+          )}
+
+          {/* Caretaker filter — Property Assignments only */}
+          {active === 'assignments' && (data.users || []).filter(u => u.role === 'caretaker').length > 1 && (
+            <select value={filters.caretaker} onChange={e => setFilters(f => ({ ...f, caretaker: e.target.value }))} className="rp-select">
+              <option value="all">All Caretakers</option>
+              {(data.users || []).filter(u => u.role === 'caretaker').map(u => u.name || u.full_name).filter(Boolean).sort().map(name => (
+                <option key={name} value={name}>{name}</option>
+              ))}
+            </select>
+          )}
+
+          {/* Status filter for tenants and maintenance */}
+          {active === 'tenants' && (
+            <select value={filters.status} onChange={e => setFilters(f => ({ ...f, status: e.target.value }))} className="rp-select">
+              <option value="all">All Tenants</option>
+              <option value="active">Active Only</option>
+              <option value="inactive">Inactive Only</option>
+            </select>
+          )}
+          {active === 'maintenance' && (
+            <select value={filters.status} onChange={e => setFilters(f => ({ ...f, status: e.target.value }))} className="rp-select">
+              <option value="all">All Status</option>
+              <option value="pending">Pending</option>
+              <option value="in_progress">In Progress</option>
+              <option value="completed">Completed</option>
+            </select>
+          )}
 
               {/* Bulk tenant statements — only where it's meaningful */}
               {active === 'rentroll' && (
-                <button onClick={downloadAllStatements} style={{
-                  padding: '8px 16px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)',
-                  color: 'var(--text)', fontWeight: 600, fontSize: 13, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6,
-                }}>
-                  📄 All Statements (ZIP)
-                </button>
+                <button type="button" className="rp-btn" onClick={downloadAllStatements}>📄 All statements (ZIP)</button>
               )}
 
               {/* Print / Save as PDF — browsers' print dialog offers "Save as PDF" */}
-              <button onClick={() => window.print()} style={{
-                padding: '8px 16px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)',
-                color: 'var(--text)', fontWeight: 600, fontSize: 13, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6,
-              }}>
-                🖨️ Print / Save PDF
-              </button>
+              <button type="button" className="rp-btn" onClick={() => window.print()}>🖨️ Print / Save PDF</button>
 
               {/* Download button */}
-              <button onClick={() => downloadCSV(visibleRows, active)} disabled={!visibleRows.length} style={{
-                padding: '8px 16px', borderRadius: 8, border: 'none',
-                background: visibleRows.length ? 'var(--primary)' : 'var(--border)',
-                color: visibleRows.length ? '#fff' : 'var(--muted)',
-                fontWeight: 600, fontSize: 13, cursor: visibleRows.length ? 'pointer' : 'default',
-                display: 'flex', alignItems: 'center', gap: 6,
-              }}>
+              <button type="button" className="rp-btn rp-btn-primary" onClick={() => downloadCSV(visibleRows, active)} disabled={!visibleRows.length}>
                 ⬇ Download CSV
               </button>
             </div>
@@ -821,79 +1661,68 @@ export default function Reports() {
 
           {/* Summary cards */}
           {summary && (
-            <div style={{ display: 'flex', gap: 12, marginBottom: 16, flexWrap: 'wrap' }}>
-              {summary.map(s => (
-                <div key={s.label} style={{ background: 'var(--surface)', borderRadius: 10, border: '1px solid var(--border)', padding: '12px 20px' }}>
-                  <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 4 }}>{s.label}</div>
-                  <div style={{ fontFamily: 'Space Grotesk', fontWeight: 800, fontSize: 20, color: s.color }}>{s.value}</div>
+            <div className="rp-kpis">
+              {summary.map(sm => (
+                <div key={sm.label} className="rp-card rp-kpi" style={{ '--rp-tone': tone(sm.color) }}>
+                  <div className="rp-kpi-label">{sm.label}</div>
+                  <div className="rp-kpi-value">{sm.value}</div>
                 </div>
               ))}
             </div>
           )}
 
           {/* Trend / comparison chart */}
-          {chart && (
-            <div style={{ background: 'var(--surface)', borderRadius: 'var(--radius)', border: '1px solid var(--border)', padding: '16px 20px', marginBottom: 16 }}>
-              {chart}
-            </div>
-          )}
-
-          {/* Table search */}
-          {rows.length > 0 && (
-            <div style={{ marginBottom: 10 }} className="no-print">
-              <input value={tableSearch} onChange={e => setTableSearch(e.target.value)} placeholder="Search this report..."
-                style={{ padding: '8px 12px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', fontSize: 13, width: '100%', maxWidth: 280, outline: 'none', color: 'var(--text)' }} />
-            </div>
-          )}
+          {chart && <div className="rp-card rp-chart">{chart}</div>}
+          {note && <div className="rp-note">ⓘ {note}</div>}
 
           {/* Table */}
-          <div style={{ background: 'var(--surface)', borderRadius: 'var(--radius)', border: '1px solid var(--border)', overflow: 'hidden' }}>
+          <div className="rp-card rp-table-card">
             {loading ? (
-              <div style={{ padding: 40, textAlign: 'center', color: 'var(--muted)' }}>Loading report...</div>
+              <div style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 14 }} aria-busy="true">
+                {[0, 1, 2, 3, 4].map(i => <div key={i} className="rp-skel" style={{ width: `${95 - i * 9}%` }} />)}
+              </div>
             ) : visibleRows.length === 0 ? (
-              <div style={{ padding: 60, textAlign: 'center', color: 'var(--muted)' }}>No data found for the selected filters.</div>
+              <div className="rp-state">
+                {active === 'audittrail' && data.auditDenied ? (
+                  <><strong>Audit trail is admin-only</strong>Your account does not have permission to view it.</>
+                ) : (
+                  <>
+                    <strong>{tableSearch ? 'No matches' : active === 'audittrail' ? 'No activity found' : active === 'paymenthistory' ? 'No tenant selected' : active === 'assignments' && !isAdminOrAgent ? 'Not available' : 'No data for these filters'}</strong>
+                    {tableSearch ? 'Try a different search term.' : active === 'audittrail' ? 'Try a longer date range or clear a filter.' : active === 'paymenthistory' ? 'Pick a tenant above to see their payment and deposit history.' : active === 'assignments' && !isAdminOrAgent ? 'This report is only available to admin and agent accounts.' : 'Change the period or filters above to see results.'}
+                  </>
+                )}
+              </div>
+            ) : active === 'audittrail' ? (
+              <AuditTable rows={visibleRows} open={auditOpen} toggle={(id) => setAuditOpen(o => ({ ...o, [id]: !o[id] }))} />
             ) : (
-              <div style={{ overflowX: 'auto' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 600 }}>
+              <div className="rp-scroll">
+                <table className="rp-table">
                   <thead>
-                    <tr style={{ background: 'var(--surface2)' }}>
+                    <tr>
                       {columns.map(c => (
-                        <th key={c} onClick={() => handleSort(c)} style={{ padding: '10px 16px', textAlign: 'left', fontSize: 11, fontWeight: 600, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.5px', whiteSpace: 'nowrap', cursor: 'pointer', userSelect: 'none' }}>
+                        <th key={c} onClick={() => handleSort(c)}>
                           {c}{sortCol === c ? (sortDir === 'asc' ? ' ▲' : ' ▼') : ''}
                         </th>
                       ))}
-                      {active === 'rentroll' && (
-                        <th className="no-print" style={{ padding: '10px 16px', textAlign: 'left', fontSize: 11, fontWeight: 600, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.5px', whiteSpace: 'nowrap' }}>Statement</th>
-                      )}
+                      {active === 'rentroll' && <th className="no-print static">Statement</th>}
                     </tr>
                   </thead>
                   <tbody>
                     {visibleRows.map((row, i) => (
-                      <tr key={i} style={{ borderTop: '1px solid var(--border)', background: i % 2 === 0 ? 'var(--surface)' : 'var(--surface2)' }}>
+                      <tr key={i}>
                         {columns.map(c => (
-                          <td key={c} style={{ padding: '11px 16px', fontSize: 13, color: 'var(--text)', whiteSpace: 'nowrap' }}>
-                            {c === 'Status' ? (
-                              <span style={{
-                                background: row[c] === 'Active' || row[c] === 'matched' || row[c] === 'completed' || row[c] === 'Paid Up' ? 'var(--green-light)' :
-                                            row[c] === 'Inactive' || row[c] === 'Moved Out' || row[c] === 'Owing' ? 'var(--red-light)' : 'var(--amber-light)',
-                                color: row[c] === 'Active' || row[c] === 'matched' || row[c] === 'completed' || row[c] === 'Paid Up' ? 'var(--green)' :
-                                       row[c] === 'Inactive' || row[c] === 'Moved Out' || row[c] === 'Owing' ? 'var(--red)' : 'var(--amber)',
-                                padding: '3px 10px', borderRadius: 99, fontSize: 12, fontWeight: 600,
-                              }}>{row[c]}</span>
+                          <td key={c}>
+                            {c === 'Status' || c === 'Severity' ? (
+                              <span className={`rp-badge rp-badge-${statusKind(row[c])}`}>{row[c]}</span>
                             ) : c.includes('KES') || c === 'Balance (KES)' ? (
-                              <span style={{ fontWeight: 700, color: 'var(--green)' }}>{row[c]}</span>
+                              <span className={`rp-money${isNegativeCol(c) || String(row[c]).trim().startsWith('-') ? ' neg' : ''}`}>{row[c]}</span>
                             ) : row[c]}
                           </td>
                         ))}
                         {active === 'rentroll' && (
-                          <td className="no-print" style={{ padding: '11px 16px', fontSize: 13 }}>
+                          <td className="no-print">
                             {row._tenantId ? (
-                              <button onClick={() => downloadStatement(row._tenantId, row.Tenant)} style={{
-                                padding: '4px 10px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--surface2)',
-                                color: 'var(--primary)', fontSize: 12, fontWeight: 600, cursor: 'pointer',
-                              }}>
-                                📄 PDF
-                              </button>
+                              <button type="button" className="rp-mini" onClick={() => downloadStatement(row._tenantId, row.Tenant)}>📄 PDF</button>
                             ) : '—'}
                           </td>
                         )}
@@ -904,7 +1733,7 @@ export default function Reports() {
               </div>
             )}
           </div>
-          <div style={{ marginTop: 8, fontSize: 12, color: 'var(--muted)', textAlign: 'right' }}>
+          <div className="rp-count">
             {visibleRows.length} record{visibleRows.length !== 1 ? 's' : ''}
           </div>
         </div>
@@ -913,4 +1742,34 @@ export default function Reports() {
   );
 }
 
-const selectStyle = { padding: '7px 12px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface2)', fontSize: 13, color: 'var(--text)', outline: 'none', cursor: 'pointer' };
+// A search icon that expands into an input when clicked. Stays open while it
+// has text; collapses on blur when empty or on Esc (which also clears it).
+function ExpandableSearch({ value, onChange }) {
+  const [open, setOpen] = useState(false);
+  const inputRef = useRef(null);
+  const expanded = open || !!value;
+
+  function openIt() {
+    setOpen(true);
+    setTimeout(() => inputRef.current?.focus(), 0);
+  }
+
+  return (
+    <div className={`rp-search${expanded ? ' open' : ''}`}>
+      <button type="button" onClick={openIt} aria-label="Search this report" title="Search this report">🔍</button>
+      <input
+        ref={inputRef}
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        onFocus={() => setOpen(true)}
+        onBlur={() => setOpen(false)}
+        onKeyDown={e => { if (e.key === 'Escape') { onChange(''); setOpen(false); e.currentTarget.blur(); } }}
+        placeholder="Search this report…"
+        tabIndex={expanded ? 0 : -1}
+      />
+      {value && (
+        <button type="button" onClick={() => { onChange(''); inputRef.current?.focus(); }} aria-label="Clear search" style={{ fontSize: 16 }}>×</button>
+      )}
+    </div>
+  );
+}

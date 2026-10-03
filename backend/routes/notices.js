@@ -44,6 +44,125 @@ async function findOrCreateConversation(p1Id, p1Type, p2Id, p2Type, noticeId = n
   return convId;
 }
 
+// ── Helper: is this person actually a participant in this conversation? ───────
+async function isParticipant(conversationId, participantId, participantType) {
+  const result = await pool.query(
+    `SELECT 1 FROM conversation_participants
+     WHERE conversation_id=$1 AND participant_id=$2 AND participant_type=$3`,
+    [conversationId, participantId, participantType]
+  );
+  return result.rows.length > 0;
+}
+
+// ── Helper: is this sender allowed to START a conversation with this
+// recipient at all? Previously there was no check here — any authenticated
+// sender could message any user or tenant in the system by id. This follows
+// the agent/landlord/caretaker/tenant chain already used for data scoping
+// elsewhere: admin can message anyone; everyone else can message super
+// admin, and otherwise only people within their own property relationship.
+async function canMessage(sender, recipientId, recipientType) {
+  // sender: { type: 'user'|'tenant', id, role? } — role only set for 'user'
+  if (sender.type === 'user' && (sender.role === 'admin' || sender.role === 'super_admin')) {
+    return true; // admin can message anyone
+  }
+
+  // Anyone can always reach super admin.
+  if (recipientType === 'user') {
+    const r = await pool.query(`SELECT role FROM users WHERE id = $1`, [recipientId]);
+    if (!r.rows[0]) return false;
+    if (r.rows[0].role === 'admin' || r.rows[0].role === 'super_admin') return true;
+  }
+
+  if (sender.type === 'user' && sender.role === 'agent') {
+    if (recipientType === 'user') {
+      // Their own landlords, or caretakers assigned to those landlords' plots
+      const r = await pool.query(
+        `SELECT 1 FROM users WHERE id = $1 AND role = 'landlord' AND agent_id = $2
+         UNION
+         SELECT 1 FROM users u JOIN caretaker_plots cp ON cp.caretaker_id = u.id
+           JOIN plots p ON p.id = cp.plot_id JOIN users landlord ON landlord.id = p.user_id
+           WHERE u.id = $1 AND u.role = 'caretaker' AND landlord.agent_id = $2`,
+        [recipientId, sender.id]
+      );
+      return r.rows.length > 0;
+    }
+    if (recipientType === 'tenant') {
+      const r = await pool.query(
+        `SELECT 1 FROM tenants t JOIN houses h ON t.house_id = h.id JOIN plots p ON h.plot_id = p.id
+         JOIN users landlord ON landlord.id = p.user_id
+         WHERE t.id = $1 AND landlord.agent_id = $2`,
+        [recipientId, sender.id]
+      );
+      return r.rows.length > 0;
+    }
+  }
+
+  if (sender.type === 'user' && sender.role === 'landlord') {
+    if (recipientType === 'user') {
+      // Their own agent (if any), or a caretaker assigned to their own plots
+      const r = await pool.query(
+        `SELECT 1 FROM users WHERE id = $2 AND id = (SELECT agent_id FROM users WHERE id = $1)
+         UNION
+         SELECT 1 FROM users u JOIN caretaker_plots cp ON cp.caretaker_id = u.id
+           JOIN plots p ON p.id = cp.plot_id
+           WHERE u.id = $2 AND u.role = 'caretaker' AND p.user_id = $1`,
+        [sender.id, recipientId]
+      );
+      return r.rows.length > 0;
+    }
+  }
+
+  if (sender.type === 'user' && sender.role === 'caretaker') {
+    if (recipientType === 'user') {
+      // The landlord (and that landlord's agent) of any plot they're
+      // assigned to — via either caretaker_plots or the legacy single
+      // users.plot_id assignment, same as every other scoping query.
+      const r = await pool.query(
+        `SELECT 1 FROM plots p
+         WHERE p.id IN (
+           SELECT plot_id FROM caretaker_plots WHERE caretaker_id = $1
+           UNION SELECT plot_id FROM users WHERE id = $1 AND plot_id IS NOT NULL
+         ) AND (p.user_id = $2 OR $2 = (SELECT agent_id FROM users WHERE id = p.user_id))`,
+        [sender.id, recipientId]
+      );
+      return r.rows.length > 0;
+    }
+    if (recipientType === 'tenant') {
+      const r = await pool.query(
+        `SELECT 1 FROM tenants t JOIN houses h ON t.house_id = h.id
+         WHERE t.id = $1 AND h.plot_id IN (
+           SELECT plot_id FROM caretaker_plots WHERE caretaker_id = $2
+           UNION SELECT plot_id FROM users WHERE id = $2 AND plot_id IS NOT NULL
+         )`,
+        [recipientId, sender.id]
+      );
+      return r.rows.length > 0;
+    }
+  }
+
+  if (sender.type === 'tenant') {
+    if (recipientType === 'user') {
+      // The caretaker, landlord, or agent responsible for their own unit
+      const r = await pool.query(
+        `SELECT 1 FROM tenants t JOIN houses h ON t.house_id = h.id JOIN plots p ON h.plot_id = p.id
+         WHERE t.id = $1 AND (
+           $2 = p.user_id OR
+           $2 = (SELECT agent_id FROM users WHERE id = p.user_id) OR
+           $2 IN (
+             SELECT caretaker_id FROM caretaker_plots WHERE plot_id = p.id
+             UNION SELECT id FROM users WHERE plot_id = p.id
+           )
+         )`,
+        [sender.id, recipientId]
+      );
+      return r.rows.length > 0;
+    }
+    return false; // tenants can never message another tenant
+  }
+
+  return false;
+}
+
 // ═══════════════════════════════════════════════════════════════
 // STATIC ROUTES FIRST (before any /:param routes)
 // ═══════════════════════════════════════════════════════════════
@@ -88,17 +207,41 @@ router.get('/unread-summary', auth, async (req, res) => {
       noticesResult = await pool.query(`
         SELECT COUNT(*) AS count FROM notices n
         WHERE n.created_at > $1
-          AND (n.author_id=$2 OR n.target_type='all'
-            OR (n.target_type='property' AND n.target_id IN (SELECT id FROM plots WHERE user_id=$2)))
+          AND (n.author_id=$2 OR n.target_type='all' OR n.target_type='staff'
+            OR (n.target_type='property' AND n.target_id IN (SELECT id FROM plots WHERE user_id=$2))
+            OR (n.target_type='unit' AND n.target_id IN (
+              SELECT h.id FROM houses h JOIN plots p ON h.plot_id=p.id WHERE p.user_id=$2
+            )))
+      `, [lastRead, req.user.id]);
+    } else if (req.user.role === 'agent') {
+      // Was missing entirely — agents always got 0 here, regardless of how
+      // many notices actually applied to them.
+      noticesResult = await pool.query(`
+        SELECT COUNT(*) AS count FROM notices n
+        WHERE n.created_at > $1
+          AND (n.author_id=$2 OR n.target_type='all' OR n.target_type='staff'
+            OR (n.target_type='property' AND n.target_id IN (
+              SELECT id FROM plots WHERE user_id IN (SELECT id FROM users WHERE agent_id=$2)
+            ))
+            OR (n.target_type='unit' AND n.target_id IN (
+              SELECT h.id FROM houses h JOIN plots p ON h.plot_id=p.id
+              WHERE p.user_id IN (SELECT id FROM users WHERE agent_id=$2)
+            )))
       `, [lastRead, req.user.id]);
     } else if (req.user.role === 'caretaker') {
       noticesResult = await pool.query(`
         SELECT COUNT(*) AS count FROM notices n
         WHERE n.created_at > $1
-          AND (n.target_type='all'
+          AND (n.author_id=$2 OR n.target_type='all'
             OR (n.target_type='property' AND n.target_id IN (
               SELECT plot_id FROM caretaker_plots WHERE caretaker_id=$2
               UNION SELECT plot_id FROM users WHERE id=$2 AND plot_id IS NOT NULL
+            ))
+            OR (n.target_type='unit' AND n.target_id IN (
+              SELECT h.id FROM houses h WHERE h.plot_id IN (
+                SELECT plot_id FROM caretaker_plots WHERE caretaker_id=$2
+                UNION SELECT plot_id FROM users WHERE id=$2 AND plot_id IS NOT NULL
+              )
             )))
       `, [lastRead, req.user.id]);
     } else {
@@ -208,6 +351,77 @@ router.get('/conversations', auth, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// GET /api/notices/contacts — who this STAFF user is allowed to message.
+// Previously the "New Message" picker reused GET /auth/users, which is
+// scoped for managing caretakers, not for messaging — for a caretaker that
+// meant seeing EVERY landlord in the system (not just their own), and for
+// agent/landlord it meant never seeing admin at all, even though canMessage
+// allows reaching admin from any role. This mirrors canMessage's own logic
+// exactly so the picker and the actual send permission always agree.
+router.get('/contacts', auth, async (req, res) => {
+  try {
+    if (req.user.role === 'admin' || req.user.role === 'super_admin') {
+      const r = await pool.query(`SELECT id, name, role FROM users WHERE id != $1 ORDER BY role, name`, [req.user.id]);
+      return res.json({ success: true, data: r.rows });
+    }
+
+    const admins = await pool.query(`SELECT id, name, role FROM users WHERE role IN ('admin','super_admin')`);
+    let others = { rows: [] };
+
+    if (req.user.role === 'agent') {
+      others = await pool.query(`
+        SELECT id, name, role FROM users WHERE role='landlord' AND agent_id=$1
+        UNION
+        SELECT u.id, u.name, u.role FROM users u JOIN caretaker_plots cp ON cp.caretaker_id=u.id
+          JOIN plots p ON p.id=cp.plot_id JOIN users landlord ON landlord.id=p.user_id
+          WHERE u.role='caretaker' AND landlord.agent_id=$1
+      `, [req.user.id]);
+    } else if (req.user.role === 'landlord') {
+      others = await pool.query(`
+        SELECT id, name, role FROM users WHERE id = (SELECT agent_id FROM users WHERE id=$1)
+        UNION
+        SELECT u.id, u.name, u.role FROM users u JOIN caretaker_plots cp ON cp.caretaker_id=u.id
+          JOIN plots p ON p.id=cp.plot_id WHERE u.role='caretaker' AND p.user_id=$1
+      `, [req.user.id]);
+    } else if (req.user.role === 'caretaker') {
+      others = await pool.query(`
+        SELECT DISTINCT u.id, u.name, u.role FROM plots p
+        JOIN users u ON u.id = p.user_id OR u.id = (SELECT agent_id FROM users WHERE id=p.user_id)
+        WHERE p.id IN (
+          SELECT plot_id FROM caretaker_plots WHERE caretaker_id=$1
+          UNION SELECT plot_id FROM users WHERE id=$1 AND plot_id IS NOT NULL
+        )
+      `, [req.user.id]);
+    }
+
+    res.json({ success: true, data: [...admins.rows, ...others.rows] });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// GET /api/notices/contacts/tenant — who this tenant is allowed to message.
+// Previously there was no way for the frontend to even know who a tenant
+// could start a conversation with, since nothing populated the "new
+// message" picker — this is exactly canMessage()'s tenant-branch logic,
+// exposed as a list instead of a yes/no check.
+router.get('/contacts/tenant', tenantAuth, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT u.id, u.name, u.role FROM tenants t
+       JOIN houses h ON t.house_id = h.id
+       JOIN plots  p ON h.plot_id  = p.id
+       JOIN users  u ON u.id = p.user_id OR u.id = p.agent_id
+         OR u.id IN (
+           SELECT caretaker_id FROM caretaker_plots WHERE plot_id = p.id
+           UNION SELECT id FROM users WHERE plot_id = p.id
+         )
+       WHERE t.id = $1
+       ORDER BY CASE u.role WHEN 'caretaker' THEN 1 WHEN 'landlord' THEN 2 WHEN 'agent' THEN 3 ELSE 4 END`,
+      [req.tenant.id]
+    );
+    res.json({ success: true, data: result.rows });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // GET /api/notices/conversations/tenant — tenant conversations list
 router.get('/conversations/tenant', tenantAuth, async (req, res) => {
   try {
@@ -221,7 +435,8 @@ router.get('/conversations/tenant', tenantAuth, async (req, res) => {
               WHERE m.conversation_id=c.id AND m.created_at > COALESCE(cp.last_read_at,'1970-01-01')
                 AND (m.sender_id!=$1 OR m.sender_type!='tenant')) AS unread_count,
              COALESCE(u.name, t2.full_name) AS other_name,
-             cp2.participant_type AS other_type
+             cp2.participant_type AS other_type,
+             u.role AS other_role
       FROM conversations c
       JOIN conversation_participants cp1 ON cp1.conversation_id=c.id AND cp1.participant_id=$1 AND cp1.participant_type='tenant'
       JOIN conversation_participants cp2 ON cp2.conversation_id=c.id AND (cp2.participant_id!=$1 OR cp2.participant_type!='tenant')
@@ -239,6 +454,8 @@ router.post('/conversations/new', auth, async (req, res) => {
   const { recipient_id, recipient_type } = req.body;
   if (!recipient_id || !recipient_type) return res.status(400).json({ error: 'recipient_id and recipient_type required.' });
   try {
+    const allowed = await canMessage({ type: 'user', id: req.user.id, role: req.user.role }, parseInt(recipient_id), recipient_type);
+    if (!allowed) return res.status(403).json({ error: 'You are not able to message this person.' });
     const convId = await findOrCreateConversation(req.user.id, 'user', parseInt(recipient_id), recipient_type);
     res.json({ success: true, conversation_id: convId });
   } catch (err) { res.status(500).json({ error: err.message }); }
@@ -249,6 +466,8 @@ router.post('/conversations/new/tenant', tenantAuth, async (req, res) => {
   const { recipient_id, recipient_type } = req.body;
   if (!recipient_id || !recipient_type) return res.status(400).json({ error: 'recipient_id and recipient_type required.' });
   try {
+    const allowed = await canMessage({ type: 'tenant', id: req.tenant.id }, parseInt(recipient_id), recipient_type);
+    if (!allowed) return res.status(403).json({ error: 'You are not able to message this person.' });
     const convId = await findOrCreateConversation(req.tenant.id, 'tenant', parseInt(recipient_id), recipient_type);
     res.json({ success: true, conversation_id: convId });
   } catch (err) { res.status(500).json({ error: err.message }); }
@@ -257,6 +476,9 @@ router.post('/conversations/new/tenant', tenantAuth, async (req, res) => {
 // GET /api/notices/conversations/:id/messages — staff reads messages
 router.get('/conversations/:id/messages', auth, async (req, res) => {
   try {
+    if (!(await isParticipant(req.params.id, req.user.id, 'user'))) {
+      return res.status(403).json({ error: 'You are not part of this conversation.' });
+    }
     await pool.query(
       `UPDATE conversation_participants SET last_read_at=NOW()
        WHERE conversation_id=$1 AND participant_id=$2 AND participant_type='user'`,
@@ -276,6 +498,9 @@ router.get('/conversations/:id/messages', auth, async (req, res) => {
 // GET /api/notices/conversations/:id/messages/tenant — tenant reads messages
 router.get('/conversations/:id/messages/tenant', tenantAuth, async (req, res) => {
   try {
+    if (!(await isParticipant(req.params.id, req.tenant.id, 'tenant'))) {
+      return res.status(403).json({ error: 'You are not part of this conversation.' });
+    }
     await pool.query(
       `UPDATE conversation_participants SET last_read_at=NOW()
        WHERE conversation_id=$1 AND participant_id=$2 AND participant_type='tenant'`,
@@ -297,6 +522,9 @@ router.post('/conversations/:id/messages', auth, async (req, res) => {
   const { body } = req.body;
   if (!body?.trim()) return res.status(400).json({ error: 'Message cannot be empty.' });
   try {
+    if (!(await isParticipant(req.params.id, req.user.id, 'user'))) {
+      return res.status(403).json({ error: 'You are not part of this conversation.' });
+    }
     const result = await pool.query(
       `INSERT INTO messages (conversation_id, sender_id, sender_type, body) VALUES ($1,$2,'user',$3) RETURNING *`,
       [req.params.id, req.user.id, body.trim()]
@@ -311,6 +539,9 @@ router.post('/conversations/:id/messages/tenant', tenantAuth, async (req, res) =
   const { body } = req.body;
   if (!body?.trim()) return res.status(400).json({ error: 'Message cannot be empty.' });
   try {
+    if (!(await isParticipant(req.params.id, req.tenant.id, 'tenant'))) {
+      return res.status(403).json({ error: 'You are not part of this conversation.' });
+    }
     const tenantRes = await pool.query('SELECT full_name FROM tenants WHERE id=$1', [req.tenant.id]);
     const result = await pool.query(
       `INSERT INTO messages (conversation_id, sender_id, sender_type, body) VALUES ($1,$2,'tenant',$3) RETURNING *`,
@@ -335,21 +566,53 @@ router.get('/', auth, async (req, res) => {
                LEFT JOIN notice_reads nr ON nr.notice_id=n.id
                GROUP BY n.id, u.name ORDER BY n.created_at DESC`;
     } else if (req.user.role === 'landlord') {
+      // Added target_type='unit' — previously a caretaker's unit-targeted
+      // notice on the landlord's own plot never matched here, since this
+      // only checked 'property'-wide targeting.
+      query = `SELECT n.*, u.name AS author_name, COUNT(DISTINCT nr.tenant_id) AS read_count
+               FROM notices n JOIN users u ON n.author_id=u.id
+               LEFT JOIN notice_reads nr ON nr.notice_id=n.id
+               WHERE n.author_id=$1 OR n.target_type='all' OR n.target_type='staff'
+                 OR (n.target_type='property' AND n.target_id IN (SELECT id FROM plots WHERE user_id=$1))
+                 OR (n.target_type='unit' AND n.target_id IN (
+                   SELECT h.id FROM houses h JOIN plots p ON h.plot_id=p.id WHERE p.user_id=$1
+                 ))
+               GROUP BY n.id, u.name ORDER BY n.created_at DESC`;
+      params = [req.user.id];
+    } else if (req.user.role === 'caretaker') {
+      // Now also includes n.author_id=$1 (caretakers can post their own
+      // notices as of this change) and target_type='unit' on their plot
+      // (previously only 'property'-wide notices were visible to them).
       query = `SELECT n.*, u.name AS author_name, COUNT(DISTINCT nr.tenant_id) AS read_count
                FROM notices n JOIN users u ON n.author_id=u.id
                LEFT JOIN notice_reads nr ON nr.notice_id=n.id
                WHERE n.author_id=$1 OR n.target_type='all'
-                 OR (n.target_type='property' AND n.target_id IN (SELECT id FROM plots WHERE user_id=$1))
-               GROUP BY n.id, u.name ORDER BY n.created_at DESC`;
-      params = [req.user.id];
-    } else if (req.user.role === 'caretaker') {
-      query = `SELECT n.*, u.name AS author_name, COUNT(DISTINCT nr.tenant_id) AS read_count
-               FROM notices n JOIN users u ON n.author_id=u.id
-               LEFT JOIN notice_reads nr ON nr.notice_id=n.id
-               WHERE n.target_type='all'
                  OR (n.target_type='property' AND n.target_id IN (
                    SELECT plot_id FROM caretaker_plots WHERE caretaker_id=$1
                    UNION SELECT plot_id FROM users WHERE id=$1 AND plot_id IS NOT NULL
+                 ))
+                 OR (n.target_type='unit' AND n.target_id IN (
+                   SELECT h.id FROM houses h WHERE h.plot_id IN (
+                     SELECT plot_id FROM caretaker_plots WHERE caretaker_id=$1
+                     UNION SELECT plot_id FROM users WHERE id=$1 AND plot_id IS NOT NULL
+                   )
+                 ))
+               GROUP BY n.id, u.name ORDER BY n.created_at DESC`;
+      params = [req.user.id];
+    } else if (req.user.role === 'agent') {
+      // Was missing entirely — agents fell through to the empty-list else
+      // branch below. Same shape as landlord's own-plus-targeted-plot
+      // query, scoped through the agent's own assigned landlords.
+      query = `SELECT n.*, u.name AS author_name, COUNT(DISTINCT nr.tenant_id) AS read_count
+               FROM notices n JOIN users u ON n.author_id=u.id
+               LEFT JOIN notice_reads nr ON nr.notice_id=n.id
+               WHERE n.author_id=$1 OR n.target_type='all' OR n.target_type='staff'
+                 OR (n.target_type='property' AND n.target_id IN (
+                   SELECT id FROM plots WHERE user_id IN (SELECT id FROM users WHERE agent_id=$1)
+                 ))
+                 OR (n.target_type='unit' AND n.target_id IN (
+                   SELECT h.id FROM houses h JOIN plots p ON h.plot_id=p.id
+                   WHERE p.user_id IN (SELECT id FROM users WHERE agent_id=$1)
                  ))
                GROUP BY n.id, u.name ORDER BY n.created_at DESC`;
       params = [req.user.id];
@@ -363,10 +626,52 @@ router.get('/', auth, async (req, res) => {
 
 // POST /api/notices — create notice
 router.post('/', auth, async (req, res) => {
-  if (!['admin', 'landlord'].includes(req.user.role))
-    return res.status(403).json({ error: 'Only admins and landlords can post notices.' });
+  if (!['admin', 'super_admin', 'landlord', 'agent', 'caretaker'].includes(req.user.role))
+    return res.status(403).json({ error: 'Access denied.' });
   const { title, body, priority, target_type, target_id, expires_at } = req.body;
   if (!title || !body) return res.status(400).json({ error: 'Title and body are required.' });
+
+  // Caretakers can only post to their own assigned plot's tenants — never
+  // 'all' (everyone system-wide), 'staff', or 'tenant' (that's messaging's job).
+  if (req.user.role === 'caretaker' && !['property', 'unit'].includes(target_type)) {
+    return res.status(403).json({ error: 'Caretakers can only post notices to their own property or a specific unit on it.' });
+  }
+
+  // Previously unchecked: a landlord or agent could target a notice at ANY
+  // plot_id, not just their own — and target_type='unit' had NO ownership
+  // check at all, for anyone. 'all'/'staff' targeting and admin are unrestricted.
+  if (['property', 'unit'].includes(target_type) && target_id && req.user.role !== 'admin' && req.user.role !== 'super_admin') {
+    let ownsIt;
+    if (req.user.role === 'caretaker') {
+      // Via caretaker_plots, or the legacy single users.plot_id assignment
+      ownsIt = target_type === 'property'
+        ? await pool.query(
+            `SELECT 1 FROM plots WHERE id = $1 AND id IN (
+               SELECT plot_id FROM caretaker_plots WHERE caretaker_id = $2
+               UNION SELECT plot_id FROM users WHERE id = $2 AND plot_id IS NOT NULL
+             )`,
+            [target_id, req.user.id])
+        : await pool.query(
+            `SELECT 1 FROM houses WHERE id = $1 AND plot_id IN (
+               SELECT plot_id FROM caretaker_plots WHERE caretaker_id = $2
+               UNION SELECT plot_id FROM users WHERE id = $2 AND plot_id IS NOT NULL
+             )`,
+            [target_id, req.user.id]);
+    } else if (req.user.role === 'agent') {
+      ownsIt = target_type === 'property'
+        ? await pool.query(`SELECT 1 FROM plots WHERE id = $1 AND user_id IN (SELECT id FROM users WHERE agent_id = $2)`, [target_id, req.user.id])
+        : await pool.query(`SELECT 1 FROM houses h JOIN plots p ON h.plot_id=p.id WHERE h.id = $1 AND p.user_id IN (SELECT id FROM users WHERE agent_id = $2)`, [target_id, req.user.id]);
+    } else {
+      // landlord
+      ownsIt = target_type === 'property'
+        ? await pool.query(`SELECT 1 FROM plots WHERE id = $1 AND user_id = $2`, [target_id, req.user.id])
+        : await pool.query(`SELECT 1 FROM houses h JOIN plots p ON h.plot_id=p.id WHERE h.id = $1 AND p.user_id = $2`, [target_id, req.user.id]);
+    }
+    if (ownsIt.rows.length === 0) {
+      return res.status(403).json({ error: 'You can only target a notice at your own property.' });
+    }
+  }
+
   try {
     const result = await pool.query(
       `INSERT INTO notices (author_id, title, body, priority, target_type, target_id, expires_at)
@@ -380,7 +685,23 @@ router.post('/', auth, async (req, res) => {
 // POST /api/notices/:noticeId/reply — tenant replies to a notice
 router.post('/:noticeId/reply', tenantAuth, async (req, res) => {
   try {
-    const notice = await pool.query('SELECT author_id FROM notices WHERE id=$1', [req.params.noticeId]);
+    const tenantRes = await pool.query(
+      `SELECT t.id, t.house_id, h.plot_id FROM tenants t LEFT JOIN houses h ON t.house_id=h.id WHERE t.id=$1`,
+      [req.tenant.id]
+    );
+    const tenant = tenantRes.rows[0];
+    if (!tenant) return res.status(404).json({ error: 'Tenant not found.' });
+
+    // Same targeting rule as GET /notices/tenant — a tenant can only reply
+    // to a notice that was actually shown to them in the first place.
+    const notice = await pool.query(
+      `SELECT author_id FROM notices
+       WHERE id = $1 AND (target_type='all'
+         OR (target_type='property' AND target_id=$2)
+         OR (target_type='unit'     AND target_id=$3)
+         OR (target_type='tenant'   AND target_id=$4))`,
+      [req.params.noticeId, tenant.plot_id, tenant.house_id, tenant.id]
+    );
     if (!notice.rows[0]) return res.status(404).json({ error: 'Notice not found.' });
     const convId = await findOrCreateConversation(
       req.tenant.id, 'tenant',
@@ -404,11 +725,11 @@ router.post('/:id/read', tenantAuth, async (req, res) => {
 
 // DELETE /api/notices/:id
 router.delete('/:id', auth, async (req, res) => {
-  if (!['admin', 'landlord'].includes(req.user.role))
+  if (!['admin', 'super_admin', 'landlord', 'agent'].includes(req.user.role))
     return res.status(403).json({ error: 'Access denied.' });
   try {
     await pool.query(
-      `DELETE FROM notices WHERE id=$1 AND (author_id=$2 OR $3='admin')`,
+      `DELETE FROM notices WHERE id=$1 AND (author_id=$2 OR $3 IN ('admin','super_admin'))`,
       [req.params.id, req.user.id, req.user.role]
     );
     res.json({ success: true });

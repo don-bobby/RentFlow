@@ -1,86 +1,89 @@
 const express = require('express');
 const router  = express.Router();
 const pool    = require('../database/db');
-const jwt     = require('jsonwebtoken');
 const { logAudit, diff } = require('../utils/audit');
+const { getVisiblePlotIds } = require('../middleware/scope');
+const { requirePermission } = require('../middleware/permissions');
+const { authMiddleware: auth } = require('../middleware/auth');
 
-function auth(req, res, next) {
-  const token = req.headers.authorization?.split(' ')[1];
-  if (!token) return res.status(401).json({ error: 'No token provided' });
-  try { req.user = jwt.verify(token, process.env.JWT_SECRET); next(); }
-  catch { res.status(401).json({ error: 'Invalid token' }); }
-}
 
-// GET ALL houses — admin sees all, landlord sees own, caretaker sees assigned plots
+// GET ALL houses — admin/super_admin see all, agent sees their landlords',
+// landlord sees own, caretaker sees assigned (scoping lives in one place now)
 router.get('/', auth, async (req, res) => {
   try {
-    let query, params = [];
-    if (req.user.role === 'admin') {
-      query = `SELECT h.*, p.name AS plot_name, p.location AS plot_location, u.name AS owner_name
-               FROM houses h LEFT JOIN plots p ON h.plot_id = p.id
-               LEFT JOIN users u ON p.user_id = u.id
-               ORDER BY h.id ASC`;
-    } else if (req.user.role === 'landlord') {
-      query = `SELECT h.*, p.name AS plot_name, p.location AS plot_location
-               FROM houses h LEFT JOIN plots p ON h.plot_id = p.id
-               WHERE p.user_id = $1 ORDER BY h.id ASC`;
-      params = [req.user.id];
-    } else if (req.user.role === 'caretaker') {
-      query = `SELECT h.*, p.name AS plot_name, p.location AS plot_location
-               FROM houses h LEFT JOIN plots p ON h.plot_id = p.id
-               WHERE p.id IN (
-                 SELECT plot_id FROM caretaker_plots WHERE caretaker_id = $1
-                 UNION
-                 SELECT plot_id FROM users WHERE id = $1 AND plot_id IS NOT NULL
-               ) ORDER BY h.id ASC`;
-      params = [req.user.id];
-    } else {
-      return res.json([]);
-    }
+    const visible = await getVisiblePlotIds(req.user);
+    if (visible !== 'ALL' && visible.length === 0) return res.json([]);
+
+    const query = `
+      SELECT h.*, p.name AS plot_name, p.location AS plot_location, u.name AS owner_name,
+             t.tenant_id, t.tenant_name, t.tenant_phone, t.tenant_balance
+      FROM houses h
+      LEFT JOIN plots p ON h.plot_id = p.id
+      LEFT JOIN users u ON p.user_id = u.id
+      LEFT JOIN LATERAL (
+        SELECT id AS tenant_id, full_name AS tenant_name, phone AS tenant_phone, balance AS tenant_balance
+        FROM tenants WHERE house_id = h.id AND is_active = true LIMIT 1
+      ) t ON true
+      ${visible === 'ALL' ? '' : 'WHERE p.id = ANY($1)'}
+      ORDER BY h.id ASC
+    `;
+    const params = visible === 'ALL' ? [] : [visible];
     const result = await pool.query(query, params);
     res.json(result.rows);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// GET /api/houses/pending-approval-count — for the dashboard alert banner.
+// Scoped the same way as everything else: admin sees every pending unit
+// system-wide, everyone else only sees ones on their own visible plots.
+// Must stay ABOVE GET /:id below, or Express would treat the literal text
+// "pending-approval-count" as an :id value and this route would never match.
+router.get('/pending-approval-count', auth, async (req, res) => {
+  try {
+    const visible = await getVisiblePlotIds(req.user);
+    let result;
+    if (visible === 'ALL') {
+      result = await pool.query(`SELECT plot_id FROM houses WHERE is_approved = false AND plot_id IS NOT NULL`);
+    } else if (visible.length === 0) {
+      return res.json({ success: true, count: 0, plot_ids: [] });
+    } else {
+      result = await pool.query(`SELECT plot_id FROM houses WHERE is_approved = false AND plot_id = ANY($1)`, [visible]);
+    }
+    // count = total pending UNITS (unchanged meaning); plot_ids = the
+    // distinct PLOTS they're on, so "Review" can jump straight to one.
+    const plot_ids = [...new Set(result.rows.map(r => r.plot_id))];
+    res.json({ success: true, count: result.rows.length, plot_ids });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 // GET ONE house
 router.get('/:id', auth, async (req, res) => {
   try {
-    const result = await pool.query(
-      `SELECT h.*, p.user_id AS plot_owner FROM houses h
-       LEFT JOIN plots p ON h.plot_id = p.id WHERE h.id = $1`,
-      [req.params.id]
-    );
+    const result = await pool.query('SELECT h.* FROM houses h WHERE h.id = $1', [req.params.id]);
     if (result.rows.length === 0) return res.status(404).json({ error: 'House not found' });
     const house = result.rows[0];
-    if (req.user.role !== 'admin' && house.plot_owner !== req.user.id) return res.status(403).json({ error: 'Access denied' });
+
+    const visible = await getVisiblePlotIds(req.user);
+    const canView = visible === 'ALL' || (house.plot_id != null && visible.includes(house.plot_id));
+    if (!canView) return res.status(403).json({ error: 'Access denied' });
+
     res.json(house);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 // POST create house
 // Admin/landlord: auto-approved. Caretaker: pending approval.
-router.post('/', auth, async (req, res) => {
-  if (!['admin', 'landlord', 'caretaker'].includes(req.user.role)) return res.status(403).json({ error: 'Access denied' });
+router.post('/', auth, requirePermission('houses.create'), async (req, res) => {
   try {
     const { plot_id, unit_number, house_type, rent_amount, deposit, status, meter_no } = req.body;
     if (!plot_id || !unit_number || !rent_amount) return res.status(400).json({ error: 'plot_id, unit_number and rent_amount are required' });
 
-    // Verify landlord owns this plot
-    if (req.user.role === 'landlord') {
-      const plotCheck = await pool.query('SELECT user_id FROM plots WHERE id = $1', [plot_id]);
-      if (plotCheck.rows.length === 0 || plotCheck.rows[0].user_id !== req.user.id) {
-        return res.status(403).json({ error: 'You do not own this plot' });
-      }
-    }
-
-    // Verify caretaker is assigned to this plot
-    if (req.user.role === 'caretaker') {
-      const plotCheck = await pool.query(
-        `SELECT 1 FROM caretaker_plots WHERE caretaker_id=$1 AND plot_id=$2
-         UNION SELECT 1 FROM users WHERE id=$1 AND plot_id=$2`,
-        [req.user.id, plot_id]
-      );
-      if (plotCheck.rows.length === 0) return res.status(403).json({ error: 'You are not assigned to this plot.' });
+    // Scope check: does this user have access to the plot they're adding a unit to?
+    // Covers landlord (own plots), agent (their landlords' plots), caretaker
+    // (assigned plots) and admin (everything) via the same rules GET already uses.
+    const visible = await getVisiblePlotIds(req.user);
+    if (visible !== 'ALL' && !visible.includes(parseInt(plot_id))) {
+      return res.status(403).json({ error: 'You do not have access to this plot.' });
     }
 
     // Caretaker-added units require approval
@@ -92,20 +95,45 @@ router.post('/', auth, async (req, res) => {
       [plot_id, unit_number, house_type || 'Bedsitter', rent_amount, deposit || null, status || 'vacant', meter_no || null, isApproved]
     );
 
+    // Previously this just sat there unapproved with no one actually told.
+    // Posting a property-targeted notice reaches the landlord (and their
+    // agent, if any) through the exact same visibility rules every other
+    // property notice already uses — admin sees everything regardless.
+    if (!isApproved) {
+      const plotRow = await pool.query('SELECT name FROM plots WHERE id = $1', [plot_id]);
+      await pool.query(
+        `INSERT INTO notices (author_id, title, body, priority, target_type, target_id)
+         VALUES ($1, $2, $3, 'warning', 'property', $4)`,
+        [
+          req.user.id,
+          `New unit pending approval - ${unit_number}`,
+          `${req.user.name || 'A caretaker'} added unit ${unit_number} on ${plotRow.rows[0]?.name || 'this property'}, awaiting approval before it goes live.`,
+          plot_id,
+        ]
+      );
+    }
+
     const msg = isApproved ? undefined : 'Unit submitted for approval by admin/landlord.';
     res.status(201).json({ success: true, data: result.rows[0], message: msg });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 // PUT update house
-router.put('/:id', auth, async (req, res) => {
+router.put('/:id', auth, requirePermission('houses.edit'), async (req, res) => {
   try {
     const check = await pool.query(
-      'SELECT p.user_id FROM houses h LEFT JOIN plots p ON h.plot_id = p.id WHERE h.id = $1',
+      'SELECT p.user_id, h.plot_id FROM houses h LEFT JOIN plots p ON h.plot_id = p.id WHERE h.id = $1',
       [req.params.id]
     );
     if (check.rows.length === 0) return res.status(404).json({ error: 'House not found' });
-    if (req.user.role !== 'admin' && check.rows[0].user_id !== req.user.id) return res.status(403).json({ error: 'Access denied' });
+
+    // Scope check: same rule as everywhere else — admin sees all, agent
+    // covers their landlords' plots, landlord covers their own, caretaker
+    // covers assigned plots.
+    const visible = await getVisiblePlotIds(req.user);
+    if (visible !== 'ALL' && !visible.includes(check.rows[0].plot_id)) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
 
     const { plot_id, unit_number, house_type, rent_amount, deposit, status, meter_no } = req.body;
     const oldStatusRes = await pool.query('SELECT status, rent_amount, unit_number FROM houses WHERE id=$1', [req.params.id]);
@@ -124,47 +152,71 @@ router.put('/:id', auth, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// PATCH /api/houses/:id/reject — admin/landlord rejects a caretaker-submitted unit
-router.patch('/:id/reject', auth, async (req, res) => {
-  if (!['admin', 'landlord'].includes(req.user.role)) return res.status(403).json({ error: 'Access denied' });
+// Shared scope check for the four routes below — same rule as everywhere
+// else: admin sees all, agent covers their landlords' plots, landlord
+// covers their own, caretaker covers assigned plots.
+async function assertHouseInScope(req, houseId) {
+  const row = await pool.query('SELECT plot_id FROM houses WHERE id = $1', [houseId]);
+  if (!row.rows[0]) return { ok: false, notFound: true };
+  const visible = await getVisiblePlotIds(req.user);
+  const ok = visible === 'ALL' || (row.rows[0].plot_id != null && visible.includes(row.rows[0].plot_id));
+  return { ok, notFound: false };
+}
+
+// PATCH /api/houses/:id/reject — rejects a caretaker-submitted unit.
+// Was hardcoded to ['admin','landlord'], which let EVERY landlord reject
+// (including landlord_with_agent, who shouldn't) and blocked agent entirely
+// (who the matrix does grant this to). Now matrix-driven + scoped.
+router.patch('/:id/reject', auth, requirePermission('houses.approve'), async (req, res) => {
   const { reason } = req.body;
   try {
+    const scope = await assertHouseInScope(req, req.params.id);
+    if (scope.notFound) return res.status(404).json({ error: 'House not found' });
+    if (!scope.ok) return res.status(403).json({ error: 'Access denied' });
+
     const result = await pool.query(
       `UPDATE houses SET is_approved = false, rejection_reason = $1 WHERE id = $2 RETURNING *`,
       [reason || null, req.params.id]
     );
-    if (!result.rows[0]) return res.status(404).json({ error: 'House not found' });
     await logAudit({ user: req.user, action: 'house.reject', entityType: 'house', entityId: req.params.id, changes: { is_approved: { from: null, to: false } } });
     res.json({ success: true, data: result.rows[0] });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// PATCH /api/houses/:id/approve — admin/landlord approves a caretaker-submitted unit
-router.patch('/:id/approve', auth, async (req, res) => {
-  if (!['admin', 'landlord'].includes(req.user.role)) return res.status(403).json({ error: 'Access denied' });
+// PATCH /api/houses/:id/approve — same fix as reject above.
+router.patch('/:id/approve', auth, requirePermission('houses.approve'), async (req, res) => {
   try {
+    const scope = await assertHouseInScope(req, req.params.id);
+    if (scope.notFound) return res.status(404).json({ error: 'House not found' });
+    if (!scope.ok) return res.status(403).json({ error: 'Access denied' });
+
     const result = await pool.query(
       'UPDATE houses SET is_approved = true WHERE id = $1 RETURNING *',
       [req.params.id]
     );
-    if (!result.rows[0]) return res.status(404).json({ error: 'House not found' });
     await logAudit({ user: req.user, action: 'house.approve', entityType: 'house', entityId: req.params.id, changes: { is_approved: { from: false, to: true } } });
     res.json({ success: true, data: result.rows[0] });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// PATCH /api/houses/:id/description
-router.patch('/:id/description', auth, async (req, res) => {
+// PATCH /api/houses/:id/description — previously had NO permission or scope
+// check at all; anyone authenticated could rewrite any house's description.
+router.patch('/:id/description', auth, requirePermission('houses.edit'), async (req, res) => {
   const { description } = req.body;
   try {
+    const scope = await assertHouseInScope(req, req.params.id);
+    if (scope.notFound) return res.status(404).json({ error: 'House not found' });
+    if (!scope.ok) return res.status(403).json({ error: 'Access denied' });
+
     await pool.query('UPDATE houses SET description = $1 WHERE id = $2', [description || null, req.params.id]);
     res.json({ success: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// DELETE house (admin only)
-router.delete('/:id', auth, async (req, res) => {
-  if (req.user.role !== 'admin') return res.status(403).json({ error: 'Admin access required' });
+// DELETE house — was hardcoded to 'admin' (not super_admin-aware). No
+// profile in the matrix has houses.delete, so this stays effectively
+// admin-only, but now driven by the matrix like every other DELETE route.
+router.delete('/:id', auth, requirePermission('houses.delete'), async (req, res) => {
   try {
     const result = await pool.query('DELETE FROM houses WHERE id = $1 RETURNING *', [req.params.id]);
     if (result.rows.length === 0) return res.status(404).json({ error: 'House not found' });

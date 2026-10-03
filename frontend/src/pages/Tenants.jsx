@@ -1,16 +1,22 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import API from '../services/api';
-
-function getUser() {
-  const token = localStorage.getItem('token');
-  if (!token) return null;
-  try { return JSON.parse(atob(token.split('.')[1])); }
-  catch { return null; }
-}
+import { useAuth } from '../context/AuthContext';
 
 function hexToRgba(hex, alpha) {
   const n = parseInt(hex.replace('#', ''), 16);
   return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${alpha})`;
+}
+
+// Deterministic avatar color + initials from a name — same tenant always
+// gets the same color, no state or extra data needed.
+const AVATAR_COLORS = ['#7c3aed', '#2563eb', '#16a34a', '#d97706', '#dc2626', '#0891b2', '#db2777'];
+function initialsAvatar(name) {
+  const clean = (name || '?').trim();
+  const parts = clean.split(/\s+/);
+  const initials = ((parts[0]?.[0] || '') + (parts[1]?.[0] || '')).toUpperCase() || '?';
+  let hash = 0;
+  for (let i = 0; i < clean.length; i++) hash = (hash * 31 + clean.charCodeAt(i)) % AVATAR_COLORS.length;
+  return { initials, color: AVATAR_COLORS[hash] };
 }
 
 // Tracks the light/dark theme Layout.jsx sets via document.documentElement's
@@ -45,6 +51,7 @@ export default function Tenants() {
   const [statusFilter,   setStatusFilter]   = useState('all');
   const [moveInFrom,     setMoveInFrom]     = useState('');
   const [moveInTo,       setMoveInTo]       = useState('');
+  const [moveInPreset,   setMoveInPreset]   = useState('any'); // any | month | 3m | year | custom
   const [form,     setForm]     = useState(emptyForm);
 
   const [pinModal,  setPinModal]  = useState(null); // tenant object
@@ -53,9 +60,12 @@ export default function Tenants() {
   const [pinError,  setPinError]  = useState('');
   const [pinSuccess,setPinSuccess]= useState('');
 
-  const user     = getUser();
-  const canEdit  = user?.role === 'admin' || user?.role === 'landlord' || user?.role === 'caretaker';
-  const isDark   = useIsDarkMode();
+  const { can }   = useAuth();
+  const canAdd     = can('tenants.create');
+  const canEditRow = can('tenants.edit');
+  const canSetPin  = can('tenants.set_pin');
+  const canManageRow = canEditRow || canSetPin; // whether the Actions column shows at all
+  const isDark    = useIsDarkMode();
 
   async function load() {
     setLoading(true);
@@ -138,6 +148,36 @@ export default function Tenants() {
     return matchesSearch && matchesProperty && matchesStatus && matchesMoveIn;
   });
 
+  // ── Filter bar helpers ──────────────────────────────────────────────
+  const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
+  function applyMoveInPreset(preset) {
+    setMoveInPreset(preset);
+    const now = new Date();
+    if (preset === 'any') { setMoveInFrom(''); setMoveInTo(''); }
+    else if (preset === 'month') {
+      setMoveInFrom(ymd(new Date(now.getFullYear(), now.getMonth(), 1)));
+      setMoveInTo(ymd(new Date(now.getFullYear(), now.getMonth() + 1, 0)));
+    } else if (preset === '3m') {
+      setMoveInFrom(ymd(new Date(now.getFullYear(), now.getMonth() - 3, now.getDate())));
+      setMoveInTo(ymd(now));
+    } else if (preset === 'year') {
+      setMoveInFrom(ymd(new Date(now.getFullYear(), 0, 1)));
+      setMoveInTo(ymd(new Date(now.getFullYear(), 11, 31)));
+    }
+    // 'custom' keeps the current dates so they can be edited
+  }
+
+  const filtersActive = !!search.trim() || propertyFilter !== 'all' || statusFilter !== 'all' || moveInPreset !== 'any';
+  function clearFilters() {
+    setSearch(''); setPropertyFilter('all'); setStatusFilter('all'); applyMoveInPreset('any');
+  }
+  const statusCounts = {
+    all: tenants.length,
+    active: tenants.filter(t => t.is_active).length,
+    inactive: tenants.filter(t => !t.is_active).length,
+  };
+
   // For edit modal, include the tenant's current unit even if occupied
   const unitOptions = modal === 'edit'
     ? allHouses.filter(h => h.status === 'vacant' || h.id === editing?.house_id)
@@ -145,37 +185,12 @@ export default function Tenants() {
 
   return (
     <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 28 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
         <div>
           <h1 style={{ fontFamily: 'Space Grotesk', fontSize: 26, fontWeight: 700, marginBottom: 4, color: 'var(--text)' }}>Tenants</h1>
-          <p style={{ color: isDark ? 'var(--blue, #2563eb)' : 'var(--muted)', fontSize: 14 }}>{tenants.filter(t => t.is_active).length} active tenants</p>
+          <p style={{ color: isDark ? 'var(--blue, #2563eb)' : 'var(--muted)', fontSize: 14 }}>{statusCounts.active} active tenants</p>
         </div>
-        <div style={{ display: 'flex', gap: 10, alignItems: 'flex-end', flexWrap: 'wrap' }}>
-          <div>
-            <label style={{ ...labelStyle, marginBottom: 4 }}>Property</label>
-            <select value={propertyFilter} onChange={e => setPropertyFilter(e.target.value)} style={filterInputStyle}>
-              <option value="all">All Properties</option>
-              {propertyOptions.map(p => <option key={p} value={p}>{p}</option>)}
-            </select>
-          </div>
-          <div>
-            <label style={{ ...labelStyle, marginBottom: 4 }}>Status</label>
-            <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)} style={filterInputStyle}>
-              <option value="all">All Statuses</option>
-              <option value="active">Active</option>
-              <option value="inactive">Inactive</option>
-            </select>
-          </div>
-          <div>
-            <label style={{ ...labelStyle, marginBottom: 4 }}>Move-in From</label>
-            <input type="date" value={moveInFrom} onChange={e => setMoveInFrom(e.target.value)} style={filterInputStyle} />
-          </div>
-          <div>
-            <label style={{ ...labelStyle, marginBottom: 4 }}>Move-in To</label>
-            <input type="date" value={moveInTo} onChange={e => setMoveInTo(e.target.value)} style={filterInputStyle} />
-          </div>
-        </div>
-        {canEdit && (
+        {canAdd && (
           <button onClick={openAdd}
             style={{ padding: '10px 18px', borderRadius: 10, border: 'none', background: 'var(--primary, #7c3aed)', color: '#fff', fontWeight: 600, fontSize: 14 }}>
             + Add Tenant
@@ -183,33 +198,132 @@ export default function Tenants() {
         )}
       </div>
 
-      <div style={{ marginBottom: 20 }}>
-        <style>{`.tenant-search-input::placeholder { color: ${isDark ? '#ffffff' : '#6b7280'}; opacity: ${isDark ? 0.75 : 1}; }`}</style>
-        <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search by name, phone or email..."
-          className="tenant-search-input"
-          style={{ padding: '10px 14px', borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface)', fontSize: 14, width: '100%', maxWidth: 360, outline: 'none', color: 'var(--text)' }} />
+      {/* Filter bar */}
+      <style>{`
+        .tenant-search-input::placeholder { color: ${isDark ? '#ffffff' : '#6b7280'}; opacity: ${isDark ? 0.75 : 1}; }
+        .tn-row { transition: background 0.12s ease; }
+        .tn-row:hover { background: var(--primary-light, #ede9fe) !important; }
+        .tn-skel { background: var(--surface2); border-radius: 6px; animation: tn-pulse 1.3s ease-in-out infinite; }
+        @keyframes tn-pulse { 0%, 100% { opacity: .5; } 50% { opacity: 1; } }
+        @media (prefers-reduced-motion: reduce) { .tn-row, .tn-skel { transition: none; animation: none; } }
+      `}</style>
+      <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, padding: 16, marginBottom: 24 }}>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16, alignItems: 'flex-end' }}>
+
+          <div>
+            <div style={filterLabelStyle}>Status</div>
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+              {[['all', 'All'], ['active', 'Active'], ['inactive', 'Inactive']].map(([val, label]) => {
+                const on = statusFilter === val;
+                return (
+                  <button key={val} onClick={() => setStatusFilter(val)} style={{
+                    padding: '7px 12px', borderRadius: 99, fontSize: 12, fontWeight: 600, cursor: 'pointer',
+                    border: `1px solid ${on ? 'var(--primary, #7c3aed)' : 'var(--border)'}`,
+                    background: on ? 'var(--primary, #7c3aed)' : 'var(--surface)',
+                    color: on ? '#fff' : 'var(--text)',
+                  }}>
+                    {label} <span style={{ opacity: 0.7, marginLeft: 2 }}>{statusCounts[val]}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          <div style={{ minWidth: 170 }}>
+            <div style={filterLabelStyle}>Property</div>
+            <select value={propertyFilter} onChange={e => setPropertyFilter(e.target.value)}
+              style={{ ...selectStyle, borderColor: propertyFilter !== 'all' ? 'var(--primary, #7c3aed)' : 'var(--border)' }}>
+              <option value="all">All properties</option>
+              {propertyOptions.map(p => <option key={p} value={p}>{p}</option>)}
+            </select>
+          </div>
+
+          <div style={{ minWidth: 170 }}>
+            <div style={filterLabelStyle}>Move-in date</div>
+            <select value={moveInPreset} onChange={e => applyMoveInPreset(e.target.value)}
+              style={{ ...selectStyle, borderColor: moveInPreset !== 'any' ? 'var(--primary, #7c3aed)' : 'var(--border)' }}>
+              <option value="any">Any time</option>
+              <option value="month">This month</option>
+              <option value="3m">Last 3 months</option>
+              <option value="year">This year</option>
+              <option value="custom">Custom range…</option>
+            </select>
+          </div>
+
+          {moveInPreset === 'custom' && (
+            <>
+              <div>
+                <div style={filterLabelStyle}>From</div>
+                <input type="date" value={moveInFrom} onChange={e => setMoveInFrom(e.target.value)} style={{ ...selectStyle, minWidth: 150 }} />
+              </div>
+              <div>
+                <div style={filterLabelStyle}>To</div>
+                <input type="date" value={moveInTo} onChange={e => setMoveInTo(e.target.value)} style={{ ...selectStyle, minWidth: 150 }} />
+              </div>
+            </>
+          )}
+
+          <ExpandableSearch value={search} onChange={setSearch} />
+
+          <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 12 }}>
+            <span style={{ fontSize: 13, color: 'var(--muted)' }}>Showing {filtered.length} of {tenants.length} tenants</span>
+            {filtersActive && (
+              <button onClick={clearFilters} style={{ padding: '7px 12px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', fontSize: 12, fontWeight: 600, color: 'var(--text)', cursor: 'pointer' }}>Clear filters</button>
+            )}
+          </div>
+        </div>
       </div>
 
       <div style={{ background: 'var(--surface)', borderRadius: 'var(--radius)', boxShadow: 'var(--shadow)', border: '1px solid var(--border)', overflow: 'hidden' }}>
         {loading ? (
-          <div style={{ padding: 40, textAlign: 'center', color: 'var(--muted)' }}>Loading...</div>
+          <div style={{ padding: 20 }}>
+            {[0, 1, 2, 3, 4].map(i => (
+              <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '12px 0' }}>
+                <div className="tn-skel" style={{ width: 32, height: 32, borderRadius: '50%', flexShrink: 0 }} />
+                <div className="tn-skel" style={{ height: 14, width: `${40 + (i * 7) % 30}%` }} />
+              </div>
+            ))}
+          </div>
         ) : filtered.length === 0 ? (
-          <div style={{ padding: 60, textAlign: 'center', color: 'var(--muted)' }}>No tenants found.</div>
+          <div style={{ padding: 60, textAlign: 'center', color: 'var(--muted)' }}>
+            <div style={{ fontSize: 32, marginBottom: 10 }}>👥</div>
+            <div style={{ marginBottom: filtersActive ? 14 : 0 }}>No tenants found.</div>
+            {filtersActive && (
+              <button onClick={clearFilters} style={{ padding: '7px 16px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface2)', fontSize: 12, fontWeight: 600, color: 'var(--text)', cursor: 'pointer' }}>
+                Clear filters
+              </button>
+            )}
+          </div>
         ) : (
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
               <tr style={{ background: 'var(--surface2)' }}>
-                {['Name', 'Phone', 'Unit', 'Property', 'Move-in', 'Balance', 'Status', ...(canEdit ? [''] : [])].map(h => (
+                {['Name', 'Phone', 'Unit', 'Property', 'Move-in', 'Balance', 'Status', ...(canManageRow ? [''] : ['Last Payment'])].map(h => (
                   <th key={h} style={{ padding: '10px 20px', textAlign: 'left', fontSize: 12, fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {filtered.map((t, i) => (
-                <tr key={t.id} style={{ borderTop: '1px solid var(--border)', background: i % 2 === 0 ? 'var(--surface)' : 'var(--surface2)' }}>
+                <tr key={t.id} className="tn-row" style={{ borderTop: '1px solid var(--border)', background: i % 2 === 0 ? 'var(--surface)' : 'var(--surface2)' }}>
                   <td style={{ padding: '13px 20px' }}>
-                    <div style={{ fontWeight: 600, color: isDark ? 'var(--blue, #2563eb)' : 'var(--text)' }}>{t.full_name}</div>
-                    <div style={{ fontSize: 12, color: 'var(--muted)' }}>{t.email}</div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                      {(() => {
+                        const { initials, color } = initialsAvatar(t.full_name);
+                        return (
+                          <div style={{
+                            width: 32, height: 32, borderRadius: '50%', flexShrink: 0,
+                            background: hexToRgba(color, isDark ? 0.3 : 0.15), color,
+                            display: 'flex', alignItems: 'center', justifyContent: 'center',
+                            fontSize: 12, fontWeight: 700,
+                          }}>{initials}</div>
+                        );
+                      })()}
+                      <div style={{ minWidth: 0 }}>
+                        <div style={{ fontWeight: 600, color: isDark ? 'var(--blue, #2563eb)' : 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.full_name}</div>
+                        <div style={{ fontSize: 12, color: 'var(--muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.email}</div>
+                      </div>
+                    </div>
                   </td>
                   <td style={{ padding: '13px 20px', color: 'var(--muted)' }}>{t.phone}</td>
                   <td style={{ padding: '13px 20px', fontWeight: 600, color: 'var(--text)' }}>
@@ -233,21 +347,41 @@ export default function Tenants() {
                       {t.is_active ? 'Active' : 'Inactive'}
                     </span>
                   </td>
-                  {canEdit && (
+                  {canManageRow ? (
                     <td style={{ padding: '13px 20px' }}>
                       <div style={{ display: 'flex', gap: 6 }}>
-                        <button onClick={() => openEdit(t)} style={{ padding: '5px 14px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', fontSize: 12, fontWeight: 600, color: 'var(--primary, #7c3aed)', cursor: 'pointer' }}>
-                          Edit
-                        </button>
-                        <button onClick={() => { setPinModal(t); setPin(''); setPinError(''); setPinSuccess(''); }} style={{
-                          padding: '5px 14px', borderRadius: 8, border: 'none',
-                          background: isDark ? hexToRgba('#7c3aed', 0.22) : 'var(--primary-light)',
-                          color: isDark ? '#c4b5fd' : 'var(--primary)',
-                          fontSize: 12, fontWeight: 600, cursor: 'pointer',
-                        }}>
-                          Set PIN
-                        </button>
+                        {canEditRow && (
+                          <button onClick={() => openEdit(t)} style={{ padding: '5px 14px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', fontSize: 12, fontWeight: 600, color: 'var(--primary, #7c3aed)', cursor: 'pointer' }}>
+                            Edit
+                          </button>
+                        )}
+                        {canSetPin && (
+                          <button onClick={() => { setPinModal(t); setPin(''); setPinError(''); setPinSuccess(''); }} style={{
+                            padding: '5px 14px', borderRadius: 8, border: 'none',
+                            background: isDark ? hexToRgba('#7c3aed', 0.22) : 'var(--primary-light)',
+                            color: isDark ? '#c4b5fd' : 'var(--primary)',
+                            fontSize: 12, fontWeight: 600, cursor: 'pointer',
+                          }}>
+                            Set PIN
+                          </button>
+                        )}
                       </div>
+                    </td>
+                  ) : (
+                    <td style={{ padding: '13px 20px' }}>
+                      {t.last_payment_amount ? (
+                        <div>
+                          <div style={{ fontWeight: 700, fontSize: 13, color: 'var(--green, #16a34a)' }}>
+                            KES {parseFloat(t.last_payment_amount).toLocaleString()}
+                          </div>
+                          <div style={{ fontSize: 11, color: 'var(--muted)' }}>
+                            {t.last_payment_date ? new Date(t.last_payment_date).toLocaleDateString('en-KE') : ''}
+                            {t.last_payment_method ? ` · ${t.last_payment_method}` : ''}
+                          </div>
+                        </div>
+                      ) : (
+                        <span style={{ fontSize: 12, color: 'var(--muted)' }}>No payments yet</span>
+                      )}
                     </td>
                   )}
                 </tr>
@@ -354,13 +488,56 @@ export default function Tenants() {
 
 const labelStyle = { display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--muted)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.4px' };
 const inputStyle = { width: '100%', padding: '10px 12px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface2)', fontSize: 14, color: 'var(--text)', outline: 'none' };
-const filterInputStyle = { padding: '9px 12px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface2)', fontSize: 13, color: 'var(--text)', outline: 'none', minWidth: 160 };
+const filterLabelStyle = { fontSize: 10, fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 6 };
+const selectStyle = { width: '100%', boxSizing: 'border-box', padding: '8px 12px', borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface)', fontSize: 13, fontWeight: 600, color: 'var(--text)', cursor: 'pointer', outline: 'none' };
 
 function Field({ label, value, onChange, placeholder, type = 'text', span }) {
   return (
     <div style={span ? { gridColumn: '1/-1' } : {}}>
       <label style={labelStyle}>{label}</label>
       <input type={type} value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder} style={inputStyle} />
+    </div>
+  );
+}
+
+// A search icon that expands into an input when clicked. Stays open while it
+// has text; collapses on blur when empty or on Esc (which also clears it).
+function ExpandableSearch({ value, onChange }) {
+  const [open, setOpen] = useState(false);
+  const inputRef = useRef(null);
+  const expanded = open || !!value;
+
+  function openIt() {
+    setOpen(true);
+    setTimeout(() => inputRef.current?.focus(), 0);
+  }
+
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', flexShrink: 0, overflow: 'hidden',
+      height: 40, width: expanded ? 260 : 40, maxWidth: '100%',
+      transition: 'width 0.2s ease, border-color 0.15s',
+      borderRadius: 10, background: 'var(--surface)',
+      border: `1px solid ${expanded ? 'var(--primary, #7c3aed)' : 'var(--border)'}`,
+    }}>
+      <button type="button" onClick={openIt} aria-label="Search tenants" title="Search tenants"
+        style={{ width: 38, height: 38, flex: 'none', border: 'none', background: 'transparent', cursor: 'pointer', fontSize: 15 }}>🔍</button>
+      <input
+        ref={inputRef}
+        className="tenant-search-input"
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        onFocus={() => setOpen(true)}
+        onBlur={() => setOpen(false)}
+        onKeyDown={e => { if (e.key === 'Escape') { onChange(''); setOpen(false); e.currentTarget.blur(); } }}
+        placeholder="Name, phone or email…"
+        tabIndex={expanded ? 0 : -1}
+        style={{ flex: 1, minWidth: 0, border: 'none', background: 'transparent', outline: 'none', color: 'var(--text)', fontSize: 13, paddingRight: value ? 0 : 10 }}
+      />
+      {value && (
+        <button type="button" onClick={() => { onChange(''); inputRef.current?.focus(); }} aria-label="Clear search"
+          style={{ width: 30, height: 30, flex: 'none', border: 'none', background: 'transparent', cursor: 'pointer', fontSize: 16, color: 'var(--muted)' }}>×</button>
+      )}
     </div>
   );
 }

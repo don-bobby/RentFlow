@@ -3,8 +3,16 @@ const router  = express.Router();
 const pool    = require('../database/db');
 const jwt     = require('jsonwebtoken');
 const axios   = require('axios');
+const { authMiddleware: staffAuth } = require('../middleware/auth');
+const { getVisiblePlotIds } = require('../middleware/scope');
+const { requirePermission } = require('../middleware/permissions');
 
-function auth(req, res, next) {
+// Shared by BOTH the tenant portal (paying their own rent) and staff
+// (recording/checking a payment on a tenant's behalf), so this can't use
+// the strict staff-only middleware/auth.js, which hard-rejects tenant
+// tokens. This just proves "who is asking" — same as the old auth() did —
+// and the route handlers below add the actual authorization on top of it.
+function payerAuth(req, res, next) {
   const token = req.headers.authorization?.split(' ')[1];
   if (!token) return res.status(401).json({ error: 'No token provided' });
   try { req.user = jwt.verify(token, process.env.JWT_SECRET); next(); }
@@ -17,10 +25,30 @@ async function getMpesaToken() {
   return res.data.access_token;
 }
 
-// POST /api/mpesa/stk-push
-router.post('/stk-push', auth, async (req, res) => {
-  const { tenant_id, phone, amount } = req.body;
+// POST /api/mpesa/stk-push — used by both the tenant portal (paying their
+// own rent) and staff (recording a payment on a tenant's behalf)
+router.post('/stk-push', payerAuth, async (req, res) => {
+  let { tenant_id, phone, amount } = req.body;
   if (!phone || !amount) return res.status(400).json({ error: 'phone and amount are required.' });
+
+  if (req.user.role === 'tenant') {
+    // A tenant can only ever pay for themselves — ignore whatever tenant_id
+    // the client sent and use their own token's id instead.
+    tenant_id = req.user.id;
+  } else if (req.user.role !== 'admin') {
+    // Staff (agent/landlord/caretaker) initiating on a tenant's behalf must
+    // be scoped to that tenant's plot.
+    if (!tenant_id) return res.status(400).json({ error: 'tenant_id is required.' });
+    const visible = await getVisiblePlotIds(req.user);
+    const tenantRow = await pool.query(
+      `SELECT h.plot_id FROM tenants t LEFT JOIN houses h ON t.house_id = h.id WHERE t.id = $1`,
+      [tenant_id]
+    );
+    const plotId = tenantRow.rows[0]?.plot_id;
+    const allowed = visible === 'ALL' || (plotId != null && visible.includes(plotId));
+    if (!allowed) return res.status(403).json({ error: 'You are not authorized to initiate a payment for this tenant.' });
+  }
+
   try {
     const token     = await getMpesaToken();
     const timestamp = new Date().toISOString().replace(/[-T:.Z]/g, '').slice(0, 14);
@@ -159,7 +187,7 @@ router.post('/callback', async (req, res) => {
 //   - pending row exists but >= 3 min old     → expired, mark failed
 //   - failed row exists with this checkoutId  → payment failed
 //   - row is gone (deleted on success)        → payment matched successfully
-router.get('/stk-status/:checkoutId', auth, async (req, res) => {
+router.get('/stk-status/:checkoutId', payerAuth, async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT status, notes, payment_date FROM payments WHERE transaction_id = $1 LIMIT 1`,
@@ -191,7 +219,7 @@ router.get('/stk-status/:checkoutId', auth, async (req, res) => {
 
 // POST /api/mpesa/expire-pending
 // Called on page load to auto-expire any pending STK rows older than 3 minutes
-router.post('/expire-pending', auth, async (req, res) => {
+router.post('/expire-pending', staffAuth, async (req, res) => {
   try {
     const result = await pool.query(
       `UPDATE payments SET status='failed', notes='STK push timed out — no callback received'
@@ -203,18 +231,27 @@ router.post('/expire-pending', auth, async (req, res) => {
 });
 
 // GET /api/mpesa/unmatched
-router.get('/unmatched', auth, async (req, res) => {
+router.get('/unmatched', staffAuth, requirePermission('payments.reconcile_mpesa'), async (req, res) => {
   try {
     const result = await pool.query(`SELECT * FROM payments WHERE status IN ('unmatched','review') ORDER BY payment_date DESC`);
     res.json({ success: true, data: result.rows });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// PATCH /api/mpesa/:id/match
-router.patch('/:id/match', auth, async (req, res) => {
+// PATCH /api/mpesa/:id/match — scoped: you can only match a stray payment to
+// a tenant/house that's actually yours (or your assigned landlords', for an
+// agent). Previously this had no check at all.
+router.patch('/:id/match', staffAuth, requirePermission('payments.reconcile_mpesa'), async (req, res) => {
   const { tenant_id, house_id } = req.body;
   if (!tenant_id || !house_id) return res.status(400).json({ error: 'tenant_id and house_id are required.' });
   try {
+    if (req.user.role !== 'admin') {
+      const visible = await getVisiblePlotIds(req.user);
+      const houseRow = await pool.query('SELECT plot_id FROM houses WHERE id = $1', [house_id]);
+      const plotId = houseRow.rows[0]?.plot_id;
+      const allowed = visible === 'ALL' || (plotId != null && visible.includes(plotId));
+      if (!allowed) return res.status(403).json({ error: 'You do not have access to this unit.' });
+    }
     const result = await pool.query(
       `UPDATE payments SET tenant_id=$1, house_id=$2, status='matched', match_score=100 WHERE id=$3 RETURNING *`,
       [tenant_id, house_id, req.params.id]

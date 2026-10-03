@@ -1,17 +1,24 @@
 const express = require('express');
 const router  = express.Router();
 const pool    = require('../database/db');
-const jwt     = require('jsonwebtoken');
 const multer  = require('multer');
 const path    = require('path');
 const fs      = require('fs');
+const { authMiddleware: staffAuth } = require('../middleware/auth');
+const { requirePermission } = require('../middleware/permissions');
+const { getVisiblePlotIds } = require('../middleware/scope');
 
-// ── Auth middleware (for admin-only media management) ─────────────────────────
-function auth(req, res, next) {
-  const token = req.headers.authorization?.split(' ')[1];
-  if (!token) return res.status(401).json({ error: 'No token' });
-  try { req.user = jwt.verify(token, process.env.JWT_SECRET); next(); }
-  catch { res.status(401).json({ error: 'Invalid token' }); }
+// Checks that houseId's plot is within this staff member's visible scope.
+// Used on every staff-only listings route below — requirePermission alone
+// only proves "you're allowed to publish listings in general", not "this is
+// your listing to publish".
+async function assertHouseInScope(req, houseId) {
+  if (req.user.role === 'admin') return true;
+  const visible = await getVisiblePlotIds(req.user);
+  if (visible === 'ALL') return true;
+  const row = await pool.query('SELECT plot_id FROM houses WHERE id = $1', [houseId]);
+  const plotId = row.rows[0]?.plot_id;
+  return plotId != null && visible.includes(plotId);
 }
 
 // ── Multer storage (uploads/listings/) ────────────────────────────────────────
@@ -96,9 +103,12 @@ router.get('/', async (req, res) => {
 });
 
 // ── POST /api/listings/media/:houseId — upload photo or video ─────────────────
-router.post('/media/:houseId', auth, upload.array('files', 20), async (req, res) => {
+router.post('/media/:houseId', staffAuth, requirePermission('listings.publish'), upload.array('files', 20), async (req, res) => {
   const { houseId } = req.params;
   if (!req.files?.length) return res.status(400).json({ error: 'No files uploaded.' });
+  if (!(await assertHouseInScope(req, houseId))) {
+    return res.status(403).json({ error: 'You do not have access to this unit.' });
+  }
 
   try {
     const inserted = [];
@@ -118,8 +128,14 @@ router.post('/media/:houseId', auth, upload.array('files', 20), async (req, res)
 });
 
 // ── DELETE /api/listings/media/:mediaId — remove a photo/video ───────────────
-router.delete('/media/:mediaId', auth, async (req, res) => {
+router.delete('/media/:mediaId', staffAuth, requirePermission('listings.publish'), async (req, res) => {
   try {
+    const mediaRow = await pool.query('SELECT house_id, filename FROM plot_media WHERE id = $1', [req.params.mediaId]);
+    if (!mediaRow.rows[0]) return res.status(404).json({ error: 'Not found' });
+    if (!(await assertHouseInScope(req, mediaRow.rows[0].house_id))) {
+      return res.status(403).json({ error: 'You do not have access to this unit.' });
+    }
+
     const result = await pool.query(
       'DELETE FROM plot_media WHERE id=$1 RETURNING filename',
       [req.params.mediaId]
@@ -134,11 +150,17 @@ router.delete('/media/:mediaId', auth, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// ── GET /api/listings/media/:houseId — list media for a plot ──────────────────
-router.get('/media/:houseId', auth, async (req, res) => {
+// ── GET /api/listings/media/:houseId — list media for a unit ──────────────────
+router.get('/media/:houseId', staffAuth, requirePermission('listings.publish'), async (req, res) => {
   try {
+    if (!(await assertHouseInScope(req, req.params.houseId))) {
+      return res.status(403).json({ error: 'You do not have access to this unit.' });
+    }
+    // NOTE: was querying the nonexistent column `plot_id` here — plot_media
+    // rows are keyed by house_id everywhere else in this file (see the
+    // INSERT above and the public GET / route). Fixed to match.
     const result = await pool.query(
-      'SELECT * FROM plot_media WHERE plot_id=$1 ORDER BY sort_order, id',
+      'SELECT * FROM plot_media WHERE house_id=$1 ORDER BY sort_order, id',
       [req.params.houseId]
     );
     const media = result.rows.map(m => ({ ...m, url: `/uploads/listings/${m.filename}` }));
@@ -147,12 +169,11 @@ router.get('/media/:houseId', auth, async (req, res) => {
 });
 
 // PATCH /api/listings/toggle/:houseId — toggle listed/unlisted (admin & landlord only)
-router.patch('/toggle/:houseId', auth, (req, res, next) => {
-  if (!['admin', 'landlord'].includes(req.user.role))
-    return res.status(403).json({ error: 'Only admins and landlords can change listing status.' });
-  next();
-}, async (req, res) => {
+router.patch('/toggle/:houseId', staffAuth, requirePermission('listings.publish'), async (req, res) => {
   try {
+    if (!(await assertHouseInScope(req, req.params.houseId))) {
+      return res.status(403).json({ error: 'You do not have access to this unit.' });
+    }
     const result = await pool.query(
       `UPDATE houses SET listed = NOT listed WHERE id = $1 RETURNING id, listed`,
       [req.params.houseId]
