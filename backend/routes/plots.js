@@ -113,9 +113,18 @@ router.post('/', staffAuth, requirePermission('plots.create'), async (req, res) 
     if (req.user.role === 'agent') {
       assignedAgent = req.user.id;
     } else if (req.user.role === 'admin') {
-      const a = await resolveAgent(agent_id);
-      if (a.error) return res.status(400).json({ error: a.error });
-      assignedAgent = a.id;
+      if (agent_id !== undefined && agent_id !== '') {
+        // Admin explicitly picked one — respect it exactly.
+        const a = await resolveAgent(agent_id);
+        if (a.error) return res.status(400).json({ error: a.error });
+        assignedAgent = a.id;
+      } else {
+        // Nothing explicit given — default to the landlord's own current
+        // agent, same as every other property they already own, rather
+        // than starting this one blank.
+        const landlordRow = await pool.query('SELECT agent_id FROM users WHERE id = $1', [assignedTo]);
+        assignedAgent = landlordRow.rows[0]?.agent_id || null;
+      }
     }
 
     let lat = numOrNull(gps_lat), lng = numOrNull(gps_lng);

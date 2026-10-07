@@ -308,6 +308,21 @@ router.get('/users/pending-landlords-count', authMiddleware, requireAdmin, async
 // approved AND assigned to that agent (switching their profile to
 // landlord_with_agent) in one step. Omit or pass null to approve as
 // self-managed (landlord_self).
+// A landlord's agent is the DEFAULT for all their properties — a plot's own
+// agent_id normally just mirrors it. Only when a plot has been deliberately
+// set to a DIFFERENT agent (a genuine one-off exception, e.g. one building
+// handled by a different agent than the rest of the portfolio) does it stay
+// untouched here. Concretely: cascade the new agent onto every plot that
+// currently matches the landlord's OLD agent (or has none set at all) —
+// never onto a plot already pointing at some other agent.
+async function cascadeAgentToPlots(landlordId, oldAgentId, newAgentId) {
+  await pool.query(
+    `UPDATE plots SET agent_id = $1
+     WHERE user_id = $2 AND (agent_id = $3 OR agent_id IS NULL)`,
+    [newAgentId, landlordId, oldAgentId]
+  );
+}
+
 router.patch('/users/:id/approve', authMiddleware, requireAdmin, async (req, res) => {
   const { agent_id } = req.body;
   try {
@@ -315,12 +330,20 @@ router.patch('/users/:id/approve', authMiddleware, requireAdmin, async (req, res
       const agentCheck = await pool.query(`SELECT id FROM users WHERE id = $1 AND role = 'agent'`, [agent_id]);
       if (!agentCheck.rows[0]) return res.status(400).json({ error: 'agent_id must refer to an existing agent.' });
     }
+    const before = await pool.query('SELECT agent_id FROM users WHERE id = $1', [req.params.id]);
+    const oldAgentId = before.rows[0]?.agent_id || null;
+
     const result = await pool.query(
       `UPDATE users SET is_approved = true, agent_id = $2 WHERE id = $1
        RETURNING id, name, email, role, is_approved, agent_id`,
       [req.params.id, agent_id || null]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'User not found.' });
+
+    if ((agent_id || null) !== oldAgentId) {
+      await cascadeAgentToPlots(req.params.id, oldAgentId, agent_id || null);
+    }
+
     await logAudit({ user: req.user, action: 'user.approve', entityType: 'user', entityId: req.params.id, changes: { is_approved: { from: false, to: true }, agent_id: { to: agent_id || null } } });
     res.json({ success: true, user: result.rows[0] });
   } catch (err) {
@@ -343,6 +366,10 @@ router.patch('/users/:id/reject', authMiddleware, requireAdmin, async (req, res)
     // suspended agent.
     if (result.rows[0].role === 'agent') {
       await pool.query(`UPDATE users SET agent_id = NULL WHERE agent_id = $1`, [req.params.id]);
+      // Plots individually assigned to this agent (the exception case, not
+      // following their landlord's own agent_id) need releasing too —
+      // otherwise one stays silently stuck pointing at a suspended agent.
+      await pool.query(`UPDATE plots SET agent_id = NULL WHERE agent_id = $1`, [req.params.id]);
     }
 
     await logAudit({ user: req.user, action: 'user.reject', entityType: 'user', entityId: req.params.id, changes: { is_approved: { from: true, to: false } } });
@@ -359,7 +386,7 @@ router.patch('/users/:id/reject', authMiddleware, requireAdmin, async (req, res)
 router.patch('/users/:id/agent', authMiddleware, requireAdmin, async (req, res) => {
   const { agent_id } = req.body;
   try {
-    const landlordCheck = await pool.query(`SELECT id, role FROM users WHERE id = $1`, [req.params.id]);
+    const landlordCheck = await pool.query(`SELECT id, role, agent_id FROM users WHERE id = $1`, [req.params.id]);
     if (!landlordCheck.rows[0]) return res.status(404).json({ error: 'User not found.' });
     if (landlordCheck.rows[0].role !== 'landlord') {
       return res.status(400).json({ error: 'agent_id can only be set on landlord accounts.' });
@@ -368,10 +395,17 @@ router.patch('/users/:id/agent', authMiddleware, requireAdmin, async (req, res) 
       const agentCheck = await pool.query(`SELECT id FROM users WHERE id = $1 AND role = 'agent'`, [agent_id]);
       if (!agentCheck.rows[0]) return res.status(400).json({ error: 'agent_id must refer to an existing agent.' });
     }
+    const oldAgentId = landlordCheck.rows[0].agent_id || null;
+
     const result = await pool.query(
       `UPDATE users SET agent_id = $2 WHERE id = $1 RETURNING id, name, email, role, agent_id`,
       [req.params.id, agent_id || null]
     );
+
+    if ((agent_id || null) !== oldAgentId) {
+      await cascadeAgentToPlots(req.params.id, oldAgentId, agent_id || null);
+    }
+
     await logAudit({ user: req.user, action: 'user.set_agent', entityType: 'user', entityId: req.params.id, changes: { agent_id: { to: agent_id || null } } });
     res.json({ success: true, user: result.rows[0] });
   } catch (err) {
