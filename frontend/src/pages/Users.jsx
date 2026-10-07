@@ -379,6 +379,10 @@ export default function Users() {
                           </button>
                         )}
                       </div>
+                    ) : u.role === 'agent' ? (
+                      <span style={{ color: u.agent_plots ? 'var(--text)' : 'var(--muted)', fontSize: 12 }}>
+                        {u.agent_plots || 'No properties managed'}
+                      </span>
                     ) : '—'}
                   </td>
                   <td style={{ padding: '12px 16px' }}>

@@ -189,7 +189,10 @@ router.get('/users', authMiddleware, async (req, res) => {
                 -- For landlords: comma-separated list of their properties
                 lp.plot_names AS landlord_plots,
                 -- For caretakers: all assigned plot names (multi-plot support)
-                ctp.plot_names AS caretaker_plots
+                ctp.plot_names AS caretaker_plots,
+                -- For agents: every plot currently pointing at them via
+                -- plots.agent_id (direct assignment or cascaded landlord default)
+                ap.plot_names AS agent_plots
          FROM users u
          LEFT JOIN plots cp ON u.plot_id = cp.id AND u.role = 'caretaker'
          LEFT JOIN (
@@ -201,6 +204,10 @@ router.get('/users', authMiddleware, async (req, res) => {
            FROM caretaker_plots cp JOIN plots p ON cp.plot_id = p.id
            GROUP BY cp.caretaker_id
          ) ctp ON ctp.user_id = u.id AND u.role = 'caretaker'
+         LEFT JOIN (
+           SELECT agent_id AS user_id, STRING_AGG(name, ', ' ORDER BY name) AS plot_names
+           FROM plots WHERE agent_id IS NOT NULL GROUP BY agent_id
+         ) ap ON ap.user_id = u.id AND u.role = 'agent'
          ORDER BY u.created_at DESC`
       );
     } else if (req.user.role === 'landlord') {
