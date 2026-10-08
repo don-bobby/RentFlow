@@ -15,15 +15,10 @@ router.get('/', auth, async (req, res) => {
     if (visible !== 'ALL' && visible.length === 0) return res.json([]);
 
     const query = `
-      SELECT h.*, p.name AS plot_name, p.location AS plot_location, u.name AS owner_name,
-             t.tenant_id, t.tenant_name, t.tenant_phone, t.tenant_balance
+      SELECT h.*, p.name AS plot_name, p.location AS plot_location, u.name AS owner_name
       FROM houses h
       LEFT JOIN plots p ON h.plot_id = p.id
       LEFT JOIN users u ON p.user_id = u.id
-      LEFT JOIN LATERAL (
-        SELECT id AS tenant_id, full_name AS tenant_name, phone AS tenant_phone, balance AS tenant_balance
-        FROM tenants WHERE house_id = h.id AND is_active = true LIMIT 1
-      ) t ON true
       ${visible === 'ALL' ? '' : 'WHERE p.id = ANY($1)'}
       ORDER BY h.id ASC
     `;
@@ -106,7 +101,7 @@ router.post('/', auth, requirePermission('houses.create'), async (req, res) => {
          VALUES ($1, $2, $3, 'warning', 'property', $4)`,
         [
           req.user.id,
-          `New unit pending approval - ${unit_number}`,
+          `New unit pending approval — ${unit_number}`,
           `${req.user.name || 'A caretaker'} added unit ${unit_number} on ${plotRow.rows[0]?.name || 'this property'}, awaiting approval before it goes live.`,
           plot_id,
         ]
@@ -190,11 +185,14 @@ router.patch('/:id/approve', auth, requirePermission('houses.approve'), async (r
     if (scope.notFound) return res.status(404).json({ error: 'House not found' });
     if (!scope.ok) return res.status(403).json({ error: 'Access denied' });
 
+    // Clear any stale rejection_reason too — otherwise a unit rejected once
+    // and then approved keeps showing a "❌ Rejected" reason in the UI even
+    // though it's now fully approved and live.
     const result = await pool.query(
-      'UPDATE houses SET is_approved = true WHERE id = $1 RETURNING *',
+      'UPDATE houses SET is_approved = true, rejection_reason = NULL WHERE id = $1 RETURNING *',
       [req.params.id]
     );
-    await logAudit({ user: req.user, action: 'house.approve', entityType: 'house', entityId: req.params.id, changes: { is_approved: { from: false, to: true } } });
+    await logAudit({ user: req.user, action: 'house.approve', entityType: 'house', entityId: req.params.id, changes: { is_approved: { from: false, to: true }, rejection_reason: { to: null } } });
     res.json({ success: true, data: result.rows[0] });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });

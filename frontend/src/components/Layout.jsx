@@ -452,7 +452,7 @@ export default function Layout() {
                 <span style={{ fontSize: 11, color: 'var(--muted)' }}>{dropdown ? '▲' : '▼'}</span>
               </button>
               {dropdown && createPortal(
-                <div ref={dropdownPanelRef} style={{ position: 'fixed', top: dropdownPos.top, right: dropdownPos.right, background: theme === 'dark' ? 'rgba(26,29,39,0.5)' : 'rgba(255,255,255,0.5)', WebkitBackdropFilter: 'saturate(180%) blur(14px)', backdropFilter: 'saturate(180%) blur(14px)', border: '1px solid var(--border)', borderRadius: 12, boxShadow: 'var(--shadow-lg)', width: 220, zIndex: 9999, overflow: 'hidden' }}>
+                <div ref={dropdownPanelRef} style={{ position: 'fixed', top: dropdownPos.top, right: dropdownPos.right, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12, boxShadow: 'var(--shadow-lg)', width: 220, zIndex: 9999, overflow: 'hidden' }}>
                   <div style={{ padding: '14px 16px', borderBottom: '1px solid var(--border)', background: 'var(--surface2)', display: 'flex', alignItems: 'center', gap: 10 }}>
                     <Avatar size={36} fontSize={14} />
                     <div>
@@ -639,9 +639,7 @@ export default function Layout() {
         {pendingLandlords > 0 && pendingLandlords !== dismissedLandlordsAt && (
           <div style={{
             display: 'flex', alignItems: 'flex-start', gap: 10, padding: '14px 16px',
-            background: 'color-mix(in srgb, var(--surface) 50%, transparent)',
-            backdropFilter: 'blur(10px)', WebkitBackdropFilter: 'blur(10px)',
-            border: '1px solid var(--amber, #d97706)',
+            background: 'var(--surface)', border: '1px solid var(--amber, #d97706)',
             borderLeft: '4px solid var(--amber, #d97706)', borderRadius: 12,
             boxShadow: '0 8px 24px rgba(0,0,0,0.18)',
             animation: 'toast-in 0.25s ease',
@@ -651,7 +649,7 @@ export default function Layout() {
               <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)', marginBottom: 6 }}>
                 {pendingLandlords} landlord{pendingLandlords > 1 ? 's' : ''} waiting for approval
               </div>
-              <button onClick={() => navigate('/users?filter=pending')} style={{
+              <button onClick={() => { dismissLandlordsToast(); navigate('/users?filter=pending'); }} style={{
                 padding: '5px 12px', borderRadius: 7, border: 'none',
                 background: 'var(--amber, #d97706)', color: '#fff',
                 fontWeight: 700, fontSize: 12, cursor: 'pointer',
@@ -666,9 +664,7 @@ export default function Layout() {
         {pendingUnits > 0 && pendingUnits !== dismissedUnitsAt && (
           <div style={{
             display: 'flex', alignItems: 'flex-start', gap: 10, padding: '14px 16px',
-            background: 'color-mix(in srgb, var(--surface) 50%, transparent)',
-            backdropFilter: 'blur(10px)', WebkitBackdropFilter: 'blur(10px)',
-            border: '1px solid var(--amber, #d97706)',
+            background: 'var(--surface)', border: '1px solid var(--amber, #d97706)',
             borderLeft: '4px solid var(--amber, #d97706)', borderRadius: 12,
             boxShadow: '0 8px 24px rgba(0,0,0,0.18)',
             animation: 'toast-in 0.25s ease',
@@ -678,7 +674,7 @@ export default function Layout() {
               <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)', marginBottom: 6 }}>
                 {pendingUnits} unit{pendingUnits > 1 ? 's' : ''} waiting for approval
               </div>
-              <button onClick={() => navigate('/properties')} style={{
+              <button onClick={() => { dismissUnitsToast(); navigate('/properties'); }} style={{
                 padding: '5px 12px', borderRadius: 7, border: 'none',
                 background: 'var(--amber, #d97706)', color: '#fff',
                 fontWeight: 700, fontSize: 12, cursor: 'pointer',
