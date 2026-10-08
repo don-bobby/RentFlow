@@ -44,6 +44,11 @@ router.get('/', staffAuth, requirePermission('tenants.view'), async (req, res) =
         t.created_at,
         h.unit_number,
         h.rent_amount,
+        -- Required deposit for the unit, so the frontend can tell an
+        -- underpaid deposit (t.deposit_paid < h.deposit) apart from rent
+        -- arrears (t.balance) — these are two separate things that were
+        -- both previously folded into a single misleading "Paid Up" badge.
+        h.deposit AS required_deposit,
         p.name AS plot_name,
         u.name AS owner_name,
 
@@ -247,8 +252,7 @@ router.get('/:id', staffAuth, requirePermission('tenants.view'), async (req, res
 
 // POST add new tenant
 router.post('/', staffAuth, requirePermission('tenants.create'), async (req, res) => {
-  const { full_name, phone, email, house_id, move_in_date, rent_due_day, deposit_paid, emergency_phone } = req.body;
-  const national_id = String(req.body.national_id ?? '').trim();
+  const { full_name, phone, email, national_id, house_id, move_in_date, rent_due_day, deposit_paid, emergency_phone } = req.body;
   if (!full_name || !house_id || !national_id || !phone) {
     return res.status(400).json({ error: 'full_name, house_id, national_id and phone are all required.' });
   }
@@ -264,12 +268,6 @@ router.post('/', staffAuth, requirePermission('tenants.create'), async (req, res
   }
 
   try {
-    // Reject duplicate national IDs with a clear message
-    const dup = await pool.query('SELECT 1 FROM tenants WHERE national_id = $1 LIMIT 1', [national_id]);
-    if (dup.rows.length > 0) {
-      return res.status(409).json({ error: 'A tenant with this ID number already exists.' });
-    }
-
     const result = await pool.query(
       `INSERT INTO tenants (full_name, phone, email, national_id, house_id, move_in_date, rent_due_day, deposit_paid, emergency_phone)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
@@ -284,19 +282,12 @@ router.post('/', staffAuth, requirePermission('tenants.create'), async (req, res
       );
     }
     res.status(201).json({ success: true, data: result.rows[0] });
-  } catch (err) {
-    // Safety net if two requests arrive at the same moment (unique index)
-    if (err.code === '23505' && err.constraint === 'tenants_national_id_unique') {
-      return res.status(409).json({ error: 'A tenant with this ID number already exists.' });
-    }
-    res.status(500).json({ error: err.message });
-  }
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 // PUT update tenant
 router.put('/:id', staffAuth, requirePermission('tenants.edit'), async (req, res) => {
-  const { full_name, phone, email, house_id, move_in_date, rent_due_day, deposit_paid, emergency_phone, is_active } = req.body;
-  const national_id = String(req.body.national_id ?? '').trim();
+  const { full_name, phone, email, national_id, house_id, move_in_date, rent_due_day, deposit_paid, emergency_phone, is_active } = req.body;
   if (!full_name || !house_id || !national_id || !phone) {
     return res.status(400).json({ error: 'full_name, house_id, national_id and phone are all required.' });
   }
@@ -313,15 +304,6 @@ router.put('/:id', staffAuth, requirePermission('tenants.edit'), async (req, res
     const visible = await getVisiblePlotIds(req.user);
     const allowed = visible === 'ALL' || (prev.rows[0].plot_id_actual != null && visible.includes(prev.rows[0].plot_id_actual));
     if (!allowed) return res.status(403).json({ error: 'Access denied' });
-
-    // Reject a national ID that belongs to a different tenant
-    const dup = await pool.query(
-      'SELECT 1 FROM tenants WHERE national_id = $1 AND id != $2 LIMIT 1',
-      [national_id, req.params.id]
-    );
-    if (dup.rows.length > 0) {
-      return res.status(409).json({ error: 'A tenant with this ID number already exists.' });
-    }
 
     const oldHouseId  = prev.rows[0].house_id;
     const newIsActive = is_active ?? true;
@@ -360,12 +342,7 @@ router.put('/:id', staffAuth, requirePermission('tenants.edit'), async (req, res
     }
 
     res.json({ success: true, data: result.rows[0] });
-  } catch (err) {
-    if (err.code === '23505' && err.constraint === 'tenants_national_id_unique') {
-      return res.status(409).json({ error: 'A tenant with this ID number already exists.' });
-    }
-    res.status(500).json({ error: err.message });
-  }
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 // DELETE (deactivate) tenant

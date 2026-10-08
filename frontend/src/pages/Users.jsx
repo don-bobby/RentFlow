@@ -380,9 +380,31 @@ export default function Users() {
                         )}
                       </div>
                     ) : u.role === 'agent' ? (
-                      <span style={{ color: u.agent_plots ? 'var(--text)' : 'var(--muted)', fontSize: 12 }}>
-                        {u.agent_plots || 'No properties managed'}
-                      </span>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        {u.agent_plots ? (() => {
+                          const allPlots = u.agent_plots.split(', ');
+                          const first    = allPlots[0];
+                          const extra    = allPlots.length - 1;
+                          return (
+                            <>
+                              <span style={{ background: 'var(--pink-light, #fce7f3)', color: '#db2777', padding: '2px 8px', borderRadius: 6, fontSize: 12, fontWeight: 600 }}>{first}</span>
+                              {extra > 0 && (
+                                <button onClick={() => openPlots(u)}
+                                  style={{ background: 'var(--surface2)', color: 'var(--muted)', border: '1px solid var(--border)', padding: '2px 8px', borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>
+                                  +{extra} more
+                                </button>
+                              )}
+                            </>
+                          );
+                        })() : (
+                          <span style={{ color: 'var(--muted)', fontSize: 12 }}>No properties managed</span>
+                        )}
+                        {isAdmin && (
+                          <button onClick={() => openPlots(u)} style={{ padding: '2px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--surface2)', fontSize: 11, fontWeight: 600, color: '#db2777', cursor: 'pointer' }}>
+                            ⚙️ Manage
+                          </button>
+                        )}
+                      </div>
                     ) : '—'}
                   </td>
                   <td style={{ padding: '12px 16px' }}>
@@ -497,7 +519,7 @@ export default function Users() {
           <div style={{ background: 'var(--surface)', borderRadius: 16, padding: 28, width: '100%', maxWidth: 480, boxShadow: 'var(--shadow-lg)' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
               <h2 style={{ fontFamily: 'Space Grotesk', fontWeight: 700, fontSize: 18 }}>
-                🏢 {selected.role === 'landlord' ? 'Properties' : 'Assigned Plots'} — {selected.name}
+                🏢 {selected.role === 'landlord' ? 'Properties' : selected.role === 'agent' ? 'Managed Properties' : 'Assigned Plots'} — {selected.name}
               </h2>
               <button onClick={() => setModal(null)} style={{ width: 30, height: 30, borderRadius: '50%', border: 'none', background: 'var(--surface2)', cursor: 'pointer', fontSize: 16, color: 'var(--muted)' }}>×</button>
             </div>
@@ -519,6 +541,33 @@ export default function Users() {
                           {p.location && <div style={{ fontSize: 12, color: 'var(--muted)' }}>📍 {p.location}</div>}
                         </div>
                         <span style={{ background: 'var(--blue-light, #dbeafe)', color: 'var(--blue, #2563eb)', padding: '2px 8px', borderRadius: 6, fontSize: 12, fontWeight: 600 }}>Owner</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ) : selected.role === 'agent' ? (
+              /* Agent — read-only: these come from plots.agent_id, which is
+                 either inherited from the landlord's own agent setting or
+                 overridden per-property. There's no separate add/remove
+                 list here — reassign from the landlord's row (or the
+                 property's own edit screen for a one-off override). */
+              <div>
+                <label style={labelStyle}>Managed Properties</label>
+                <div style={{ color: 'var(--muted)', fontSize: 12, marginBottom: 10 }}>
+                  Inherited from each property's landlord, or individually overridden on the property itself.
+                </div>
+                {plots.filter(p => p.agent_id === selected.id).length === 0 ? (
+                  <div style={{ color: 'var(--muted)', fontSize: 13, padding: '10px 0' }}>No properties currently managed by this agent.</div>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    {plots.filter(p => p.agent_id === selected.id).map(p => (
+                      <div key={p.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'var(--surface2)', border: '1px solid var(--border)', borderRadius: 8, padding: '10px 14px' }}>
+                        <div>
+                          <div style={{ fontWeight: 600, fontSize: 14 }}>{p.name}</div>
+                          {p.location && <div style={{ fontSize: 12, color: 'var(--muted)' }}>📍 {p.location}</div>}
+                        </div>
+                        <span style={{ background: 'var(--pink-light, #fce7f3)', color: '#db2777', padding: '2px 8px', borderRadius: 6, fontSize: 12, fontWeight: 600 }}>Agent</span>
                       </div>
                     ))}
                   </div>

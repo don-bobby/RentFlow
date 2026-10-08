@@ -7,18 +7,6 @@ function hexToRgba(hex, alpha) {
   return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${alpha})`;
 }
 
-// Deterministic avatar color + initials from a name — same tenant always
-// gets the same color, no state or extra data needed.
-const AVATAR_COLORS = ['#7c3aed', '#2563eb', '#16a34a', '#d97706', '#dc2626', '#0891b2', '#db2777'];
-function initialsAvatar(name) {
-  const clean = (name || '?').trim();
-  const parts = clean.split(/\s+/);
-  const initials = ((parts[0]?.[0] || '') + (parts[1]?.[0] || '')).toUpperCase() || '?';
-  let hash = 0;
-  for (let i = 0; i < clean.length; i++) hash = (hash * 31 + clean.charCodeAt(i)) % AVATAR_COLORS.length;
-  return { initials, color: AVATAR_COLORS[hash] };
-}
-
 // Tracks the light/dark theme Layout.jsx sets via document.documentElement's
 // data-theme attribute — same helper used on Dashboard.jsx and Properties.jsx.
 function useIsDarkMode() {
@@ -183,6 +171,16 @@ export default function Tenants() {
     ? allHouses.filter(h => h.status === 'vacant' || h.id === editing?.house_id)
     : houses;
 
+  // Required deposit for whichever unit is currently selected in the form —
+  // shown as a hint next to "Deposit Paid" so a short deposit is caught at
+  // entry time, instead of silently disappearing into a field with no
+  // context (which is how an 8,000 payment against a 10,000 requirement
+  // went unnoticed before: nothing on screen said 10,000 was expected).
+  const selectedUnitDeposit = allHouses.find(h => h.id === Number(form.house_id))?.deposit;
+  const depositShortfall = selectedUnitDeposit != null && form.deposit_paid !== ''
+    ? Math.max(0, parseFloat(selectedUnitDeposit) - parseFloat(form.deposit_paid || 0))
+    : 0;
+
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
@@ -199,14 +197,7 @@ export default function Tenants() {
       </div>
 
       {/* Filter bar */}
-      <style>{`
-        .tenant-search-input::placeholder { color: ${isDark ? '#ffffff' : '#6b7280'}; opacity: ${isDark ? 0.75 : 1}; }
-        .tn-row { transition: background 0.12s ease; }
-        .tn-row:hover { background: var(--primary-light, #ede9fe) !important; }
-        .tn-skel { background: var(--surface2); border-radius: 6px; animation: tn-pulse 1.3s ease-in-out infinite; }
-        @keyframes tn-pulse { 0%, 100% { opacity: .5; } 50% { opacity: 1; } }
-        @media (prefers-reduced-motion: reduce) { .tn-row, .tn-skel { transition: none; animation: none; } }
-      `}</style>
+      <style>{`.tenant-search-input::placeholder { color: ${isDark ? '#ffffff' : '#6b7280'}; opacity: ${isDark ? 0.75 : 1}; }`}</style>
       <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, padding: 16, marginBottom: 24 }}>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16, alignItems: 'flex-end' }}>
 
@@ -276,54 +267,24 @@ export default function Tenants() {
 
       <div style={{ background: 'var(--surface)', borderRadius: 'var(--radius)', boxShadow: 'var(--shadow)', border: '1px solid var(--border)', overflow: 'hidden' }}>
         {loading ? (
-          <div style={{ padding: 20 }}>
-            {[0, 1, 2, 3, 4].map(i => (
-              <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '12px 0' }}>
-                <div className="tn-skel" style={{ width: 32, height: 32, borderRadius: '50%', flexShrink: 0 }} />
-                <div className="tn-skel" style={{ height: 14, width: `${40 + (i * 7) % 30}%` }} />
-              </div>
-            ))}
-          </div>
+          <div style={{ padding: 40, textAlign: 'center', color: 'var(--muted)' }}>Loading...</div>
         ) : filtered.length === 0 ? (
-          <div style={{ padding: 60, textAlign: 'center', color: 'var(--muted)' }}>
-            <div style={{ fontSize: 32, marginBottom: 10 }}>👥</div>
-            <div style={{ marginBottom: filtersActive ? 14 : 0 }}>No tenants found.</div>
-            {filtersActive && (
-              <button onClick={clearFilters} style={{ padding: '7px 16px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface2)', fontSize: 12, fontWeight: 600, color: 'var(--text)', cursor: 'pointer' }}>
-                Clear filters
-              </button>
-            )}
-          </div>
+          <div style={{ padding: 60, textAlign: 'center', color: 'var(--muted)' }}>No tenants found.</div>
         ) : (
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
               <tr style={{ background: 'var(--surface2)' }}>
-                {['Name', 'Phone', 'Unit', 'Property', 'Move-in', 'Balance', 'Status', ...(canManageRow ? [''] : ['Last Payment'])].map(h => (
+                {['Name', 'Phone', 'Unit', 'Property', 'Move-in', 'Rent Balance', 'Deposit', 'Status', ...(canManageRow ? [''] : ['Last Payment'])].map(h => (
                   <th key={h} style={{ padding: '10px 20px', textAlign: 'left', fontSize: 12, fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {filtered.map((t, i) => (
-                <tr key={t.id} className="tn-row" style={{ borderTop: '1px solid var(--border)', background: i % 2 === 0 ? 'var(--surface)' : 'var(--surface2)' }}>
+                <tr key={t.id} style={{ borderTop: '1px solid var(--border)', background: i % 2 === 0 ? 'var(--surface)' : 'var(--surface2)' }}>
                   <td style={{ padding: '13px 20px' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                      {(() => {
-                        const { initials, color } = initialsAvatar(t.full_name);
-                        return (
-                          <div style={{
-                            width: 32, height: 32, borderRadius: '50%', flexShrink: 0,
-                            background: hexToRgba(color, isDark ? 0.3 : 0.15), color,
-                            display: 'flex', alignItems: 'center', justifyContent: 'center',
-                            fontSize: 12, fontWeight: 700,
-                          }}>{initials}</div>
-                        );
-                      })()}
-                      <div style={{ minWidth: 0 }}>
-                        <div style={{ fontWeight: 600, color: isDark ? 'var(--blue, #2563eb)' : 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.full_name}</div>
-                        <div style={{ fontSize: 12, color: 'var(--muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.email}</div>
-                      </div>
-                    </div>
+                    <div style={{ fontWeight: 600, color: isDark ? 'var(--blue, #2563eb)' : 'var(--text)' }}>{t.full_name}</div>
+                    <div style={{ fontSize: 12, color: 'var(--muted)' }}>{t.email}</div>
                   </td>
                   <td style={{ padding: '13px 20px', color: 'var(--muted)' }}>{t.phone}</td>
                   <td style={{ padding: '13px 20px', fontWeight: 600, color: 'var(--text)' }}>
@@ -337,6 +298,28 @@ export default function Tenants() {
                     <span style={{ fontWeight: 700, color: parseFloat(t.balance) > 0 ? 'var(--red, #dc2626)' : 'var(--green, #16a34a)' }}>
                       KES {parseFloat(t.balance || 0).toLocaleString()}
                     </span>
+                  </td>
+                  <td style={{ padding: '13px 20px', fontSize: 12 }}>
+                    {(() => {
+                      // required_deposit comes from the unit (houses.deposit); deposit_paid
+                      // is what this tenant actually paid — two independent figures that
+                      // used to have no visible relationship to each other at all.
+                      const required = t.required_deposit != null ? parseFloat(t.required_deposit) : null;
+                      const paid     = parseFloat(t.deposit_paid || 0);
+                      if (required == null || required <= 0) {
+                        return <span style={{ color: 'var(--muted)' }}>KES {paid.toLocaleString()}</span>;
+                      }
+                      const short = required - paid;
+                      return short > 0 ? (
+                        <span style={{ fontWeight: 700, color: 'var(--amber, #d97706)' }}>
+                          KES {paid.toLocaleString()} / {required.toLocaleString()} — short {short.toLocaleString()}
+                        </span>
+                      ) : (
+                        <span style={{ color: 'var(--green, #16a34a)' }}>
+                          KES {paid.toLocaleString()} / {required.toLocaleString()}
+                        </span>
+                      );
+                    })()}
                   </td>
                   <td style={{ padding: '13px 20px' }}>
                     <span style={{
@@ -455,7 +438,16 @@ export default function Tenants() {
               </div>
 
               <Field label="Rent Due Day"    value={form.rent_due_day}    onChange={v => setForm(f=>({...f,rent_due_day:v}))}    placeholder="5"     type="number" />
-              <Field label="Deposit Paid"    value={form.deposit_paid}    onChange={v => setForm(f=>({...f,deposit_paid:v}))}    placeholder="15000" type="number" />
+              <div>
+                <Field label="Deposit Paid" value={form.deposit_paid} onChange={v => setForm(f=>({...f,deposit_paid:v}))} placeholder="15000" type="number" />
+                {selectedUnitDeposit != null && (
+                  <div style={{ fontSize: 11, marginTop: 4, color: depositShortfall > 0 ? 'var(--amber, #d97706)' : 'var(--muted)' }}>
+                    {depositShortfall > 0
+                      ? `⚠️ Short by KES ${depositShortfall.toLocaleString()} — this unit requires KES ${parseFloat(selectedUnitDeposit).toLocaleString()}`
+                      : `Required for this unit: KES ${parseFloat(selectedUnitDeposit).toLocaleString()}`}
+                  </div>
+                )}
+              </div>
               <Field label="Emergency Phone" value={form.emergency_phone} onChange={v => setForm(f=>({...f,emergency_phone:v}))} placeholder="0700000000" span />
 
               {modal === 'edit' && (
