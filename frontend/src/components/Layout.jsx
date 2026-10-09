@@ -54,16 +54,23 @@ export default function Layout() {
   const [dismissedLandlordsAt, setDismissedLandlordsAt] = useState(() => {
     try { return parseInt(sessionStorage.getItem('dismissed_pending_landlords') || '0'); } catch { return 0; }
   });
-  const [dismissedUnitsAt, setDismissedUnitsAt] = useState(() => {
-    try { return parseInt(sessionStorage.getItem('dismissed_pending_units') || '0'); } catch { return 0; }
+  // Units toast is dismissed by WHICH units were showing, not just the count —
+  // count-based dismissal broke the moment a brand-new pending unit happened
+  // to bring the total back to the same number as a previously-dismissed
+  // count (e.g. dismiss at "1 pending", unit gets approved, a different unit
+  // goes pending later — count is "1" again, but it's a unit that's never
+  // actually been shown or dismissed).
+  const [pendingUnitIds, setPendingUnitIds] = useState([]);
+  const [dismissedUnitIds, setDismissedUnitIds] = useState(() => {
+    try { return JSON.parse(sessionStorage.getItem('dismissed_pending_unit_ids') || '[]'); } catch { return []; }
   });
   function dismissLandlordsToast() {
     setDismissedLandlordsAt(pendingLandlords);
     try { sessionStorage.setItem('dismissed_pending_landlords', String(pendingLandlords)); } catch {}
   }
   function dismissUnitsToast() {
-    setDismissedUnitsAt(pendingUnits);
-    try { sessionStorage.setItem('dismissed_pending_units', String(pendingUnits)); } catch {}
+    setDismissedUnitIds(pendingUnitIds);
+    try { sessionStorage.setItem('dismissed_pending_unit_ids', JSON.stringify(pendingUnitIds)); } catch {}
   }
   const [bellOpen,   setBellOpen]      = useState(false);
   const { isMobile }                   = useBreakpoint();
