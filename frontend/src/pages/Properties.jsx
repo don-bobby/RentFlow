@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { useLocation } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import API from '../services/api';
 
 function getUser() {
@@ -116,6 +116,7 @@ export default function Properties() {
 
   const user = getUser();
   const location = useLocation();
+  const navigate = useNavigate();
   const plotRefs = useRef({}); // plot.id -> DOM node, for scrollIntoView
   const houseRefs = useRef({}); // house.id -> DOM node, for scrollIntoView
   const [highlightPlotId, setHighlightPlotId] = useState(location.state?.highlightPlotId || null);
@@ -562,14 +563,44 @@ export default function Properties() {
                       <div style={{ fontWeight: 700, color: 'var(--primary)', fontSize: 14 }}>KES {parseFloat(house.rent_amount).toLocaleString()}/mo</div>
                       {house.status === 'occupied' && (() => {
                         const tenant = tenantForHouse(house.id);
-                        if (!tenant) return null;
-                        const balance = parseFloat(tenant.balance || 0);
+
+                        // "Occupied" with no matching active tenant row means the status
+                        // was set without a real tenant behind it (or one was removed
+                        // without freeing the unit) — a data gap, not a rendering bug.
+                        // Say so plainly instead of silently showing nothing, with a
+                        // shortcut to go fix it.
+                        if (!tenant) {
+                          return (
+                            <div style={{ marginTop: 8, padding: '8px 10px', borderRadius: 8, background: 'var(--amber-light, #fef3c7)', border: '1px dashed var(--amber, #d97706)' }}>
+                              <div style={{ fontSize: 11, color: 'var(--amber, #d97706)', fontWeight: 700 }}>⚠️ No tenant record linked</div>
+                              {!isCaretaker && (
+                                <button onClick={() => navigate('/tenants')} style={{ marginTop: 5, padding: '3px 9px', borderRadius: 6, border: 'none', background: 'var(--amber, #d97706)', color: '#fff', fontSize: 11, fontWeight: 600, cursor: 'pointer' }}>
+                                  + Add tenant
+                                </button>
+                              )}
+                            </div>
+                          );
+                        }
+
+                        const balance  = parseFloat(tenant.balance || 0);
+                        const initials = (tenant.full_name || '?').trim().split(/\s+/).filter(Boolean).slice(0, 2).map(w => w[0]).join('').toUpperCase() || '?';
                         return (
-                          <div style={{ marginTop: 6, paddingTop: 6, borderTop: '1px dashed var(--border)' }}>
-                            <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text)' }}>👤 {tenant.full_name}</div>
-                            <div style={{ fontSize: 11, color: 'var(--muted)' }}>📞 {tenant.phone}</div>
+                          <div style={{ marginTop: 8, padding: '8px 10px', borderRadius: 8, background: 'var(--surface2)', border: '1px solid var(--border)' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+                              <div style={{ width: 24, height: 24, borderRadius: '50%', background: 'var(--primary-light, #ede9fe)', color: 'var(--primary, #7c3aed)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, fontWeight: 700, flexShrink: 0 }}>
+                                {initials}
+                              </div>
+                              <div style={{ minWidth: 0, flex: 1 }}>
+                                <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={tenant.full_name}>
+                                  {tenant.full_name}
+                                </div>
+                                <div style={{ fontSize: 11, color: 'var(--muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={tenant.phone}>
+                                  📞 {tenant.phone}
+                                </div>
+                              </div>
+                            </div>
                             <span style={{
-                              display: 'inline-block', marginTop: 4, padding: '2px 8px', borderRadius: 99, fontSize: 10, fontWeight: 700,
+                              display: 'inline-block', marginTop: 6, padding: '2px 8px', borderRadius: 99, fontSize: 10, fontWeight: 700,
                               background: balance > 0 ? 'var(--amber-light, #fef3c7)' : 'var(--green-light, #dcfce7)',
                               color: balance > 0 ? 'var(--amber, #d97706)' : 'var(--green, #16a34a)',
                             }}>
