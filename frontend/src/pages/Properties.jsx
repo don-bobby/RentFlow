@@ -77,6 +77,7 @@ function ActionMenu({ id, openMenu, setOpenMenu, items, size = 'md' }) {
 export default function Properties() {
   const [plots,     setPlots]     = useState([]);
   const [houses,    setHouses]    = useState([]);
+  const [tenants,   setTenants]   = useState([]); // for showing occupant name/phone/balance on occupied unit cards
   const [landlords, setLandlords] = useState([]);
   const [caretakers, setCaretakers] = useState([]);
   const [agents,     setAgents]     = useState([]);
@@ -155,6 +156,14 @@ export default function Properties() {
       }
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
+
+    // Tenant info for occupied-unit cards (name/phone/rent balance) — fetched
+    // separately so a permissions hiccup here (role lacks tenants.view)
+    // doesn't block plots/houses from loading; cards just show no tenant info.
+    try {
+      const tr = await API.get('/tenants');
+      setTenants(Array.isArray(tr.data) ? tr.data : (tr.data.data || []));
+    } catch (e) { setTenants([]); }
   }
 
   // Intentionally run once on mount only — `load` is a plain function
@@ -330,6 +339,12 @@ export default function Properties() {
 
   const allPlotHouses = (plotId) => houses.filter(h => h.plot_id === plotId);
   const plotHouses = (plotId) => allPlotHouses(plotId).filter(h => statusFilter === 'all' || h.status === statusFilter);
+
+  // Active tenant currently occupying a unit, for the occupied-unit card's
+  // name/phone/balance block. Rent balance only — deposit status lives on
+  // the Tenants page, not here, to avoid the "paid up: rent or deposit?"
+  // ambiguity that came up before.
+  const tenantForHouse = (houseId) => tenants.find(t => String(t.house_id) === String(houseId) && t.is_active !== false);
 
   async function approveHouse(houseId) {
     try {
@@ -545,6 +560,24 @@ export default function Properties() {
                       </div>
                       <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 8 }}>{house.house_type}</div>
                       <div style={{ fontWeight: 700, color: 'var(--primary)', fontSize: 14 }}>KES {parseFloat(house.rent_amount).toLocaleString()}/mo</div>
+                      {house.status === 'occupied' && (() => {
+                        const tenant = tenantForHouse(house.id);
+                        if (!tenant) return null;
+                        const balance = parseFloat(tenant.balance || 0);
+                        return (
+                          <div style={{ marginTop: 6, paddingTop: 6, borderTop: '1px dashed var(--border)' }}>
+                            <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text)' }}>👤 {tenant.full_name}</div>
+                            <div style={{ fontSize: 11, color: 'var(--muted)' }}>📞 {tenant.phone}</div>
+                            <span style={{
+                              display: 'inline-block', marginTop: 4, padding: '2px 8px', borderRadius: 99, fontSize: 10, fontWeight: 700,
+                              background: balance > 0 ? 'var(--amber-light, #fef3c7)' : 'var(--green-light, #dcfce7)',
+                              color: balance > 0 ? 'var(--amber, #d97706)' : 'var(--green, #16a34a)',
+                            }}>
+                              {balance > 0 ? `KES ${balance.toLocaleString()} rent owed` : 'Rent Paid Up'}
+                            </span>
+                          </div>
+                        );
+                      })()}
                       {house.rejection_reason && (
                         <div style={{ fontSize: 11, color: 'var(--red, #dc2626)', marginTop: 4, fontStyle: 'italic' }}>"{house.rejection_reason}"</div>
                       )}
