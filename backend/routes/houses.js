@@ -78,7 +78,9 @@ router.get('/:id', auth, async (req, res) => {
 });
 
 // POST create house
-// Admin/landlord: auto-approved. Caretaker: pending approval.
+// Admin/landlord: auto-approved. Agent/caretaker: pending approval — neither
+// one owns the property, they're both acting on a landlord's behalf, so a
+// unit either of them adds needs landlord/admin sign-off before it's live.
 router.post('/', auth, requirePermission('houses.create'), async (req, res) => {
   try {
     const { plot_id, unit_number, house_type, rent_amount, deposit, status, meter_no } = req.body;
@@ -92,8 +94,9 @@ router.post('/', auth, requirePermission('houses.create'), async (req, res) => {
       return res.status(403).json({ error: 'You do not have access to this plot.' });
     }
 
-    // Caretaker-added units require approval
-    const isApproved = req.user.role !== 'caretaker';
+    // Agent- and caretaker-added units require approval; only admin/landlord
+    // (actual owners/operators of the account) auto-approve.
+    const isApproved = !['agent', 'caretaker'].includes(req.user.role);
 
     const result = await pool.query(
       `INSERT INTO houses (plot_id, unit_number, house_type, rent_amount, deposit, status, meter_no, is_approved, status_changed_at)
@@ -113,7 +116,7 @@ router.post('/', auth, requirePermission('houses.create'), async (req, res) => {
         [
           req.user.id,
           `New unit pending approval — ${unit_number}`,
-          `${req.user.name || 'A caretaker'} added unit ${unit_number} on ${plotRow.rows[0]?.name || 'this property'}, awaiting approval before it goes live.`,
+          `${req.user.name || (req.user.role === 'agent' ? 'An agent' : 'A caretaker')} added unit ${unit_number} on ${plotRow.rows[0]?.name || 'this property'}, awaiting approval before it goes live.`,
           plot_id,
         ]
       );
