@@ -44,6 +44,9 @@ export default function Layout() {
   const [unreadMsg,  setUnreadMsg]     = useState(0);
   const [pendingLandlords, setPendingLandlords] = useState(0);
   const [pendingUnits, setPendingUnits] = useState(0);
+  // The oldest pending unit's id/plot, so the toast's "Review" button can
+  // jump straight to that specific unit's card instead of just /properties.
+  const [pendingUnitTarget, setPendingUnitTarget] = useState({ houseId: null, plotId: null });
   // Dismissal is keyed to the COUNT at the moment of dismissal, not just a
   // boolean — so dismissing "3 units pending" hides the toast, but if a
   // 4th shows up later in the same session, it reappears (something new
@@ -106,7 +109,11 @@ export default function Layout() {
   useEffect(() => {
     if (!can('houses.approve')) return;
     async function fetchPendingUnits() {
-      try { const hRes = await API.get('/houses/pending-approval-count'); setPendingUnits(hRes.data.count || 0); } catch {}
+      try {
+        const hRes = await API.get('/houses/pending-approval-count');
+        setPendingUnits(hRes.data.count || 0);
+        setPendingUnitTarget({ houseId: hRes.data.first_house_id || null, plotId: hRes.data.first_plot_id || null });
+      } catch {}
     }
     fetchPendingUnits();
     const id = setInterval(fetchPendingUnits, 30000);
@@ -674,7 +681,7 @@ export default function Layout() {
               <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)', marginBottom: 6 }}>
                 {pendingUnits} unit{pendingUnits > 1 ? 's' : ''} waiting for approval
               </div>
-              <button onClick={() => { dismissUnitsToast(); navigate('/properties'); }} style={{
+              <button onClick={() => { dismissUnitsToast(); navigate('/properties', { state: { highlightHouseId: pendingUnitTarget.houseId, highlightPlotId: pendingUnitTarget.plotId } }); }} style={{
                 padding: '5px 12px', borderRadius: 7, border: 'none',
                 background: 'var(--amber, #d97706)', color: '#fff',
                 fontWeight: 700, fontSize: 12, cursor: 'pointer',

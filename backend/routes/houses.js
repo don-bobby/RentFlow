@@ -38,16 +38,27 @@ router.get('/pending-approval-count', auth, async (req, res) => {
     const visible = await getVisiblePlotIds(req.user);
     let result;
     if (visible === 'ALL') {
-      result = await pool.query(`SELECT plot_id FROM houses WHERE is_approved = false AND plot_id IS NOT NULL`);
+      result = await pool.query(`SELECT id, plot_id FROM houses WHERE is_approved = false AND plot_id IS NOT NULL ORDER BY id ASC`);
     } else if (visible.length === 0) {
-      return res.json({ success: true, count: 0, plot_ids: [] });
+      return res.json({ success: true, count: 0, plot_ids: [], house_ids: [], first_house_id: null, first_plot_id: null });
     } else {
-      result = await pool.query(`SELECT plot_id FROM houses WHERE is_approved = false AND plot_id = ANY($1)`, [visible]);
+      result = await pool.query(`SELECT id, plot_id FROM houses WHERE is_approved = false AND plot_id = ANY($1) ORDER BY id ASC`, [visible]);
     }
     // count = total pending UNITS (unchanged meaning); plot_ids = the
-    // distinct PLOTS they're on, so "Review" can jump straight to one.
+    // distinct PLOTS they're on. house_ids + first_house_id/first_plot_id
+    // (oldest pending unit, i.e. the one that's been waiting longest) let
+    // "Review" jump straight to that specific unit's card instead of just
+    // landing on the Properties page in general.
     const plot_ids = [...new Set(result.rows.map(r => r.plot_id))];
-    res.json({ success: true, count: result.rows.length, plot_ids });
+    const house_ids = result.rows.map(r => r.id);
+    res.json({
+      success: true,
+      count: result.rows.length,
+      plot_ids,
+      house_ids,
+      first_house_id: house_ids[0] || null,
+      first_plot_id: result.rows[0]?.plot_id || null,
+    });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 

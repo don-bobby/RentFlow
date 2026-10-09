@@ -116,7 +116,9 @@ export default function Properties() {
   const user = getUser();
   const location = useLocation();
   const plotRefs = useRef({}); // plot.id -> DOM node, for scrollIntoView
+  const houseRefs = useRef({}); // house.id -> DOM node, for scrollIntoView
   const [highlightPlotId, setHighlightPlotId] = useState(location.state?.highlightPlotId || null);
+  const [highlightHouseId, setHighlightHouseId] = useState(location.state?.highlightHouseId || null);
   const isAdmin    = user?.role === 'admin';
   const isAgent    = user?.role === 'agent';
   const isCaretaker = user?.role === 'caretaker';
@@ -171,6 +173,17 @@ export default function Properties() {
     const t = setTimeout(() => setHighlightPlotId(null), 4000);
     return () => clearTimeout(t);
   }, [highlightPlotId, plots]);
+
+  // Same idea, but for a specific UNIT — this is what the "Review" button on
+  // the floating pending-approval toast now uses, so it drops the admin right
+  // onto the unit that actually needs approving instead of just the page.
+  useEffect(() => {
+    if (!highlightHouseId || houses.length === 0) return;
+    const node = houseRefs.current[highlightHouseId];
+    if (node) node.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    const t = setTimeout(() => setHighlightHouseId(null), 4000);
+    return () => clearTimeout(t);
+  }, [highlightHouseId, houses]);
 
   function openAddPlot() {
     setEditing(null);
@@ -373,10 +386,6 @@ export default function Properties() {
 
   return (
     <div>
-      <style>{`
-        .pp-unit-card:hover { box-shadow: 0 4px 14px rgba(0,0,0,0.12); transform: translateY(-1px); }
-        @media (prefers-reduced-motion: reduce) { .pp-unit-card { transition: none !important; } }
-      `}</style>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
         <div>
           <h1 style={{ fontFamily: 'Space Grotesk', fontSize: 26, fontWeight: 700, marginBottom: 4, color: 'var(--text)' }}>Properties</h1>
@@ -518,7 +527,13 @@ export default function Properties() {
               ) : (
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 12, padding: 16 }}>
                   {plotHouses(plot.id).map(house => (
-                    <div key={house.id} className="pp-unit-card" style={{ padding: '14px 16px', borderRadius: 10, border: '1px solid var(--border)', background: house.status === 'vacant' ? 'var(--surface2)' : house.status === 'maintenance' ? hexToRgba('#dc2626', 0.15) : hexToRgba('#39FF14', 0.18), transition: 'box-shadow 0.15s ease, transform 0.15s ease' }}>
+                    <div key={house.id} ref={el => { houseRefs.current[house.id] = el; }} style={{
+                      padding: '14px 16px', borderRadius: 10,
+                      border: String(house.id) === String(highlightHouseId) ? '1.5px solid var(--amber, #d97706)' : '1px solid var(--border)',
+                      boxShadow: String(house.id) === String(highlightHouseId) ? '0 0 0 3px var(--amber, #d97706), 0 4px 20px rgba(217,119,6,0.35)' : 'none',
+                      background: house.status === 'vacant' ? 'var(--surface2)' : house.status === 'maintenance' ? hexToRgba('#dc2626', 0.15) : hexToRgba('#39FF14', 0.18),
+                      transition: 'box-shadow 0.4s ease, border-color 0.4s ease',
+                    }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 4 }}>
                         <div style={{ fontWeight: 700, fontSize: 15, color: 'var(--text)' }}>Unit {house.unit_number}</div>
                         {!isCaretaker && (
@@ -530,23 +545,6 @@ export default function Properties() {
                       </div>
                       <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 8 }}>{house.house_type}</div>
                       <div style={{ fontWeight: 700, color: 'var(--primary)', fontSize: 14 }}>KES {parseFloat(house.rent_amount).toLocaleString()}/mo</div>
-                      {house.status === 'occupied' && house.tenant_name && (
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 8, padding: '6px 8px', background: 'var(--surface)', borderRadius: 8, border: '1px solid var(--border)' }}>
-                          <span style={{ fontSize: 14 }}>👤</span>
-                          <div style={{ minWidth: 0, flex: 1 }}>
-                            <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{house.tenant_name}</div>
-                            <div style={{ fontSize: 11, color: 'var(--muted)' }}>{house.tenant_phone || 'No phone on file'}</div>
-                          </div>
-                          <span style={{
-                            fontSize: 11, fontWeight: 700, flexShrink: 0,
-                            color: parseFloat(house.tenant_balance) > 0 ? 'var(--red, #dc2626)' : 'var(--green, #16a34a)',
-                          }}>
-                            {parseFloat(house.tenant_balance) > 0
-                              ? `KES ${parseFloat(house.tenant_balance).toLocaleString()} owed`
-                              : 'Paid up'}
-                          </span>
-                        </div>
-                      )}
                       {house.rejection_reason && (
                         <div style={{ fontSize: 11, color: 'var(--red, #dc2626)', marginTop: 4, fontStyle: 'italic' }}>"{house.rejection_reason}"</div>
                       )}
