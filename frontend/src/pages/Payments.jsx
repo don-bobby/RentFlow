@@ -444,13 +444,20 @@ export default function Payments() {
               <div style={{ background: isDark ? hexToRgba('#dc2626', 0.15) : 'var(--red-light)', border: '1px solid var(--red, #dc2626)', borderRadius: 10, padding: '12px 14px', marginBottom: 14, fontSize: 13 }}>
                 <div style={{ fontWeight: 700, color: 'var(--red, #dc2626)', marginBottom: 6 }}>⚠️ Outstanding: KES {arrears.total_arrears.toLocaleString()}</div>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                  {arrears.deposit_owed > 0 && (
+                    <span style={{ background: isDark ? 'var(--surface2)' : 'white', border: '1px solid var(--red, #dc2626)', borderRadius: 6, padding: '2px 8px', fontSize: 11, fontWeight: 700, color: 'var(--red, #dc2626)' }}>
+                      🔒 Deposit shortfall — KES {arrears.deposit_owed.toLocaleString()}
+                    </span>
+                  )}
                   {arrears.unpaid_months?.map(m => (
                     <span key={`${m.year}-${m.month}`} style={{ background: isDark ? 'var(--surface2)' : 'white', border: '1px solid var(--red, #dc2626)', borderRadius: 6, padding: '2px 8px', fontSize: 11, fontWeight: 600, color: 'var(--red, #dc2626)' }}>
                       {monthName(m.year, m.month)} — KES {m.balance.toLocaleString()}
                     </span>
                   ))}
                 </div>
-                <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 6 }}>Payment will allocate to oldest month first.</div>
+                <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 6 }}>
+                  {arrears.deposit_owed > 0 ? 'Payment will clear the deposit shortfall first, then the oldest unpaid month.' : 'Payment will allocate to oldest month first.'}
+                </div>
               </div>
             )}
             {arrears && !arrearsLoading && arrears.total_arrears === 0 && (
@@ -607,6 +614,12 @@ export default function Payments() {
                         ⚠️ Total Arrears: KES {arrears.total_arrears.toLocaleString()}
                       </div>
                       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                        {arrears.deposit_owed > 0 && (
+                          <div style={{ background: isDark ? 'var(--surface2)' : 'white', border: '1px solid var(--red, #dc2626)', borderRadius: 8, padding: '4px 10px', fontSize: 12 }}>
+                            <span style={{ fontWeight: 700, color: 'var(--red, #dc2626)' }}>🔒 Deposit shortfall</span>
+                            <span style={{ color: 'var(--muted)', marginLeft: 4 }}>· KES {arrears.deposit_owed.toLocaleString()} owed</span>
+                          </div>
+                        )}
                         {arrears.unpaid_months?.map(m => (
                           <div key={`${m.year}-${m.month}`} style={{ background: isDark ? 'var(--surface2)' : 'white', border: '1px solid var(--red, #dc2626)', borderRadius: 8, padding: '4px 10px', fontSize: 12 }}>
                             <span style={{ fontWeight: 600, color: 'var(--red, #dc2626)' }}>{monthName(m.year, m.month)}</span>
@@ -614,7 +627,9 @@ export default function Payments() {
                           </div>
                         ))}
                       </div>
-                      <div style={{ fontSize: 12, color: 'var(--red, #dc2626)', marginTop: 8 }}>Payment will be applied to oldest unpaid month first.</div>
+                      <div style={{ fontSize: 12, color: 'var(--red, #dc2626)', marginTop: 8 }}>
+                        {arrears.deposit_owed > 0 ? 'Payment will clear the deposit shortfall first, then the oldest unpaid month.' : 'Payment will be applied to oldest unpaid month first.'}
+                      </div>
                     </>
                   ) : (
                     <div style={{ fontWeight: 600, color: 'var(--green, #16a34a)', fontSize: 14 }}>✅ No arrears — tenant is up to date.</div>

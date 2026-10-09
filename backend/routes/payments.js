@@ -48,6 +48,76 @@ router.get('/:id', staffAuth, requirePermission('payments.view'), async (req, re
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// GET /api/payments/arrears/:tenantId — everything currently owed by a
+// tenant: unpaid rent months plus any deposit shortfall, so the "Outstanding"
+// box shown before recording a payment (and before an STK push) is actually
+// accurate. This route never existed before, so that box has always silently
+// shown nothing (the frontend swallows the failed request and just hides it).
+router.get('/arrears/:tenantId', staffAuth, requirePermission('payments.view'), async (req, res) => {
+  try {
+    const tenantRes = await pool.query(
+      `SELECT t.id, t.house_id, t.move_in_date, t.deposit_paid,
+              h.rent_amount, h.plot_id, h.deposit AS required_deposit
+       FROM tenants t LEFT JOIN houses h ON t.house_id = h.id
+       WHERE t.id = $1`,
+      [req.params.tenantId]
+    );
+    const tenant = tenantRes.rows[0];
+    if (!tenant) return res.status(404).json({ error: 'Tenant not found' });
+
+    if (req.user.role !== 'admin' && req.user.role !== 'super_admin') {
+      const visible = await getVisiblePlotIds(req.user);
+      const allowed = visible === 'ALL' || (tenant.plot_id != null && visible.includes(tenant.plot_id));
+      if (!allowed) return res.status(403).json({ error: 'Access denied' });
+    }
+
+    const monthNames = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+    const unpaid_months = [];
+    if (tenant.rent_amount && tenant.move_in_date) {
+      const paidRes = await pool.query(
+        `SELECT COALESCE(for_year, EXTRACT(YEAR FROM payment_date)::int) AS year,
+                COALESCE(for_month, EXTRACT(MONTH FROM payment_date)::int) AS month,
+                COALESCE(SUM(amount_allocated), SUM(amount)) AS total_paid
+         FROM payments WHERE tenant_id=$1 AND status != 'pending' GROUP BY year, month`,
+        [req.params.tenantId]
+      );
+      const paidMap = {};
+      for (const p of paidRes.rows) paidMap[`${p.year}-${p.month}`] = parseFloat(p.total_paid);
+
+      const moveIn = new Date(tenant.move_in_date);
+      let y = moveIn.getDate() === 1 ? moveIn.getFullYear() : (moveIn.getMonth() === 11 ? moveIn.getFullYear() + 1 : moveIn.getFullYear());
+      let m = moveIn.getDate() === 1 ? moveIn.getMonth() + 1 : (moveIn.getMonth() === 11 ? 1 : moveIn.getMonth() + 2);
+      const now = new Date();
+      while (y < now.getFullYear() || (y === now.getFullYear() && m <= now.getMonth() + 1)) {
+        const paid = paidMap[`${y}-${m}`] || 0;
+        const balance = parseFloat(tenant.rent_amount) - paid;
+        if (balance > 0) {
+          unpaid_months.push({
+            year: y, month: m, label: `${monthNames[m - 1]} ${y}`,
+            rent: parseFloat(tenant.rent_amount), balance, partial: paid > 0,
+          });
+        }
+        m++; if (m > 12) { m = 1; y++; }
+      }
+    }
+
+    const deposit_owed = tenant.required_deposit
+      ? Math.max(0, parseFloat(tenant.required_deposit) - parseFloat(tenant.deposit_paid || 0))
+      : 0;
+    const rent_arrears = unpaid_months.reduce((sum, mth) => sum + mth.balance, 0);
+
+    res.json({
+      success: true,
+      data: {
+        total_arrears: rent_arrears + deposit_owed,
+        rent_arrears,
+        deposit_owed,
+        unpaid_months,
+      },
+    });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // POST record payment
 router.post('/', staffAuth, requirePermission('payments.record_manual'), async (req, res) => {
   const { tenant_id, unit_id, amount, payment_date, payment_method, reference_number, notes } = req.body;
@@ -81,6 +151,40 @@ router.post('/', staffAuth, requirePermission('payments.record_manual'), async (
 
     let rentAllocated = 0, depositCollected = 0, advanceAllocated = 0;
     if (tenant?.rent_amount && tenant?.move_in_date) {
+      let remaining = parseFloat(amount);
+
+      // A deposit shortfall is cleared FIRST, before any of this payment
+      // goes toward rent. A tenant still short on their deposit is more
+      // exposed than one merely behind on a month's rent, so a payment is no
+      // longer allowed to "jump past" an unpaid deposit to catch up rent
+      // instead — it used to be collected only out of whatever was left
+      // after rent was fully allocated. This mirrors the exact pattern
+      // tenants.js already uses when a deposit is recorded at tenant
+      // creation — a deposit_transactions row AND a direct update to
+      // tenants.deposit_paid, since nothing keeps those two in sync
+      // automatically. Only the portion still actually owed on the deposit
+      // is taken; nothing is ever over-collected.
+      if (tenant.required_deposit) {
+        const depositOwed = parseFloat(tenant.required_deposit) - parseFloat(tenant.deposit_paid || 0);
+        if (depositOwed > 0 && remaining > 0) {
+          depositCollected = Math.min(remaining, depositOwed);
+          await pool.query(
+            `INSERT INTO deposit_transactions (tenant_id, house_id, type, amount, notes, created_by)
+             VALUES ($1, $2, 'collected', $3, $4, $5)`,
+            [tenant_id, houseId, depositCollected, `Collected alongside a rent payment on ${payment_date}`, req.user.id]
+          );
+          const depRes = await pool.query(
+            `UPDATE tenants SET deposit_paid = deposit_paid + $1 WHERE id = $2 RETURNING deposit_paid`,
+            [depositCollected, tenant_id]
+          );
+          await logAudit({
+            user: req.user, action: 'deposit.collected', entityType: 'deposit_transaction', entityId: null,
+            changes: { amount: { to: depositCollected }, deposit_paid: { to: parseFloat(depRes.rows[0].deposit_paid) }, tenant: { to: tenant.full_name } },
+          });
+          remaining -= depositCollected;
+        }
+      }
+
       const paidRes = await pool.query(
         `SELECT COALESCE(for_year, EXTRACT(YEAR FROM payment_date)::int) AS year,
                 COALESCE(for_month, EXTRACT(MONTH FROM payment_date)::int) AS month,
@@ -102,7 +206,6 @@ router.post('/', staffAuth, requirePermission('payments.record_manual'), async (
         m++; if (m > 12) { m = 1; y++; }
       }
 
-      let remaining = parseFloat(amount);
       for (const month of unpaid) {
         if (remaining <= 0) break;
         const allocate = Math.min(remaining, month.balance);
@@ -116,36 +219,7 @@ router.post('/', staffAuth, requirePermission('payments.record_manual'), async (
         rentAllocated += allocate;
       }
 
-      // A payment exceeding the currently-due rent isn't necessarily paying
-      // rent in advance — it's very often covering the tenant's deposit
-      // instead (e.g. 2x rent on move-in: one month's rent + the deposit).
-      // This mirrors the exact pattern tenants.js already uses when a
-      // deposit is recorded at tenant creation — a deposit_transactions row
-      // AND a direct update to tenants.deposit_paid, since nothing keeps
-      // those two in sync automatically. Only the portion still actually
-      // owed on the deposit is taken; nothing is ever over-collected.
-      if (remaining > 0 && tenant.required_deposit) {
-        const depositOwed = parseFloat(tenant.required_deposit) - parseFloat(tenant.deposit_paid || 0);
-        if (depositOwed > 0) {
-          depositCollected = Math.min(remaining, depositOwed);
-          await pool.query(
-            `INSERT INTO deposit_transactions (tenant_id, house_id, type, amount, notes, created_by)
-             VALUES ($1, $2, 'collected', $3, $4, $5)`,
-            [tenant_id, houseId, depositCollected, `Collected alongside a rent payment on ${payment_date}`, req.user.id]
-          );
-          const depRes = await pool.query(
-            `UPDATE tenants SET deposit_paid = deposit_paid + $1 WHERE id = $2 RETURNING deposit_paid`,
-            [depositCollected, tenant_id]
-          );
-          await logAudit({
-            user: req.user, action: 'deposit.collected', entityType: 'deposit_transaction', entityId: null,
-            changes: { amount: { to: depositCollected }, deposit_paid: { to: parseFloat(depRes.rows[0].deposit_paid) }, tenant: { to: tenant.full_name } },
-          });
-          remaining -= depositCollected;
-        }
-      }
-
-      // Only once rent AND the deposit are both fully covered does any
+      // Only once the deposit AND rent are both fully covered does any
       // further leftover count as rent paid in advance. y/m already point
       // to the month right after the last one in `unpaid` (the while loop
       // above always leaves them there) — capped at 24 months as a sanity
