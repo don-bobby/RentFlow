@@ -835,7 +835,15 @@ function NavItem({ to, icon, label, collapsed, unread = 0, onClick }) {
         paddingLeft: isActive ? '9px' : '12px',
         textDecoration: 'none', position: 'relative',
       })}>
-      <span style={{ fontSize: 18, flexShrink: 0 }}>{icon}</span>
+      <span style={{ fontSize: 18, flexShrink: 0, position: 'relative' }}>
+        {icon}
+        {/* Collapsed sidebar has no room for the number pill below, but
+            something pending still needs to be visible — a small dot on
+            the icon itself, rather than the indicator vanishing entirely. */}
+        {collapsed && unread > 0 && (
+          <span style={{ position: 'absolute', top: -2, right: -4, width: 8, height: 8, borderRadius: '50%', background: '#ef4444', border: '1.5px solid #0f1117' }} />
+        )}
+      </span>
       {!collapsed && <span style={{ flex: 1 }}>{label}</span>}
       {!collapsed && unread > 0 && (
         <span style={{ background: '#ef4444', color: '#fff', borderRadius: 99, fontSize: 10, fontWeight: 700, padding: '1px 6px' }}>{unread}</span>
