@@ -119,6 +119,7 @@ export default function Layout() {
       try {
         const hRes = await API.get('/houses/pending-approval-count');
         setPendingUnits(hRes.data.count || 0);
+        setPendingUnitIds(hRes.data.house_ids || []);
         setPendingUnitTarget({ houseId: hRes.data.first_house_id || null, plotId: hRes.data.first_plot_id || null });
       } catch {}
     }
@@ -675,7 +676,7 @@ export default function Layout() {
             }}>×</button>
           </div>
         )}
-        {pendingUnits > 0 && pendingUnits !== dismissedUnitsAt && (
+        {pendingUnits > 0 && pendingUnitIds.some(id => !dismissedUnitIds.includes(id)) && (
           <div style={{
             display: 'flex', alignItems: 'flex-start', gap: 10, padding: '14px 16px',
             background: 'var(--surface)', border: '1px solid var(--amber, #d97706)',
