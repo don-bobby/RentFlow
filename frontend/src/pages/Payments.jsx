@@ -587,6 +587,17 @@ export default function Payments() {
                 </select>
               </div>
 
+              {(() => {
+                const selectedTenant = tenants.find(t => String(t.id) === String(form.tenant_id));
+                if (!selectedTenant) return null;
+                return (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'var(--surface2)', border: '1px solid var(--border)', borderRadius: 8, padding: '8px 12px' }}>
+                    <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.4px' }}>Monthly Rent</span>
+                    <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--primary, #7c3aed)' }}>KES {parseFloat(selectedTenant.rent_amount || 0).toLocaleString()}</span>
+                  </div>
+                );
+              })()}
+
               {arrearsLoading && <div style={{ fontSize: 13, color: 'var(--muted)' }}>Loading arrears...</div>}
               {arrears && !arrearsLoading && (
                 <div style={{ background: arrears.total_arrears > 0 ? (isDark ? hexToRgba('#dc2626', 0.15) : 'var(--red-light)') : (isDark ? hexToRgba('#16a34a', 0.15) : 'var(--green-light)'), border: `1px solid ${arrears.total_arrears > 0 ? 'var(--red, #dc2626)' : 'var(--green, #16a34a)'}`, borderRadius: 10, padding: 14 }}>
@@ -611,7 +622,27 @@ export default function Payments() {
                 </div>
               )}
 
-              <Field label="Amount (KES)"        value={form.amount}           onChange={v => setForm(f=>({...f,amount:v}))}           placeholder="15000" type="number" />
+              <div>
+                <Field label="Amount (KES)" value={form.amount} onChange={v => setForm(f=>({...f,amount:v}))} placeholder="15000" type="number" />
+                {(() => {
+                  const selectedTenant = tenants.find(t => String(t.id) === String(form.tenant_id));
+                  if (!selectedTenant?.rent_amount) return null;
+                  return (
+                    <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+                      <button type="button" onClick={() => setForm(f => ({ ...f, amount: String(selectedTenant.rent_amount) }))}
+                        style={{ padding: '6px 12px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--surface2)', fontSize: 12, fontWeight: 600, cursor: 'pointer', color: 'var(--muted)' }}>
+                        One Month (KES {parseFloat(selectedTenant.rent_amount).toLocaleString()})
+                      </button>
+                      {arrears && arrears.total_arrears > 0 && (
+                        <button type="button" onClick={() => setForm(f => ({ ...f, amount: String(arrears.total_arrears) }))}
+                          style={{ padding: '6px 12px', borderRadius: 6, border: '1px solid var(--red, #dc2626)', background: isDark ? hexToRgba('#dc2626', 0.18) : 'var(--red-light)', fontSize: 12, fontWeight: 600, cursor: 'pointer', color: 'var(--red, #dc2626)' }}>
+                          Clear All (KES {arrears.total_arrears.toLocaleString()})
+                        </button>
+                      )}
+                    </div>
+                  );
+                })()}
+              </div>
               <Field label="Payment Date"         value={form.payment_date}     onChange={v => setForm(f=>({...f,payment_date:v}))}     type="date" />
               <div>
                 <label style={labelStyle}>Method</label>
