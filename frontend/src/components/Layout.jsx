@@ -41,12 +41,10 @@ export default function Layout() {
   const photoKey     = `userPhoto_${user?.id}`;
   const [photo,      setPhoto]         = useState(localStorage.getItem(`userPhoto_${user?.id}`) || null);
   const [clock,      setClock]         = useState('');
-  const [unreadMsg,  setUnreadMsg]     = useState(0);
+  const [unreadMsg,     setUnreadMsg]     = useState(0);
+  const [unreadNotices, setUnreadNotices] = useState(0);
   const [pendingLandlords, setPendingLandlords] = useState(0);
   const [pendingUnits, setPendingUnits] = useState(0);
-  // The oldest pending unit's id/plot, so the toast's "Review" button can
-  // jump straight to that specific unit's card instead of just /properties.
-  const [pendingUnitTarget, setPendingUnitTarget] = useState({ houseId: null, plotId: null });
   // Dismissal is keyed to the COUNT at the moment of dismissal, not just a
   // boolean — so dismissing "3 units pending" hides the toast, but if a
   // 4th shows up later in the same session, it reappears (something new
@@ -54,23 +52,16 @@ export default function Layout() {
   const [dismissedLandlordsAt, setDismissedLandlordsAt] = useState(() => {
     try { return parseInt(sessionStorage.getItem('dismissed_pending_landlords') || '0'); } catch { return 0; }
   });
-  // Units toast is dismissed by WHICH units were showing, not just the count —
-  // count-based dismissal broke the moment a brand-new pending unit happened
-  // to bring the total back to the same number as a previously-dismissed
-  // count (e.g. dismiss at "1 pending", unit gets approved, a different unit
-  // goes pending later — count is "1" again, but it's a unit that's never
-  // actually been shown or dismissed).
-  const [pendingUnitIds, setPendingUnitIds] = useState([]);
-  const [dismissedUnitIds, setDismissedUnitIds] = useState(() => {
-    try { return JSON.parse(sessionStorage.getItem('dismissed_pending_unit_ids') || '[]'); } catch { return []; }
+  const [dismissedUnitsAt, setDismissedUnitsAt] = useState(() => {
+    try { return parseInt(sessionStorage.getItem('dismissed_pending_units') || '0'); } catch { return 0; }
   });
   function dismissLandlordsToast() {
     setDismissedLandlordsAt(pendingLandlords);
     try { sessionStorage.setItem('dismissed_pending_landlords', String(pendingLandlords)); } catch {}
   }
   function dismissUnitsToast() {
-    setDismissedUnitIds(pendingUnitIds);
-    try { sessionStorage.setItem('dismissed_pending_unit_ids', JSON.stringify(pendingUnitIds)); } catch {}
+    setDismissedUnitsAt(pendingUnits);
+    try { sessionStorage.setItem('dismissed_pending_units', String(pendingUnits)); } catch {}
   }
   const [bellOpen,   setBellOpen]      = useState(false);
   const { isMobile }                   = useBreakpoint();
@@ -95,8 +86,17 @@ export default function Layout() {
   }, []);
 
   useEffect(() => {
+    // Previously this called /notices/unread-count, which only ever
+    // returns the MESSAGES count — notices were never fetched at all, so
+    // the bell (meant for notices, per the comment on topbarNav below)
+    // just silently mirrored the Messages badge and could never show a
+    // real notices alert for anyone, on any role.
     async function fetchUnread() {
-      try { const res = await API.get('/notices/unread-count'); setUnreadMsg(res.data.count || 0); } catch {}
+      try {
+        const res = await API.get('/notices/unread-summary');
+        setUnreadMsg(res.data.messages || 0);
+        setUnreadNotices(res.data.notices || 0);
+      } catch {}
     }
     fetchUnread();
     const id = setInterval(fetchUnread, 30000);
@@ -116,12 +116,7 @@ export default function Layout() {
   useEffect(() => {
     if (!can('houses.approve')) return;
     async function fetchPendingUnits() {
-      try {
-        const hRes = await API.get('/houses/pending-approval-count');
-        setPendingUnits(hRes.data.count || 0);
-        setPendingUnitIds(hRes.data.house_ids || []);
-        setPendingUnitTarget({ houseId: hRes.data.first_house_id || null, plotId: hRes.data.first_plot_id || null });
-      } catch {}
+      try { const hRes = await API.get('/houses/pending-approval-count'); setPendingUnits(hRes.data.count || 0); } catch {}
     }
     fetchPendingUnits();
     const id = setInterval(fetchPendingUnits, 30000);
@@ -435,18 +430,20 @@ export default function Layout() {
               )
             ))}
 
-            {/* Bell */}
+            {/* Bell — this is the notices-specific alert (Messages already
+                has its own icon + badge above), so it's driven by
+                unreadNotices, not unreadMsg. */}
             <div style={{ position: 'relative' }}>
               <button onClick={() => setBellOpen(b => !b)} style={{ position: 'relative', width: 38, height: 38, borderRadius: '50%', border: '1px solid var(--border)', background: 'var(--surface2)', cursor: 'pointer', fontSize: 18, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                 🔔
-                {unreadMsg > 0 && <span style={{ position: 'absolute', top: -2, right: -2, background: 'var(--red)', color: '#fff', borderRadius: 99, fontSize: 10, fontWeight: 700, padding: '1px 5px', minWidth: 16, textAlign: 'center' }}>{unreadMsg}</span>}
+                {unreadNotices > 0 && <span style={{ position: 'absolute', top: -2, right: -2, background: 'var(--red)', color: '#fff', borderRadius: 99, fontSize: 10, fontWeight: 700, padding: '1px 5px', minWidth: 16, textAlign: 'center' }}>{unreadNotices}</span>}
               </button>
               {bellOpen && (
                 <div style={{ position: 'absolute', right: 0, top: 46, width: 260, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12, boxShadow: 'var(--shadow-lg)', zIndex: 200 }}>
                   <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)', fontWeight: 700, fontSize: 14 }}>Notifications</div>
                   <div style={{ padding: 16 }}>
-                    {unreadMsg > 0
-                      ? <div onClick={() => { setBellOpen(false); navigate('/messages'); }} style={{ cursor: 'pointer', padding: '10px 12px', borderRadius: 8, background: 'var(--primary-light)', color: 'var(--primary)', fontWeight: 600, fontSize: 13 }}>💬 {unreadMsg} unread message{unreadMsg !== 1 ? 's' : ''}</div>
+                    {unreadNotices > 0
+                      ? <div onClick={() => { setBellOpen(false); navigate('/notices'); }} style={{ cursor: 'pointer', padding: '10px 12px', borderRadius: 8, background: 'var(--primary-light)', color: 'var(--primary)', fontWeight: 600, fontSize: 13 }}>📢 {unreadNotices} unread notice{unreadNotices !== 1 ? 's' : ''}</div>
                       : <div style={{ color: 'var(--muted)', fontSize: 13, textAlign: 'center' }}>No new notifications</div>}
                   </div>
                 </div>
@@ -664,7 +661,7 @@ export default function Layout() {
               <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)', marginBottom: 6 }}>
                 {pendingLandlords} landlord{pendingLandlords > 1 ? 's' : ''} waiting for approval
               </div>
-              <button onClick={() => { dismissLandlordsToast(); navigate('/users?filter=pending'); }} style={{
+              <button onClick={() => navigate('/users?filter=pending')} style={{
                 padding: '5px 12px', borderRadius: 7, border: 'none',
                 background: 'var(--amber, #d97706)', color: '#fff',
                 fontWeight: 700, fontSize: 12, cursor: 'pointer',
@@ -676,7 +673,7 @@ export default function Layout() {
             }}>×</button>
           </div>
         )}
-        {pendingUnits > 0 && pendingUnitIds.some(id => !dismissedUnitIds.includes(id)) && (
+        {pendingUnits > 0 && pendingUnits !== dismissedUnitsAt && (
           <div style={{
             display: 'flex', alignItems: 'flex-start', gap: 10, padding: '14px 16px',
             background: 'var(--surface)', border: '1px solid var(--amber, #d97706)',
@@ -689,7 +686,7 @@ export default function Layout() {
               <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)', marginBottom: 6 }}>
                 {pendingUnits} unit{pendingUnits > 1 ? 's' : ''} waiting for approval
               </div>
-              <button onClick={() => { dismissUnitsToast(); navigate('/properties', { state: { highlightHouseId: pendingUnitTarget.houseId, highlightPlotId: pendingUnitTarget.plotId } }); }} style={{
+              <button onClick={() => navigate('/properties')} style={{
                 padding: '5px 12px', borderRadius: 7, border: 'none',
                 background: 'var(--amber, #d97706)', color: '#fff',
                 fontWeight: 700, fontSize: 12, cursor: 'pointer',
@@ -835,15 +832,7 @@ function NavItem({ to, icon, label, collapsed, unread = 0, onClick }) {
         paddingLeft: isActive ? '9px' : '12px',
         textDecoration: 'none', position: 'relative',
       })}>
-      <span style={{ fontSize: 18, flexShrink: 0, position: 'relative' }}>
-        {icon}
-        {/* Collapsed sidebar has no room for the number pill below, but
-            something pending still needs to be visible — a small dot on
-            the icon itself, rather than the indicator vanishing entirely. */}
-        {collapsed && unread > 0 && (
-          <span style={{ position: 'absolute', top: -2, right: -4, width: 8, height: 8, borderRadius: '50%', background: '#ef4444', border: '1.5px solid #0f1117' }} />
-        )}
-      </span>
+      <span style={{ fontSize: 18, flexShrink: 0 }}>{icon}</span>
       {!collapsed && <span style={{ flex: 1 }}>{label}</span>}
       {!collapsed && unread > 0 && (
         <span style={{ background: '#ef4444', color: '#fff', borderRadius: 99, fontSize: 10, fontWeight: 700, padding: '1px 6px' }}>{unread}</span>
