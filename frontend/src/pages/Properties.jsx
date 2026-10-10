@@ -521,13 +521,22 @@ export default function Properties() {
                   <span style={{ background: isDark ? 'rgba(124,58,237,0.25)' : 'var(--primary-light)', color: isDark ? '#c4b5fd' : 'var(--primary)', padding: '4px 12px', borderRadius: 99, fontSize: 12, fontWeight: 600 }}>
                     {allPlotHouses(plot.id).length} units
                   </span>
-                  <ActionMenu id={`plot-${plot.id}`} openMenu={openMenu} setOpenMenu={setOpenMenu} items={[
-                    { label: '+ Add Unit', onClick: () => openAddHouse(plot.id) },
-                    ...(!isCaretaker ? [
-                      { label: 'Edit', onClick: () => openEditPlot(plot) },
-                      { label: 'Delete', onClick: () => handleDeletePlot(plot.id), danger: true },
-                    ] : []),
-                  ]} />
+                  {/* Gated on actual permissions, not role — a role-based check
+                      (e.g. !isCaretaker) still shows this menu to someone like
+                      landlord_with_agent, who the backend will reject on click.
+                      Showing an action a click would just 403 on is worse than
+                      not showing it; the menu itself disappears when nothing
+                      in it is actually allowed. */}
+                  {(() => {
+                    const items = [
+                      ...(can('houses.create') ? [{ label: '+ Add Unit', onClick: () => openAddHouse(plot.id) }] : []),
+                      ...(can('plots.edit')    ? [{ label: 'Edit', onClick: () => openEditPlot(plot) }] : []),
+                      ...(can('plots.delete')  ? [{ label: 'Delete', onClick: () => handleDeletePlot(plot.id), danger: true }] : []),
+                    ];
+                    return items.length > 0
+                      ? <ActionMenu id={`plot-${plot.id}`} openMenu={openMenu} setOpenMenu={setOpenMenu} items={items} />
+                      : null;
+                  })()}
                 </div>
               </div>
 
@@ -555,12 +564,15 @@ export default function Properties() {
                     }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 4 }}>
                         <div style={{ fontWeight: 700, fontSize: 15, color: 'var(--text)' }}>Unit {house.unit_number}</div>
-                        {!isCaretaker && (
-                          <ActionMenu id={`house-${house.id}`} size="sm" openMenu={openMenu} setOpenMenu={setOpenMenu} items={[
-                            { label: 'Edit', onClick: () => openEditHouse(house) },
-                            { label: 'Delete', onClick: () => handleDeleteHouse(house.id), danger: true },
-                          ]} />
-                        )}
+                        {(() => {
+                          const items = [
+                            ...(can('houses.edit')   ? [{ label: 'Edit', onClick: () => openEditHouse(house) }] : []),
+                            ...(can('houses.delete') ? [{ label: 'Delete', onClick: () => handleDeleteHouse(house.id), danger: true }] : []),
+                          ];
+                          return items.length > 0
+                            ? <ActionMenu id={`house-${house.id}`} size="sm" openMenu={openMenu} setOpenMenu={setOpenMenu} items={items} />
+                            : null;
+                        })()}
                       </div>
                       <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 8 }}>{house.house_type}</div>
                       <div style={{ fontWeight: 700, color: 'var(--primary)', fontSize: 14 }}>KES {parseFloat(house.rent_amount).toLocaleString()}/mo</div>
