@@ -1,6 +1,5 @@
 import { useState, useEffect } from 'react';
 import API from '../services/api';
-import { useAuth } from '../context/AuthContext';
 
 /* ------------------------------------------------------------------
    Styling lives in one scoped stylesheet so we can use :hover, media
@@ -141,7 +140,6 @@ const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('en-KE') : '');
 const cap = (s = '') => s.charAt(0).toUpperCase() + s.slice(1);
 
 export default function Maintenance() {
-  const { can } = useAuth();
   const [requests, setRequests] = useState([]);
   const [tenants,  setTenants]  = useState([]);
   const [loading,  setLoading]  = useState(true);
@@ -152,16 +150,22 @@ export default function Maintenance() {
   const [actionError, setActionError] = useState('');
   const [filter,   setFilter]   = useState('all');
   const [form,     setForm]     = useState({ tenant_id: '', issue: '', priority: 'medium' });
+  const [permissions, setPermissions] = useState([]);
+  function can(permission) {
+    return permissions.includes('*') || permissions.includes(permission);
+  }
 
   async function load() {
     setLoading(true);
     try {
-      const [mr, tr] = await Promise.all([
+      const [mr, tr, meR] = await Promise.all([
         API.get('/maintenance'),
         API.get('/tenants'),
+        API.get('/auth/me'),
       ]);
       setRequests(Array.isArray(mr.data) ? mr.data : (mr.data.data || []));
       setTenants(Array.isArray(tr.data) ? tr.data : (tr.data.data || []));
+      setPermissions(meR.data?.data?.permissions || []);
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
   }
@@ -285,6 +289,12 @@ export default function Maintenance() {
                   </div>
                 </div>
 
+                {/* Previously shown to anyone regardless of permission — a
+                    landlord_with_agent (restricted from maintenance.update)
+                    could see and click these buttons, which the backend then
+                    had to reject. Gating on can() here means the buttons
+                    simply aren't there for someone who can't use them,
+                    matching the fix already made on the Properties page. */}
                 {r.status !== 'completed' && can('maintenance.update') && (
                   <div className="mt-actions">
                     {r.status === 'pending' && (
