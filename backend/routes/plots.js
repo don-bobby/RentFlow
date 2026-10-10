@@ -35,29 +35,34 @@ async function geocodeLocation(location) {
   return null;
 }
 
-async function resolveAgent(raw) {
-  if (raw === '' || raw === undefined || raw === null) return { id: null };
-  const r = await pool.query(`SELECT id FROM users WHERE id = $1 AND role = 'agent'`, [raw]);
-  if (r.rows.length === 0) return { error: 'Selected agent was not found.' };
-  return { id: r.rows[0].id };
-}
-
 const numOrNull = (v) => (v === '' || v === undefined || v === null) ? null : v;
 
 // GET ALL plots — now also returns caretaker_name, so Properties.jsx can
 // show who's assigned to each plot (previously no caretaker info at all
 // came back from this route).
+//
+// agent_id/agent_name are now ALWAYS derived live from the owning landlord's
+// own users.agent_id, never from a plots.agent_id column. Previously a plot
+// stored its own independent agent_id (defaulting to the landlord's agent at
+// creation time, but then free to drift — an admin could set a plot's agent
+// without touching the landlord's own agent_id, or the landlord's agent
+// could change later without the plot ever updating). That let a plot
+// display "Agent: X" while its landlord was actually fully self-managed
+// underneath — the permission system only ever looks at users.agent_id, so
+// the two could silently disagree, which is exactly what made a landlord_self
+// account look like landlord_with_agent on this page during testing.
+// Deriving it live means there's one source of truth and it can't drift.
 router.get('/', staffAuth, requirePermission('plots.view'), async (req, res) => {
   try {
     const visible = await getVisiblePlotIds(req.user);
     if (visible !== 'ALL' && visible.length === 0) return res.json([]);
 
     const query = `
-      SELECT p.*, u.name AS owner_name, ag.name AS agent_name,
+      SELECT p.*, ag.id AS agent_id, u.name AS owner_name, ag.name AS agent_name,
              ct.name AS caretaker_name
       FROM plots p
       LEFT JOIN users u  ON p.user_id  = u.id
-      LEFT JOIN users ag ON p.agent_id = ag.id
+      LEFT JOIN users ag ON ag.id = u.agent_id
       LEFT JOIN LATERAL (
         SELECT ctu.name FROM caretaker_plots cpl
         JOIN users ctu ON ctu.id = cpl.caretaker_id
@@ -89,7 +94,7 @@ router.get('/:id', staffAuth, requirePermission('plots.view'), async (req, res) 
 
 router.post('/', staffAuth, requirePermission('plots.create'), async (req, res) => {
   try {
-    const { name, location, description, owner_id, agent_id, gps_lat, gps_lng } = req.body;
+    const { name, location, description, owner_id, gps_lat, gps_lng } = req.body;
     if (!name) return res.status(400).json({ error: 'Plot name is required' });
 
     let assignedTo;
@@ -109,23 +114,9 @@ router.post('/', staffAuth, requirePermission('plots.create'), async (req, res) 
       assignedTo = req.user.id;
     }
 
-    let assignedAgent = null;
-    if (req.user.role === 'agent') {
-      assignedAgent = req.user.id;
-    } else if (req.user.role === 'admin') {
-      if (agent_id !== undefined && agent_id !== '') {
-        // Admin explicitly picked one — respect it exactly.
-        const a = await resolveAgent(agent_id);
-        if (a.error) return res.status(400).json({ error: a.error });
-        assignedAgent = a.id;
-      } else {
-        // Nothing explicit given — default to the landlord's own current
-        // agent, same as every other property they already own, rather
-        // than starting this one blank.
-        const landlordRow = await pool.query('SELECT agent_id FROM users WHERE id = $1', [assignedTo]);
-        assignedAgent = landlordRow.rows[0]?.agent_id || null;
-      }
-    }
+    // No per-plot agent assignment anymore — a plot's agent is always
+    // whichever agent manages its owning landlord (users.agent_id), read
+    // back live by GET /plots. See that route's comment for why.
 
     let lat = numOrNull(gps_lat), lng = numOrNull(gps_lng);
     if ((lat == null || lng == null) && location) {
@@ -134,14 +125,14 @@ router.post('/', staffAuth, requirePermission('plots.create'), async (req, res) 
     }
 
     const result = await pool.query(
-      'INSERT INTO plots (user_id, name, location, description, gps_lat, gps_lng, agent_id) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *',
-      [assignedTo, name, location || null, description || null, lat, lng, assignedAgent]
+      'INSERT INTO plots (user_id, name, location, description, gps_lat, gps_lng) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *',
+      [assignedTo, name, location || null, description || null, lat, lng]
     );
 
     // Plot create/edit/delete was never logged at all before this.
     await logAudit({
       user: req.user, action: 'plot.create', entityType: 'plot', entityId: result.rows[0].id,
-      changes: { name: { to: name }, owner_id: { to: assignedTo }, agent_id: { to: assignedAgent } },
+      changes: { name: { to: name }, owner_id: { to: assignedTo } },
     });
 
     res.status(201).json({ success: true, data: result.rows[0] });
@@ -150,22 +141,18 @@ router.post('/', staffAuth, requirePermission('plots.create'), async (req, res) 
 
 router.put('/:id', staffAuth, requirePermission('plots.edit'), async (req, res) => {
   try {
-    const check = await pool.query('SELECT name, user_id, agent_id, location, gps_lat, gps_lng FROM plots WHERE id = $1', [req.params.id]);
+    const check = await pool.query('SELECT name, user_id, location, gps_lat, gps_lng FROM plots WHERE id = $1', [req.params.id]);
     if (check.rows.length === 0) return res.status(404).json({ error: 'Plot not found' });
 
     const visible = await getVisiblePlotIds(req.user);
     const canEdit = visible === 'ALL' || visible.includes(Number(req.params.id));
     if (!canEdit) return res.status(403).json({ error: 'Access denied' });
 
-    const { name, location, description, owner_id, agent_id, gps_lat, gps_lng } = req.body;
+    const { name, location, description, owner_id, gps_lat, gps_lng } = req.body;
 
-    let newAgentId = check.rows[0].agent_id;
-    if (req.user.role === 'admin' && agent_id !== undefined) {
-      const a = await resolveAgent(agent_id);
-      if (a.error) return res.status(400).json({ error: a.error });
-      newAgentId = a.id;
-    }
-
+    // No per-plot agent assignment anymore — see GET /plots' comment. A
+    // plot's agent follows its owner automatically, so reassigning the
+    // owner below is the only way this plot's displayed agent changes.
     const newOwnerId = req.user.role === 'admin' && owner_id ? owner_id : check.rows[0].user_id;
 
     let lat = numOrNull(gps_lat) ?? check.rows[0].gps_lat;
@@ -177,14 +164,14 @@ router.put('/:id', staffAuth, requirePermission('plots.edit'), async (req, res) 
     }
 
     const result = await pool.query(
-      'UPDATE plots SET name=$1, location=$2, description=$3, user_id=$4, gps_lat=$5, gps_lng=$6, agent_id=$7 WHERE id=$8 RETURNING *',
-      [name, location || null, description || null, newOwnerId, lat, lng, newAgentId, req.params.id]
+      'UPDATE plots SET name=$1, location=$2, description=$3, user_id=$4, gps_lat=$5, gps_lng=$6 WHERE id=$7 RETURNING *',
+      [name, location || null, description || null, newOwnerId, lat, lng, req.params.id]
     );
 
     const changes = diff(
-      { name: check.rows[0].name, user_id: check.rows[0].user_id, agent_id: check.rows[0].agent_id },
-      { name: result.rows[0].name, user_id: result.rows[0].user_id, agent_id: result.rows[0].agent_id },
-      ['name', 'user_id', 'agent_id']
+      { name: check.rows[0].name, user_id: check.rows[0].user_id },
+      { name: result.rows[0].name, user_id: result.rows[0].user_id },
+      ['name', 'user_id']
     );
     if (Object.keys(changes).length > 0) {
       await logAudit({ user: req.user, action: 'plot.update', entityType: 'plot', entityId: req.params.id, changes });

@@ -197,7 +197,7 @@ export default function Properties() {
 
   function openAddPlot() {
     setEditing(null);
-    setForm({ name: '', location: '', description: '', owner_id: landlords[0]?.id || '', agent_id: '', gps_lat: '', gps_lng: '' });
+    setForm({ name: '', location: '', description: '', owner_id: landlords[0]?.id || '', gps_lat: '', gps_lng: '' });
     setModal('plot'); setError('');
   }
 
@@ -208,7 +208,6 @@ export default function Properties() {
       location:    plot.location    || '',
       description: plot.description || '',
       owner_id:    plot.user_id     || '',
-      agent_id:    plot.agent_id    || '',
       gps_lat:     plot.gps_lat     != null ? String(plot.gps_lat) : '',
       gps_lng:     plot.gps_lng     != null ? String(plot.gps_lng) : '',
     });
@@ -297,8 +296,12 @@ export default function Properties() {
     return plot.caretaker_name ? [{ name: plot.caretaker_name }] : [];
   };
 
-  // Agent: stored on the plot itself (plots.agent_id), so every plot can have
-  // its own agent regardless of who owns it.
+  // Agent: derived live by the backend from the owning landlord's own
+  // agent_id (GET /plots), never stored independently per plot anymore — a
+  // plot can no longer show an agent the landlord themselves isn't actually
+  // assigned to, which previously let a self-managed landlord look
+  // agent-managed on this page while having full create/edit/delete rights
+  // underneath.
   const plotAgent = (plot) => {
     if (plot.agent_id == null) return undefined;
     return agents.find(a => String(a.id) === String(plot.agent_id))
@@ -741,12 +744,8 @@ export default function Properties() {
                 )}
 
                 {isAdmin && (
-                  <div>
-                    <label style={labelStyle}>Agent managing this plot</label>
-                    <select value={form.agent_id || ''} onChange={e => setForm(f => ({ ...f, agent_id: e.target.value }))} style={inputStyle}>
-                      <option value="">— No agent —</option>
-                      {agents.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
-                    </select>
+                  <div style={{ fontSize: 12, color: 'var(--muted)', background: 'var(--surface2)', border: '1px solid var(--border)', borderRadius: 8, padding: '8px 12px' }}>
+                    Agent is set automatically from the plot's owner — reassign the owner's agent from the Users page if it needs to change.
                   </div>
                 )}
               </>) : (<>
