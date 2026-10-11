@@ -670,11 +670,17 @@ router.post('/tenant-request-otp', async (req, res) => {
         ? `+254${tenant.phone.slice(1)}`
         : tenant.phone.startsWith('254') ? `+${tenant.phone}` : tenant.phone;
 
-      const atResponse = await sms.send({
+      // Sandbox rejects any custom 'from' value outright (InvalidSenderId) —
+      // it must be omitted so AT uses its own shared test shortcode. Only
+      // include 'from' once AT_SENDER_ID is actually set (live app with an
+      // approved sender ID).
+      const smsPayload = {
         to:      [formatted],
         message: `Your RentFlow PIN reset code is: ${otp}. It expires in 10 minutes. Do not share it with anyone.`,
-        from:    process.env.AT_SENDER_ID || 'RENTFLOW',
-      });
+      };
+      if (process.env.AT_SENDER_ID) smsPayload.from = process.env.AT_SENDER_ID;
+
+      const atResponse = await sms.send(smsPayload);
       // TEMPORARY DIAGNOSTIC — the SDK call can resolve successfully (no
       // exception) even when AT rejects the message for an individual
       // recipient (e.g. insufficient balance, unapproved sender ID). Log

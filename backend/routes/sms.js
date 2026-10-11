@@ -18,7 +18,17 @@ function getAT() {
 async function sendSMS(to_phone, message) {
   const formatted = to_phone.startsWith('0') ? `+254${to_phone.slice(1)}` : to_phone.startsWith('254') ? `+${to_phone}` : to_phone;
   const sms = getAT();
-  await sms.send({ to: [formatted], message, from: process.env.AT_SENDER_ID || 'RENTFLOW' });
+  // Africa's Talking's SANDBOX environment rejects any custom alphanumeric
+  // 'from' value (it only works with a registered sender ID on a LIVE app)
+  // — sandbox requires 'from' to be omitted entirely so AT uses its own
+  // shared test shortcode. Previously this always sent a 'from' (falling
+  // back to 'RENTFLOW' even with no AT_SENDER_ID set), which the sandbox
+  // always rejected as InvalidSenderId. Now 'from' is only included when
+  // AT_SENDER_ID is actually configured (i.e. once you're on a live app
+  // with an approved sender ID).
+  const payload = { to: [formatted], message };
+  if (process.env.AT_SENDER_ID) payload.from = process.env.AT_SENDER_ID;
+  await sms.send(payload);
   await pool.query(`INSERT INTO sms_logs (to_phone, message, status) VALUES ($1, $2, 'sent')`, [formatted, message]);
 }
 
