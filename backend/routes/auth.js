@@ -670,11 +670,18 @@ router.post('/tenant-request-otp', async (req, res) => {
         ? `+254${tenant.phone.slice(1)}`
         : tenant.phone.startsWith('254') ? `+${tenant.phone}` : tenant.phone;
 
-      await sms.send({
+      const atResponse = await sms.send({
         to:      [formatted],
         message: `Your RentFlow PIN reset code is: ${otp}. It expires in 10 minutes. Do not share it with anyone.`,
         from:    process.env.AT_SENDER_ID || 'RENTFLOW',
       });
+      // TEMPORARY DIAGNOSTIC — the SDK call can resolve successfully (no
+      // exception) even when AT rejects the message for an individual
+      // recipient (e.g. insufficient balance, unapproved sender ID). Log
+      // the actual per-recipient status so a silent rejection is visible
+      // instead of looking identical to a real send. Remove once SMS
+      // delivery is confirmed working end-to-end.
+      console.log('[DIAG] AT send response:', JSON.stringify(atResponse));
     } catch (smsErr) {
       console.error('OTP SMS failed:', smsErr.message);
       // Still respond success — don't reveal SMS failure to client
@@ -767,11 +774,16 @@ router.post('/tenant-login', async (req, res) => {
       [national_id]
     );
     const tenant = result.rows[0];
-    if (!tenant) return res.status(401).json({ error: 'National ID not found.' });
+    // Previously this told the caller whether the National ID itself existed
+    // ("National ID not found" vs "Incorrect PIN") — two different error
+    // messages let anyone enumerate valid tenant National IDs just by trying
+    // numbers and watching which error comes back. Both "no such tenant" and
+    // "wrong PIN" now return the same generic message.
+    if (!tenant) return res.status(401).json({ error: 'Incorrect National ID or PIN.' });
     if (!tenant.pin) return res.status(401).json({ error: 'PIN not set. Contact your landlord to set up your portal access.' });
 
     const valid = await bcrypt.compare(pin, tenant.pin);
-    if (!valid) return res.status(401).json({ error: 'Incorrect PIN.' });
+    if (!valid) return res.status(401).json({ error: 'Incorrect National ID or PIN.' });
 
     const token = jwt.sign(
       { id: tenant.id, role: 'tenant', phone: tenant.phone },
