@@ -90,6 +90,18 @@ router.post('/stk-push', payerAuth, async (req, res) => {
 
     res.json({ success: true, data: response.data });
   } catch (err) {
+    // TEMPORARY DIAGNOSTIC — the plain console.error below can render as a
+    // single collapsed line in Railway's log viewer when the second
+    // argument is an object, hiding the actual Safaricom error payload.
+    // JSON.stringify forces it into visible text. Remove once the STK
+    // push 400 is diagnosed and fixed.
+    console.log('[DIAG] STK Push error status:', err.response?.status);
+    console.log('[DIAG] STK Push error data:', JSON.stringify(err.response?.data));
+    console.log('[DIAG] STK Push error message:', err.message);
+    console.log('[DIAG] MPESA_CONSUMER_KEY set:', !!process.env.MPESA_CONSUMER_KEY, 'length:', process.env.MPESA_CONSUMER_KEY?.length);
+    console.log('[DIAG] MPESA_CONSUMER_SECRET set:', !!process.env.MPESA_CONSUMER_SECRET, 'length:', process.env.MPESA_CONSUMER_SECRET?.length);
+    console.log('[DIAG] MPESA_SHORTCODE:', JSON.stringify(process.env.MPESA_SHORTCODE));
+    console.log('[DIAG] MPESA_PASSKEY set:', !!process.env.MPESA_PASSKEY, 'length:', process.env.MPESA_PASSKEY?.length);
     console.error('STK Push error:', err.response?.data || err.message);
     res.status(500).json({ error: err.response?.data?.errorMessage || err.message });
   }
