@@ -2,14 +2,6 @@ const express = require('express');
 const cors    = require('cors');
 require('dotenv').config();
 
-// TEMPORARY DIAGNOSTIC — remove once the AT_USERNAME "username is required"
-// issue is confirmed fixed. Prints the raw env values at boot, with
-// JSON.stringify so hidden leading/trailing spaces or stray quote
-// characters show up as visible characters instead of being invisible.
-console.log('[DIAG] AT_USERNAME:', JSON.stringify(process.env.AT_USERNAME), 'length:', process.env.AT_USERNAME?.length);
-console.log('[DIAG] AT_API_KEY set:', !!process.env.AT_API_KEY, 'length:', process.env.AT_API_KEY?.length);
-console.log('[DIAG] AT_SENDER_ID:', JSON.stringify(process.env.AT_SENDER_ID));
-
 const app = express();
 
 // Middleware — process incoming requests

@@ -680,14 +680,7 @@ router.post('/tenant-request-otp', async (req, res) => {
       };
       if (process.env.AT_SENDER_ID) smsPayload.from = process.env.AT_SENDER_ID;
 
-      const atResponse = await sms.send(smsPayload);
-      // TEMPORARY DIAGNOSTIC — the SDK call can resolve successfully (no
-      // exception) even when AT rejects the message for an individual
-      // recipient (e.g. insufficient balance, unapproved sender ID). Log
-      // the actual per-recipient status so a silent rejection is visible
-      // instead of looking identical to a real send. Remove once SMS
-      // delivery is confirmed working end-to-end.
-      console.log('[DIAG] AT send response:', JSON.stringify(atResponse));
+      await sms.send(smsPayload);
     } catch (smsErr) {
       console.error('OTP SMS failed:', smsErr.message);
       // Still respond success — don't reveal SMS failure to client
