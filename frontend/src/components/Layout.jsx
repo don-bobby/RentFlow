@@ -110,7 +110,14 @@ export default function Layout() {
     }
     fetchPending();
     const id = setInterval(fetchPending, 30000);
-    return () => clearInterval(id);
+    // Previously this only ever refreshed on the 30s poll — approving (or
+    // suspending) a landlord in Users.jsx updated that page's own list
+    // instantly, but this badge/toast (which lives in Layout, not Users,
+    // so it follows you to any page) stayed stale for up to 30s. Users.jsx
+    // now fires this event right after an approve/suspend so it updates
+    // immediately — same pattern already used for pending units below.
+    window.addEventListener('pending-landlords-changed', fetchPending);
+    return () => { clearInterval(id); window.removeEventListener('pending-landlords-changed', fetchPending); };
   }, [canApprove]);
 
   useEffect(() => {

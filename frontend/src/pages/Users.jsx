@@ -90,6 +90,10 @@ export default function Users() {
       const agentId = selectedAgent ? parseInt(selectedAgent) : null;
       await API.patch(`/auth/users/${approveTarget.id}/approve`, { agent_id: agentId });
       setUsers(us => us.map(u => u.id === approveTarget.id ? { ...u, is_approved: true, agent_id: agentId } : u));
+      // The sidebar/topbar "pending landlords" badge (Layout.jsx) only
+      // otherwise refreshes on a 30s poll — fire this so it updates
+      // immediately instead of looking stale right after an approval.
+      window.dispatchEvent(new Event('pending-landlords-changed'));
       setModal(null);
       setApproveTarget(null);
       setMsg('Landlord approved.');
@@ -110,6 +114,9 @@ export default function Users() {
         if (user.role === 'agent' && u.agent_id === user.id) return { ...u, agent_id: null };
         return u;
       }));
+      // Suspending a landlord puts them back into "pending" — refresh the
+      // sidebar/topbar badge immediately rather than waiting on its poll.
+      if (user.role === 'landlord') window.dispatchEvent(new Event('pending-landlords-changed'));
     } catch (e) { alert(e.response?.data?.error || 'Failed to suspend user.'); }
   }
 
