@@ -95,8 +95,11 @@ router.post('/stk-push', payerAuth, async (req, res) => {
     // argument is an object, hiding the actual Safaricom error payload.
     // JSON.stringify forces it into visible text. Remove once the STK
     // push 400 is diagnosed and fixed.
+    console.log('[DIAG] STK Push failing URL:', err.config?.url);
     console.log('[DIAG] STK Push error status:', err.response?.status);
+    console.log('[DIAG] STK Push error headers:', JSON.stringify(err.response?.headers));
     console.log('[DIAG] STK Push error data:', JSON.stringify(err.response?.data));
+    console.log('[DIAG] STK Push error data type:', typeof err.response?.data, 'raw:', err.response?.data);
     console.log('[DIAG] STK Push error message:', err.message);
     console.log('[DIAG] MPESA_CONSUMER_KEY set:', !!process.env.MPESA_CONSUMER_KEY, 'length:', process.env.MPESA_CONSUMER_KEY?.length);
     console.log('[DIAG] MPESA_CONSUMER_SECRET set:', !!process.env.MPESA_CONSUMER_SECRET, 'length:', process.env.MPESA_CONSUMER_SECRET?.length);
