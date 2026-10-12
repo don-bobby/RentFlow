@@ -314,6 +314,7 @@ const ACTION_LABELS = {
   'deposit.collected':   'Collected deposit',
   'tenant.update':       'Updated tenant',
   'permissions.toggle':  'Changed permission',
+  'maintenance.status_change': 'Changed maintenance status',
 };
 const ACTION_VERBS = {
   create: 'Added', add: 'Added', insert: 'Added', register: 'Registered',
