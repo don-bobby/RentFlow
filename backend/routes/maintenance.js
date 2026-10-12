@@ -119,13 +119,22 @@ router.patch('/:id', staffAuth, requirePermission('maintenance.update'), async (
     }
 
     const oldStatus = existing.rows[0].status;
+    // Previously this reused $1 both as the value assigned to `status` and
+    // inside the CASE comparison ($1 = 'completed'). Postgres infers a type
+    // for each use of a parameter independently — if `status` is an enum
+    // column, assigning $1 to it forces one type while comparing $1 against
+    // the plain string 'completed' forces another, and Postgres refuses with
+    // "inconsistent types deduced for parameter $1". Computing the boolean
+    // in JS and passing it as its own parameter (same pattern houses.js
+    // already uses for status_changed_at) sidesteps the ambiguity entirely.
+    const isCompleted = status === 'completed';
     const result = await pool.query(
       `UPDATE maintenance_requests
        SET status = $1,
-           resolved_at = CASE WHEN $1 = 'completed' THEN NOW() ELSE NULL END
+           resolved_at = CASE WHEN $3 THEN NOW() ELSE NULL END
        WHERE id = $2
        RETURNING *`,
-      [status, req.params.id]
+      [status, req.params.id, isCompleted]
     );
 
     if (oldStatus !== status) {
