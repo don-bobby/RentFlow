@@ -295,6 +295,48 @@ function actionKind(action) {
   return 'amber';
 }
 
+// Audit log actions are stored as "entity.verb" (e.g. "plot.update") — fine
+// for the backend, but shown raw it reads as code ("Plot.update") instead of
+// English. Known codes get an exact, hand-picked phrase; anything else falls
+// back to a generic "Verb + Entity" composition rather than the raw code.
+const ACTION_LABELS = {
+  'plot.create':         'Added plot',
+  'plot.update':         'Updated plot',
+  'plot.delete':         'Deleted plot',
+  'user.approve':        'Approved user',
+  'user.reject':         'Suspended user',
+  'user.set_agent':      'Changed agent',
+  'house.update':        'Updated unit',
+  'house.approve':       'Approved unit',
+  'house.reject':        'Rejected unit',
+  'payment.record':      'Recorded payment',
+  'payment.allocate':    'Allocated payment',
+  'deposit.collected':   'Collected deposit',
+  'tenant.update':       'Updated tenant',
+  'permissions.toggle':  'Changed permission',
+};
+const ACTION_VERBS = {
+  create: 'Added', add: 'Added', insert: 'Added', register: 'Registered',
+  update: 'Updated', edit: 'Updated', change: 'Changed', assign: 'Assigned', move: 'Moved',
+  delete: 'Deleted', remove: 'Removed', archive: 'Archived',
+  approve: 'Approved', reject: 'Rejected', collected: 'Collected',
+  record: 'Recorded', allocate: 'Allocated', toggle: 'Changed',
+  set_agent: 'Changed',
+};
+const ENTITY_LABELS = {
+  plot: 'plot', house: 'unit', payment: 'payment', deposit: 'deposit',
+  tenant: 'tenant', user: 'user', role_permissions: 'permission', maintenance: 'maintenance request',
+};
+function actionLabel(action) {
+  const a = String(action || '');
+  if (ACTION_LABELS[a]) return ACTION_LABELS[a];
+  const [entity, verb] = a.split('.');
+  if (!verb) return prettify(a);
+  const verbLabel   = ACTION_VERBS[verb] || prettify(verb);
+  const entityLabel = ENTITY_LABELS[entity] || prettify(entity).toLowerCase();
+  return `${verbLabel} ${entityLabel}`;
+}
+
 // Formats one audit value for display. Anything that looks like a secret is masked.
 function fmtVal(field, v) {
   if (SENSITIVE_FIELD.test(field)) return '••••••';
@@ -395,7 +437,7 @@ function AuditTable({ rows, open, toggle }) {
                 <td>
                   <div className="au-user"><span className="au-avatar" aria-hidden="true">{initials(r._user)}</span>{r._user}</div>
                 </td>
-                <td><span className={`rp-badge rp-badge-${actionKind(a.action)}`}>{prettify(a.action)}</span></td>
+                <td><span className={`rp-badge rp-badge-${actionKind(a.action)}`} title={a.action}>{actionLabel(a.action)}</span></td>
                 <td>
                   <span className="au-rec">{prettify(a.entity_type)}{a.entity_id ? ` #${a.entity_id}` : ''}</span>
                 </td>
