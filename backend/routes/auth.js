@@ -1044,4 +1044,126 @@ router.patch('/role-permissions', authMiddleware, requireAdmin, async (req, res)
   }
 });
 
+// ── Per-user permission overrides (admin only) ─────────────────────────────
+// On top of the role-permission matrix above, admin can grant or revoke a
+// SPECIFIC permission for a SPECIFIC agent/landlord/caretaker account — for
+// one property, or for every property that account can already see
+// (plot_id omitted/null). Admin and super_admin accounts can never be
+// targeted — they're always fully trusted and this never applies to them.
+// See claude/per-user-per-property-permissions-scoping.md in the project
+// for the full design this implements.
+
+const OVERRIDABLE_ROLES = ['agent', 'landlord', 'caretaker'];
+
+// GET /api/auth/users/:id/permission-overrides — this user's role defaults
+// plus every override currently set for them (global and per-property).
+router.get('/users/:id/permission-overrides', authMiddleware, requireAdmin, async (req, res) => {
+  try {
+    const userRes = await pool.query('SELECT id, name, role, agent_id FROM users WHERE id = $1', [req.params.id]);
+    const user = userRes.rows[0];
+    if (!user) return res.status(404).json({ error: 'User not found.' });
+    if (!OVERRIDABLE_ROLES.includes(user.role)) {
+      return res.status(400).json({ error: 'Admin and super_admin accounts cannot have permission overrides.' });
+    }
+
+    const { profile, permissions: defaults } = await getPermissions(user);
+    const overrides = await pool.query(
+      `SELECT o.id, o.plot_id, p.name AS plot_name, o.permission, o.effect, o.created_at, u.name AS granted_by_name
+       FROM user_permission_overrides o
+       LEFT JOIN plots p ON p.id = o.plot_id
+       LEFT JOIN users u ON u.id = o.created_by
+       WHERE o.user_id = $1
+       ORDER BY o.plot_id NULLS FIRST, o.permission`,
+      [req.params.id]
+    );
+
+    res.json({ success: true, data: { profile, defaults, overrides: overrides.rows } });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/auth/users/:id/permission-overrides — add or update one override.
+// Body: { plot_id (optional/null = every property), permission, effect: 'grant'|'revoke' }
+router.post('/users/:id/permission-overrides', authMiddleware, requireAdmin, async (req, res) => {
+  const { plot_id, permission, effect } = req.body;
+  if (!permission || !['grant', 'revoke'].includes(effect)) {
+    return res.status(400).json({ error: "permission and effect ('grant' or 'revoke') are required." });
+  }
+  // Same defensive floor as the role-permission matrix above — never
+  // grantable (or revokable) through either path.
+  if (NEVER_GRANTABLE.includes(permission)) {
+    return res.status(403).json({ error: 'This permission can never be granted or revoked through an override.' });
+  }
+  try {
+    const userRes = await pool.query('SELECT id, role FROM users WHERE id = $1', [req.params.id]);
+    const user = userRes.rows[0];
+    if (!user) return res.status(404).json({ error: 'User not found.' });
+    if (!OVERRIDABLE_ROLES.includes(user.role)) {
+      return res.status(400).json({ error: 'Admin and super_admin accounts cannot have permission overrides.' });
+    }
+
+    // Never invent a brand new permission string — it must already exist
+    // for SOME role today, whether being granted or revoked.
+    const known = await pool.query('SELECT 1 FROM role_permissions WHERE permission = $1 LIMIT 1', [permission]);
+    if (known.rows.length === 0) {
+      return res.status(400).json({ error: `Unknown permission: ${permission}` });
+    }
+
+    if (plot_id) {
+      const plotCheck = await pool.query('SELECT 1 FROM plots WHERE id = $1', [plot_id]);
+      if (plotCheck.rows.length === 0) return res.status(400).json({ error: 'plot_id must refer to an existing property.' });
+    }
+
+    // Upserts on (user_id, plot_id-or-"every property", permission) — adding
+    // the same override twice just updates it (e.g. flipping grant/revoke)
+    // instead of creating a conflicting duplicate row. See
+    // fix_user_permission_overrides_null_uniqueness.sql for why this can't
+    // just be a plain UNIQUE constraint on the raw columns.
+    const result = await pool.query(
+      `INSERT INTO user_permission_overrides (user_id, plot_id, permission, effect, created_by)
+       VALUES ($1, $2, $3, $4, $5)
+       ON CONFLICT (user_id, COALESCE(plot_id, 0), permission)
+       DO UPDATE SET effect = EXCLUDED.effect, created_by = EXCLUDED.created_by, created_at = NOW()
+       RETURNING *`,
+      [req.params.id, plot_id || null, permission, effect, req.user.id]
+    );
+
+    await logAudit({
+      user: req.user, action: 'user.permission_override', entityType: 'user', entityId: req.params.id,
+      changes: { permission: { to: permission }, effect: { to: effect }, plot_id: { to: plot_id || null } },
+    });
+
+    res.json({ success: true, data: result.rows[0] });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// DELETE /api/auth/users/:id/permission-overrides/:overrideId — remove one
+// override, falling back to whatever the next rule down says (the "all
+// properties" override if there is one, otherwise the plain role default).
+router.delete('/users/:id/permission-overrides/:overrideId', authMiddleware, requireAdmin, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `DELETE FROM user_permission_overrides WHERE id = $1 AND user_id = $2 RETURNING *`,
+      [req.params.overrideId, req.params.id]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Override not found.' });
+
+    await logAudit({
+      user: req.user, action: 'user.permission_override_remove', entityType: 'user', entityId: req.params.id,
+      changes: {
+        permission: { from: result.rows[0].permission },
+        effect: { from: result.rows[0].effect },
+        plot_id: { from: result.rows[0].plot_id },
+      },
+    });
+
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;

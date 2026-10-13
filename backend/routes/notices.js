@@ -18,12 +18,21 @@ const jwt     = require('jsonwebtoken');
 //   2. A deleted user's token stops working here too, not just elsewhere.
 const { authMiddleware: auth } = require('../middleware/auth');
 
-function tenantAuth(req, res, next) {
+// This only ever checked the JWT's own signature/role, never the database —
+// unlike tenantportal.js's tenantAuth, which was already fixed to re-check.
+// A moved-out or deleted tenant could keep using an old token (good for up
+// to 7 days) to read notices and send/receive messages here, the exact same
+// hole that was closed over there. Brought in line with it.
+async function tenantAuth(req, res, next) {
   const token = req.headers.authorization?.split(' ')[1];
   if (!token) return res.status(401).json({ error: 'No token' });
   try {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
     if (decoded.role !== 'tenant') return res.status(403).json({ error: 'Tenant only' });
+    const result = await pool.query('SELECT id, is_active FROM tenants WHERE id = $1', [decoded.id]);
+    const tenant = result.rows[0];
+    if (!tenant) return res.status(401).json({ error: 'Account no longer exists.' });
+    if (!tenant.is_active) return res.status(403).json({ error: 'This account is no longer active.' });
     req.tenant = decoded;
     next();
   } catch { res.status(401).json({ error: 'Invalid token' }); }
@@ -428,11 +437,20 @@ router.get('/contacts', auth, async (req, res) => {
 // exposed as a list instead of a yes/no check.
 router.get('/contacts/tenant', tenantAuth, async (req, res) => {
   try {
+    // p.agent_id is not a real column — plots never store an agent of their
+    // own, only the landlord's own users.agent_id does (see the comment at
+    // the top of plots.js). This query referenced it anyway, so it has been
+    // throwing a database error on every single call — meaning a tenant
+    // could never open "New Message" and see who they're allowed to write
+    // to; the whole picker was broken. Fixed to look up the landlord's agent
+    // the same way canMessage() and every other scoping query in this file
+    // already does.
     const result = await pool.query(
       `SELECT u.id, u.name, u.role FROM tenants t
        JOIN houses h ON t.house_id = h.id
        JOIN plots  p ON h.plot_id  = p.id
-       JOIN users  u ON u.id = p.user_id OR u.id = p.agent_id
+       JOIN users  u ON u.id = p.user_id
+         OR u.id = (SELECT agent_id FROM users WHERE id = p.user_id)
          OR u.id IN (
            SELECT caretaker_id FROM caretaker_plots WHERE plot_id = p.id
            UNION SELECT id FROM users WHERE plot_id = p.id
@@ -755,7 +773,14 @@ router.post('/:id/read', tenantAuth, async (req, res) => {
 
 // DELETE /api/notices/:id
 router.delete('/:id', auth, async (req, res) => {
-  if (!['admin', 'super_admin', 'landlord', 'agent'].includes(req.user.role))
+  // Caretakers were left off this list even though POST / lets them post
+  // their own notices — the frontend shows a Delete button for any notice
+  // the author can see (canPost && they wrote it), so a caretaker's own
+  // button always failed with "Access denied." The query below already
+  // restricts anyone but admin/super_admin to deleting only their own
+  // notice (author_id=$2), so adding caretaker here doesn't open up
+  // anything wider — it just lets them remove what they themselves posted.
+  if (!['admin', 'super_admin', 'landlord', 'agent', 'caretaker'].includes(req.user.role))
     return res.status(403).json({ error: 'Access denied.' });
   try {
     await pool.query(
