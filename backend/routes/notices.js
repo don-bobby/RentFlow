@@ -3,11 +3,25 @@ const router  = express.Router();
 const pool    = require('../database/db');
 const jwt     = require('jsonwebtoken');
 
+// Previously this only checked "is the JWT validly signed" — it never
+// checked WHICH kind of token it was. A tenant's own portal login (role:
+// 'tenant') passed straight through onto every staff-only route below
+// (conversations, contacts, notices CRUD): tenants and staff users are
+// separate tables with independent id sequences, so a tenant whose id
+// happened to match a staff user's id could see that staff user's
+// conversation list, and POST /conversations/new would let a tenant open a
+// conversation mislabeled as participant_type='user' using their own
+// tenant id. Same bug class as sms.js before its auth fix — closed the
+// same way, by rejecting tenant tokens here instead of just any token.
 function auth(req, res, next) {
   const token = req.headers.authorization?.split(' ')[1];
   if (!token) return res.status(401).json({ error: 'No token' });
-  try { req.user = jwt.verify(token, process.env.JWT_SECRET); next(); }
-  catch { res.status(401).json({ error: 'Invalid token' }); }
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    if (decoded.role === 'tenant') return res.status(403).json({ error: 'Staff access required.' });
+    req.user = decoded;
+    next();
+  } catch { res.status(401).json({ error: 'Invalid token' }); }
 }
 
 function tenantAuth(req, res, next) {
@@ -376,6 +390,21 @@ router.get('/contacts', auth, async (req, res) => {
           JOIN plots p ON p.id=cp.plot_id JOIN users landlord ON landlord.id=p.user_id
           WHERE u.role='caretaker' AND landlord.agent_id=$1
       `, [req.user.id]);
+      // canMessage() already allows an agent to reach any tenant under one
+      // of their assigned landlords (see the agent branch above it) — this
+      // was just never surfaced as a pickable contact, so there was no way
+      // to actually start that conversation from the UI. 'tenant' as the
+      // role value (not a real users.role) is how the frontend is expected
+      // to tell these apart and send recipient_type: 'tenant'.
+      const tenantContacts = await pool.query(`
+        SELECT t.id, t.full_name AS name, 'tenant' AS role
+        FROM tenants t
+        JOIN houses h ON t.house_id = h.id
+        JOIN plots p ON h.plot_id = p.id
+        JOIN users landlord ON landlord.id = p.user_id
+        WHERE landlord.agent_id = $1
+      `, [req.user.id]);
+      others = { rows: [...others.rows, ...tenantContacts.rows] };
     } else if (req.user.role === 'landlord') {
       others = await pool.query(`
         SELECT id, name, role FROM users WHERE id = (SELECT agent_id FROM users WHERE id=$1)

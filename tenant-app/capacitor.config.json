@@ -1,0 +1,9 @@
+{
+  "appId": "ke.co.rentflow.tenant",
+  "appName": "RentFlow Tenant",
+  "webDir": "www",
+  "server": {
+    "url": "https://rent-flow-eight-wine.vercel.app/tenant/login",
+    "cleartext": false
+  }
+}
