@@ -230,6 +230,10 @@ router.patch('/:id/description', auth, requirePermission('houses.edit'), async (
 // admin-only, but now driven by the matrix like every other DELETE route.
 router.delete('/:id', auth, requirePermission('houses.delete'), async (req, res) => {
   try {
+    const scope = await assertHouseInScope(req, req.params.id);
+    if (scope.notFound) return res.status(404).json({ error: 'House not found' });
+    if (!scope.ok) return res.status(403).json({ error: 'Access denied' });
+
     const result = await pool.query('DELETE FROM houses WHERE id = $1 RETURNING *', [req.params.id]);
     if (result.rows.length === 0) return res.status(404).json({ error: 'House not found' });
     res.json({ success: true, message: 'House deleted' });

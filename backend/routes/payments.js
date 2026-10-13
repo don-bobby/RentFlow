@@ -350,12 +350,21 @@ router.patch('/:id/allocate', staffAuth, requirePermission('payments.record_manu
 router.delete('/:id', staffAuth, requirePermission('payments.delete'), async (req, res) => {
   try {
     const payment = await pool.query(
-      `SELECT p.*, t.full_name AS tenant_name, t.balance AS balance_before
-       FROM payments p LEFT JOIN tenants t ON p.tenant_id = t.id
+      `SELECT p.*, h.plot_id, t.full_name AS tenant_name, t.balance AS balance_before
+       FROM payments p
+       LEFT JOIN houses h ON p.house_id = h.id
+       LEFT JOIN tenants t ON p.tenant_id = t.id
        WHERE p.id = $1`,
       [req.params.id]
     );
     if (payment.rows.length === 0) return res.status(404).json({ error: 'Payment not found' });
+
+    if (req.user.role !== 'admin' && req.user.role !== 'super_admin') {
+      const visible = await getVisiblePlotIds(req.user);
+      const plotId = payment.rows[0].plot_id;
+      const allowed = visible === 'ALL' || (plotId != null && visible.includes(plotId));
+      if (!allowed) return res.status(403).json({ error: 'Access denied' });
+    }
 
     const { tenant_id, amount, tenant_name, balance_before } = payment.rows[0];
 

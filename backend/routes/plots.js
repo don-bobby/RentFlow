@@ -183,6 +183,10 @@ router.put('/:id', staffAuth, requirePermission('plots.edit'), async (req, res) 
 
 router.delete('/:id', staffAuth, requirePermission('plots.delete'), async (req, res) => {
   try {
+    const visible = await getVisiblePlotIds(req.user);
+    const canDelete = visible === 'ALL' || visible.includes(Number(req.params.id));
+    if (!canDelete) return res.status(403).json({ error: 'Access denied' });
+
     const result = await pool.query('DELETE FROM plots WHERE id = $1 RETURNING *', [req.params.id]);
     if (result.rows.length === 0) return res.status(404).json({ error: 'Plot not found' });
 
