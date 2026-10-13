@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import API, { getUnmatchedPayments, matchPayment, deletePayment } from '../services/api';
 import { useAuth } from '../context/AuthContext';
@@ -170,8 +170,29 @@ export default function Payments() {
     loadArrears(tenant.id);
   }
 
+  // Tracks the setInterval id from pollPaymentStatus so a poll can be
+  // cancelled instead of left running. Previously there was no way to stop
+  // it: closing the modal, navigating away, or starting a SECOND STK push
+  // for a different tenant all left the original 60-second poll running in
+  // the background. Worst case, two pushes in a row meant two intervals
+  // ticking at once — the first one's "payment confirmed" (or "failed")
+  // message could land AFTER the second push started, overwriting the
+  // status/message the user was actually looking at with a stale result
+  // from a completely different transaction.
+  const pollRef = useRef(null);
+  useEffect(() => {
+    return () => { if (pollRef.current) clearInterval(pollRef.current); };
+  }, []);
+
+  function stopPolling() {
+    if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+  }
+
   async function triggerStkPush() {
+    if (!stkTenant) { setStkMsg('Select a tenant first.'); return; }
+    if (!stkPhone) { setStkMsg('Enter a phone number.'); return; }
     if (!stkAmount || parseFloat(stkAmount) <= 0) { setStkMsg('Enter a valid amount.'); return; }
+    stopPolling(); // cancel any still-running poll from a previous push
     setStkLoading(true); setStkMsg(''); setStkStatus('idle');
     try {
       const token = localStorage.getItem('token');
@@ -202,7 +223,7 @@ export default function Payments() {
     const maxAttempts = 12; // 60 seconds
     let attempts = 0;
     const token = localStorage.getItem('token');
-    const interval = setInterval(async () => {
+    pollRef.current = setInterval(async () => {
       attempts++;
       try {
         const res  = await fetch(`${BASE}/mpesa/stk-status/${encodeURIComponent(checkoutId)}`, {
@@ -210,16 +231,16 @@ export default function Payments() {
         });
         const data = await res.json();
         if (data.status === 'matched') {
-          clearInterval(interval);
+          stopPolling();
           setStkStatus('success');
           setStkMsg('✅ Payment confirmed! The account has been updated.');
           load(); // refresh payments table
         } else if (data.status === 'failed') {
-          clearInterval(interval);
+          stopPolling();
           setStkStatus('failed');
           setStkMsg(`❌ Payment failed — ${data.reason || 'insufficient funds or PIN cancelled'}.`);
         } else if (attempts >= maxAttempts) {
-          clearInterval(interval);
+          stopPolling();
           setStkStatus('failed');
           setStkMsg('⚠️ No confirmation after 60s. Check M-Pesa messages to confirm if payment went through.');
         }
@@ -418,7 +439,7 @@ export default function Payments() {
           <div style={{ background: 'var(--surface)', borderRadius: 16, padding: 28, width: '100%', maxWidth: 480, boxShadow: 'var(--shadow-lg)' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
               <h2 style={{ fontFamily: 'Space Grotesk', fontWeight: 700, fontSize: 18, color: 'var(--text)' }}>📱 Send M-Pesa STK Push</h2>
-              <button onClick={() => { setStkModal(false); setArrears(null); }} style={{ width: 32, height: 32, borderRadius: '50%', border: 'none', background: 'var(--surface2)', cursor: 'pointer', fontSize: 18, color: 'var(--muted)' }}>×</button>
+              <button onClick={() => { stopPolling(); setStkModal(false); setArrears(null); }} style={{ width: 32, height: 32, borderRadius: '50%', border: 'none', background: 'var(--surface2)', cursor: 'pointer', fontSize: 18, color: 'var(--muted)' }}>×</button>
             </div>
 
             {/* Tenant selector */}
@@ -507,7 +528,7 @@ export default function Payments() {
             )}
 
             <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
-              <button onClick={() => { setStkModal(false); setArrears(null); }} style={{ padding: '10px 20px', borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface)', fontWeight: 600, fontSize: 14, cursor: 'pointer', color: 'var(--text)' }}>
+              <button onClick={() => { stopPolling(); setStkModal(false); setArrears(null); }} style={{ padding: '10px 20px', borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface)', fontWeight: 600, fontSize: 14, cursor: 'pointer', color: 'var(--text)' }}>
                 Close
               </button>
               <button onClick={triggerStkPush} disabled={stkLoading || stkStatus === 'pending'}

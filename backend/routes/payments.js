@@ -123,6 +123,16 @@ router.post('/', staffAuth, requirePermission('payments.record_manual'), async (
   const { tenant_id, unit_id, amount, payment_date, payment_method, reference_number, notes } = req.body;
   if (!tenant_id || !amount || !payment_date) return res.status(400).json({ error: 'tenant_id, amount and payment_date are required.' });
 
+  // `amount` was never checked to actually be a positive number. A 0 or
+  // negative value slipped past every allocation branch below (remaining <= 0
+  // short-circuits them) and, worse, went straight into a real INSERT in the
+  // "else" branch (tenant missing rent_amount/move_in_date) — a negative
+  // "payment" there gets summed into the balance recalculation and makes the
+  // tenant look like they owe MORE, not less, since it's subtracted.
+  if (!Number.isFinite(parseFloat(amount)) || parseFloat(amount) <= 0) {
+    return res.status(400).json({ error: 'amount must be a positive number.' });
+  }
+
   try {
     const tenantRes = await pool.query(
       `SELECT t.house_id, t.move_in_date, t.full_name, t.balance, t.deposit_paid,
@@ -305,6 +315,17 @@ router.post('/', staffAuth, requirePermission('payments.record_manual'), async (
 router.patch('/:id/allocate', staffAuth, requirePermission('payments.record_manual'), async (req, res) => {
   const { for_year, for_month } = req.body;
   if (!for_year || !for_month) return res.status(400).json({ error: 'for_year and for_month are required.' });
+
+  // Nothing stopped an out-of-range month (or a nonsense year) from being
+  // saved here — it would then silently break every month-grouped query
+  // elsewhere in this file (arrears, the unpaid-months walk in POST /) that
+  // assumes for_month is always 1-12.
+  if (!Number.isInteger(for_month) || for_month < 1 || for_month > 12) {
+    return res.status(400).json({ error: 'for_month must be an integer from 1 to 12.' });
+  }
+  if (!Number.isInteger(for_year) || for_year < 2000 || for_year > 2100) {
+    return res.status(400).json({ error: 'for_year must be a valid year.' });
+  }
 
   try {
     const existing = await pool.query(

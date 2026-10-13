@@ -10,6 +10,11 @@ const { logAudit } = require('../utils/audit');
 // suspensions and permission changes apply immediately (see middleware/auth.js).
 const { authMiddleware } = require('../middleware/auth');
 
+// Used below so a login attempt for an email that doesn't exist takes the
+// same amount of time as one that does — see the comment on POST /login.
+// This is just a syntactically-valid bcrypt hash; nothing needs to match it.
+const DUMMY_PASSWORD_HASH = '$2b$10$TdvU.X95.dEgEWDzWuQ/vey3BHv6nUkt0W/x9OybcRj0BzXaJixju';
+
 function requireAdmin(req, res, next) {
   if (!['admin', 'super_admin'].includes(req.user.role)) return res.status(403).json({ error: 'Admin access required' });
   next();
@@ -61,10 +66,24 @@ router.post('/login', async (req, res) => {
     const result = await pool.query('SELECT * FROM users WHERE email = $1', [email]);
     const user   = result.rows[0];
 
-    if (!user) return res.status(401).json({ error: 'User not found' });
+    // Previously: "User not found" for a bad email vs "Wrong password" for
+    // a bad password on a real account. Two different messages tell anyone
+    // trying emails which ones actually have accounts in the system — same
+    // bug as showing a different page for a real vs. fake username. Both
+    // cases now return the exact same message and status code.
+    //
+    // The timing still gave the same thing away even with identical text: a
+    // bad email returned instantly (no row to check), while a bad password
+    // paid the real bcrypt cost — so the response time alone told you which
+    // one it was. Running bcrypt.compare against a dummy hash when there's
+    // no user makes a nonexistent email cost the same as a real one.
+    if (!user) {
+      await bcrypt.compare(password || '', DUMMY_PASSWORD_HASH);
+      return res.status(401).json({ error: 'Invalid email or password.' });
+    }
 
     const valid = await bcrypt.compare(password, user.password);
-    if (!valid) return res.status(401).json({ error: 'Wrong password' });
+    if (!valid) return res.status(401).json({ error: 'Invalid email or password.' });
 
     // Block unapproved landlords
     if (user.role === 'landlord' && !user.is_approved) {

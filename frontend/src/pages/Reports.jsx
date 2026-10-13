@@ -649,6 +649,17 @@ export default function Reports() {
     const landlordOK = (plot) => filters.landlord === 'all' || (plot && plot.owner_name === filters.landlord);
     const plotOfHouse = (houseId) => { const h = houseById[houseId]; return h ? plotById[h.plot_id] : undefined; };
     const num = (v) => parseFloat(v || 0);
+    // Several reports below sum raw payment amounts as "revenue" or
+    // "collected" without looking at the payment's status — which meant a
+    // "pending" STK push (tenant hasn't entered their PIN yet, so no money
+    // has moved) or a "failed" one (never went through at all) got added to
+    // the total right alongside real, received payments. That overstates
+    // how much rent actually came in, in some of the numbers landlords
+    // rely on most: Payment Collection, Revenue Summary, Payment Methods,
+    // Collection Efficiency, Profit & Loss, Agent Scorecard and the Period
+    // Comparison report. "unmatched"/"review" payments are left in — that
+    // money genuinely arrived, it's just not matched to a tenant/month yet.
+    const isCollected = (p) => p.status !== 'pending' && p.status !== 'failed';
 
     // ── Profit & Loss by plot ───────────────────────────────────────────────
     if (active === 'profitloss') {
@@ -656,7 +667,7 @@ export default function Reports() {
       const bucket = (key, name) => (byPlot[key] = byPlot[key] || { name, owner: '', income: 0, expense: 0 });
       plots.filter(pl => landlordOK(pl)).forEach(pl => { bucket(pl.id, pl.name).owner = pl.owner_name || '—'; });
 
-      filterByPeriod(payments, 'payment_date').forEach(pay => {
+      filterByPeriod(payments.filter(isCollected), 'payment_date').forEach(pay => {
         const pl = plotOfHouse(pay.house_id);
         if (pl) { if (landlordOK(pl)) bucket(pl.id, pl.name).income += num(pay.amount); }
         else if (filters.landlord === 'all') bucket('none', 'Unassigned').income += num(pay.amount);
@@ -705,7 +716,7 @@ export default function Reports() {
           const h = houseById[t.house_id];
           if (h && landlordOK(plotById[h.plot_id])) expected += num(h.rent_amount);
         });
-        payments.forEach(pay => {
+        payments.filter(isCollected).forEach(pay => {
           const d = new Date(pay.payment_date);
           if (d.getFullYear() !== yr || d.getMonth() !== i) return;
           const pl = plotOfHouse(pay.house_id);
@@ -759,7 +770,7 @@ export default function Reports() {
         if (!t.is_active) return;
         const a = agentOfPlot(plotOfHouse(t.house_id)); if (a) a.arrears += num(t.balance);
       });
-      payments.forEach(pay => {
+      payments.filter(isCollected).forEach(pay => {
         const d = new Date(pay.payment_date);
         if (d.getFullYear() !== now.getFullYear() || d.getMonth() !== now.getMonth()) return;
         const a = agentOfPlot(plotOfHouse(pay.house_id)); if (a) a.collected += num(pay.amount);
@@ -889,7 +900,11 @@ export default function Reports() {
 
     if (active === 'payments') {
       const filtered = filterByPeriod(payments, 'payment_date');
-      const total    = filtered.reduce((s, p) => s + parseFloat(p.amount || 0), 0);
+      // The table below still lists every transaction, pending and failed
+      // ones included, so staff can see what was attempted — but the
+      // headline "Total Collected" figure only counts money that actually
+      // came in.
+      const total    = filtered.filter(isCollected).reduce((s, p) => s + parseFloat(p.amount || 0), 0);
       columns = ['Tenant', 'Amount (KES)', 'Method', 'Reference', 'Status', 'Date'];
       rows    = filtered.map(p => ({
         Tenant: p.tenant_name || '—',
@@ -1111,7 +1126,7 @@ export default function Reports() {
 
     if (active === 'revenue') {
       const byMonth = {};
-      payments.filter(p => new Date(p.payment_date).getFullYear() === filters.year).forEach(p => {
+      payments.filter(isCollected).filter(p => new Date(p.payment_date).getFullYear() === filters.year).forEach(p => {
         const m = new Date(p.payment_date).getMonth();
         if (!byMonth[m]) byMonth[m] = 0;
         byMonth[m] += parseFloat(p.amount || 0);
@@ -1120,7 +1135,7 @@ export default function Reports() {
       rows    = months.map((m, i) => ({
         Month: `${m} ${filters.year}`,
         'Revenue (KES)': (byMonth[i] || 0).toLocaleString(),
-        Transactions: payments.filter(p => new Date(p.payment_date).getMonth() === i && new Date(p.payment_date).getFullYear() === filters.year).length,
+        Transactions: payments.filter(isCollected).filter(p => new Date(p.payment_date).getMonth() === i && new Date(p.payment_date).getFullYear() === filters.year).length,
       }));
       const total = Object.values(byMonth).reduce((s, v) => s + v, 0);
       summary = [{ label: `Total ${filters.year}`, value: `KES ${total.toLocaleString()}`, color: 'var(--green)' }];
@@ -1182,7 +1197,7 @@ export default function Reports() {
     }
 
     if (active === 'paymentmethods') {
-      const filtered = filterByPeriod(payments, 'payment_date');
+      const filtered = filterByPeriod(payments.filter(isCollected), 'payment_date');
       const byMethod = {};
       filtered.forEach(p => {
         const m = p.method || 'mpesa';
@@ -1445,10 +1460,11 @@ export default function Reports() {
         previousLabel = `${prevYear}`;
       }
 
-      const curRevenue  = periodTotal(curYear, curMonth, payments, 'payment_date');
-      const prevRevenue = periodTotal(prevYear, prevMonth, payments, 'payment_date');
-      const curTx  = periodCount(curYear, curMonth, payments, 'payment_date');
-      const prevTx = periodCount(prevYear, prevMonth, payments, 'payment_date');
+      const collectedPayments = payments.filter(isCollected);
+      const curRevenue  = periodTotal(curYear, curMonth, collectedPayments, 'payment_date');
+      const prevRevenue = periodTotal(prevYear, prevMonth, collectedPayments, 'payment_date');
+      const curTx  = periodCount(curYear, curMonth, collectedPayments, 'payment_date');
+      const prevTx = periodCount(prevYear, prevMonth, collectedPayments, 'payment_date');
       const curExp  = periodTotal(curYear, curMonth, expenses, 'expense_date');
       const prevExp = periodTotal(prevYear, prevMonth, expenses, 'expense_date');
 

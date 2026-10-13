@@ -306,6 +306,26 @@ router.put('/:id', staffAuth, requirePermission('tenants.edit'), async (req, res
     if (!allowed) return res.status(403).json({ error: 'Access denied' });
 
     const oldHouseId  = prev.rows[0].house_id;
+
+    // POST (create) already checks that a new tenant's house_id is on a plot
+    // the caller can see — this PUT never did the same check for a CHANGED
+    // house_id. A landlord scoped to Plot A could edit one of their own
+    // tenants (passes the check above) and move them onto a house that
+    // belongs to a totally different landlord's Plot B, just by sending that
+    // house_id. That doesn't just misfile one tenant record — the code below
+    // also flips the target house's status to "occupied" and can flip the
+    // old house back to "vacant", so it corrupts another landlord's
+    // occupancy data too. Blocked unless the new house is actually visible
+    // to this caller (admins can still move a tenant anywhere).
+    const newHouseIdNum = house_id ? parseInt(house_id) : null;
+    if (visible !== 'ALL' && newHouseIdNum && newHouseIdNum !== oldHouseId) {
+      const newHouseCheck = await pool.query('SELECT plot_id FROM houses WHERE id = $1', [newHouseIdNum]);
+      const newHousePlotId = newHouseCheck.rows[0]?.plot_id;
+      if (newHousePlotId == null || !visible.includes(newHousePlotId)) {
+        return res.status(403).json({ error: 'You do not have access to that unit.' });
+      }
+    }
+
     const newIsActive = is_active ?? true;
 
     const result = await pool.query(

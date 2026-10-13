@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import API from '../services/api';
 import { useAuth } from '../context/AuthContext';
 
@@ -54,6 +55,8 @@ export default function Tenants() {
   const canSetPin  = can('tenants.set_pin');
   const canManageRow = canEditRow || canSetPin; // whether the Actions column shows at all
   const isDark    = useIsDarkMode();
+  const location  = useLocation();
+  const navigate  = useNavigate();
 
   async function load() {
     setLoading(true);
@@ -68,6 +71,23 @@ export default function Tenants() {
   }
 
   useEffect(() => { load(); }, []);
+
+  // Dashboard's "+ Add Tenant" quick action used to just navigate here and
+  // leave the user to find and click "+ Add Tenant" again themselves on an
+  // often-empty list. It now passes { openAddModal: true } in router state
+  // (same convention Properties.jsx uses for highlightPlotId/highlightHouseId).
+  // Gated on `!loading` because openAdd() seeds the unit dropdown from
+  // `houses`, which isn't populated until load() finishes — opening earlier
+  // would show an empty "— Select unit —" list with nothing else in it.
+  // The replace-with-cleared-state afterward stops this from reopening the
+  // modal on a back-navigation or refresh.
+  useEffect(() => {
+    if (location.state?.openAddModal && !loading && canAdd) {
+      openAdd();
+      navigate(location.pathname, { replace: true, state: {} });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.state, loading]);
 
   function openAdd() {
     setEditing(null);

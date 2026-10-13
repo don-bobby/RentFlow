@@ -3,15 +3,36 @@ const router  = express.Router();
 const pool    = require('../database/db');
 const jwt     = require('jsonwebtoken');
 
-function tenantAuth(req, res, next) {
+// This never re-checked the database — it just trusted the role sitting
+// inside the token. The same class of bug that backend/middleware/auth.js
+// already fixed for staff logins (a suspended agent's old token kept
+// working until it expired) applied here too: a tenant who moved out, or
+// who a landlord deactivated, could keep using this exact token to view
+// their old balance, payment history and unit details, and submit new
+// maintenance requests, for as long as the token stayed valid — because
+// nothing here ever asked "does this tenant account still exist and is it
+// still active?" Now it does, on every request, the same way staff routes
+// already do.
+async function tenantAuth(req, res, next) {
   const token = req.headers.authorization?.split(' ')[1];
   if (!token) return res.status(401).json({ error: 'No token provided' });
   try {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
     if (decoded.role !== 'tenant') return res.status(403).json({ error: 'Tenant access only' });
+
+    const result = await pool.query('SELECT id, is_active FROM tenants WHERE id = $1', [decoded.id]);
+    const tenant = result.rows[0];
+    if (!tenant) return res.status(401).json({ error: 'Account no longer exists.' });
+    if (!tenant.is_active) return res.status(403).json({ error: 'This account is no longer active.' });
+
     req.tenant = decoded;
     next();
-  } catch { res.status(401).json({ error: 'Invalid token' }); }
+  } catch (err) {
+    if (err instanceof jwt.JsonWebTokenError || err instanceof jwt.TokenExpiredError) {
+      return res.status(401).json({ error: 'Invalid token' });
+    }
+    res.status(500).json({ error: err.message });
+  }
 }
 
 // GET /api/tenant-portal/me — full profile + unit + plot info
@@ -111,6 +132,10 @@ router.get('/maintenance', tenantAuth, async (req, res) => {
 router.post('/maintenance', tenantAuth, async (req, res) => {
   const { issue, priority } = req.body;
   if (!issue) return res.status(400).json({ error: 'Issue description is required.' });
+  const validPriorities = ['low', 'medium', 'high'];
+  if (priority && !validPriorities.includes(priority)) {
+    return res.status(400).json({ error: `priority must be one of: ${validPriorities.join(', ')}` });
+  }
   try {
     const tenantRes = await pool.query('SELECT house_id FROM tenants WHERE id = $1', [req.tenant.id]);
     const result = await pool.query(

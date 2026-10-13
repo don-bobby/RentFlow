@@ -3,26 +3,20 @@ const router  = express.Router();
 const pool    = require('../database/db');
 const jwt     = require('jsonwebtoken');
 
-// Previously this only checked "is the JWT validly signed" — it never
-// checked WHICH kind of token it was. A tenant's own portal login (role:
-// 'tenant') passed straight through onto every staff-only route below
-// (conversations, contacts, notices CRUD): tenants and staff users are
-// separate tables with independent id sequences, so a tenant whose id
-// happened to match a staff user's id could see that staff user's
-// conversation list, and POST /conversations/new would let a tenant open a
-// conversation mislabeled as participant_type='user' using their own
-// tenant id. Same bug class as sms.js before its auth fix — closed the
-// same way, by rejecting tenant tokens here instead of just any token.
-function auth(req, res, next) {
-  const token = req.headers.authorization?.split(' ')[1];
-  if (!token) return res.status(401).json({ error: 'No token' });
-  try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    if (decoded.role === 'tenant') return res.status(403).json({ error: 'Staff access required.' });
-    req.user = decoded;
-    next();
-  } catch { res.status(401).json({ error: 'Invalid token' }); }
-}
+// This file was the one staff route file in the whole backend still using
+// its own copy-pasted auth() instead of the shared middleware/auth.js —
+// every other file (tenants.js, payments.js, plots.js, houses.js,
+// expenses.js, maintenance.js, mpesa.js, listings.js, sms.js) already
+// migrated to it. Importing the shared one instead of hand-patching the
+// local copy gets two things the local version still couldn't do even
+// after rejecting tenant tokens:
+//   1. Role/approval is re-read from the DB on every request instead of
+//      trusted from the (up to 7-day-old) JWT, so a role change, a
+//      suspended agent, or an un-approved landlord is cut off immediately
+//      instead of keeping notices/messaging access until their token
+//      expires — which is exactly what every other route already does.
+//   2. A deleted user's token stops working here too, not just elsewhere.
+const { authMiddleware: auth } = require('../middleware/auth');
 
 function tenantAuth(req, res, next) {
   const token = req.headers.authorization?.split(' ')[1];
@@ -589,8 +583,15 @@ router.post('/conversations/:id/messages/tenant', tenantAuth, async (req, res) =
 router.get('/', auth, async (req, res) => {
   try {
     let query, params = [];
+    // Staff keep seeing expired notices (unlike the tenant feed, which drops
+    // them outright) so there's still a history of what was posted — but
+    // previously nothing distinguished an expired one from a live one, so a
+    // notice could sit in the "active" board for days after its own expiry
+    // date with no indication. `is_expired` surfaces that so the frontend
+    // can badge it instead of rendering it exactly like a current notice.
+    const isExpiredCol = `(n.expires_at IS NOT NULL AND n.expires_at <= NOW()) AS is_expired`;
     if (req.user.role === 'admin') {
-      query = `SELECT n.*, u.name AS author_name, COUNT(DISTINCT nr.tenant_id) AS read_count
+      query = `SELECT n.*, u.name AS author_name, COUNT(DISTINCT nr.tenant_id) AS read_count, ${isExpiredCol}
                FROM notices n JOIN users u ON n.author_id=u.id
                LEFT JOIN notice_reads nr ON nr.notice_id=n.id
                GROUP BY n.id, u.name ORDER BY n.created_at DESC`;
@@ -598,7 +599,7 @@ router.get('/', auth, async (req, res) => {
       // Added target_type='unit' — previously a caretaker's unit-targeted
       // notice on the landlord's own plot never matched here, since this
       // only checked 'property'-wide targeting.
-      query = `SELECT n.*, u.name AS author_name, COUNT(DISTINCT nr.tenant_id) AS read_count
+      query = `SELECT n.*, u.name AS author_name, COUNT(DISTINCT nr.tenant_id) AS read_count, ${isExpiredCol}
                FROM notices n JOIN users u ON n.author_id=u.id
                LEFT JOIN notice_reads nr ON nr.notice_id=n.id
                WHERE n.author_id=$1 OR n.target_type='all' OR n.target_type='staff'
@@ -612,7 +613,7 @@ router.get('/', auth, async (req, res) => {
       // Now also includes n.author_id=$1 (caretakers can post their own
       // notices as of this change) and target_type='unit' on their plot
       // (previously only 'property'-wide notices were visible to them).
-      query = `SELECT n.*, u.name AS author_name, COUNT(DISTINCT nr.tenant_id) AS read_count
+      query = `SELECT n.*, u.name AS author_name, COUNT(DISTINCT nr.tenant_id) AS read_count, ${isExpiredCol}
                FROM notices n JOIN users u ON n.author_id=u.id
                LEFT JOIN notice_reads nr ON nr.notice_id=n.id
                WHERE n.author_id=$1 OR n.target_type='all'
@@ -632,7 +633,7 @@ router.get('/', auth, async (req, res) => {
       // Was missing entirely — agents fell through to the empty-list else
       // branch below. Same shape as landlord's own-plus-targeted-plot
       // query, scoped through the agent's own assigned landlords.
-      query = `SELECT n.*, u.name AS author_name, COUNT(DISTINCT nr.tenant_id) AS read_count
+      query = `SELECT n.*, u.name AS author_name, COUNT(DISTINCT nr.tenant_id) AS read_count, ${isExpiredCol}
                FROM notices n JOIN users u ON n.author_id=u.id
                LEFT JOIN notice_reads nr ON nr.notice_id=n.id
                WHERE n.author_id=$1 OR n.target_type='all' OR n.target_type='staff'

@@ -189,17 +189,30 @@ export default function Users() {
     } catch (e) { setError(e.response?.data?.error || 'Failed to remove plot.'); }
   }
 
-  const agents = users.filter(u => u.role === 'agent');
-  const roleCounts = users.reduce((m, u) => { m[u.role] = (m[u.role] || 0) + 1; return m; }, {});
-  const pendingLandlordCount = users.filter(u => u.role === 'landlord' && !u.is_approved).length;
+  // Only active, approved agents are real choices for "assign an agent to
+  // manage this landlord" — a suspended agent can't log in or act on
+  // anything, so a landlord/agent assigned to one is silently cut off with
+  // no error anywhere in the UI. Both the Approve-Landlord modal and the
+  // inline per-row reassignment <select> read from this same list.
+  const agents = users.filter(u => u.role === 'agent' && u.is_approved);
 
-  const filtered = users.filter(u => {
+  // Non-admins never see themselves in the list (a landlord managing their
+  // own caretakers shouldn't see "themselves" as a row), so every other
+  // count on this page needs to be taken AFTER that exclusion too — not
+  // from the raw `users` array. Previously the header ("N total users") and
+  // the role badges counted the raw array while the table applied
+  // `notSelf` separately, so a landlord with no caretakers yet saw
+  // "1 total user" (themselves, counted) right above a "No users found"
+  // table (themselves, excluded) — same list, two different answers.
+  const visibleUsers = users.filter(u => isAdmin || u.id !== me?.id);
+  const roleCounts = visibleUsers.reduce((m, u) => { m[u.role] = (m[u.role] || 0) + 1; return m; }, {});
+  const pendingLandlordCount = visibleUsers.filter(u => u.role === 'landlord' && !u.is_approved).length;
+
+  const filtered = visibleUsers.filter(u => {
     const matchRole    = roleFilter === 'all' || u.role === roleFilter;
     const matchSearch  = search === '' || u.name?.toLowerCase().includes(search.toLowerCase()) || u.email?.toLowerCase().includes(search.toLowerCase());
     const matchPending = !pendingOnly || (u.role === 'landlord' && !u.is_approved);
-    // Landlord should not see themselves in the list
-    const notSelf = isAdmin || u.id !== me?.id;
-    return matchRole && matchSearch && matchPending && notSelf;
+    return matchRole && matchSearch && matchPending;
   });
 
   const roleBadge = (role, approved) => {
@@ -244,7 +257,7 @@ export default function Users() {
         <div>
           <h1 style={{ fontFamily: 'Space Grotesk', fontSize: 26, fontWeight: 700, marginBottom: 4, color: 'var(--text)' }}>Users</h1>
           <p style={{ color: 'var(--muted)', fontSize: 14 }}>
-            {users.length} total user{users.length !== 1 ? 's' : ''}
+            {visibleUsers.length} total user{visibleUsers.length !== 1 ? 's' : ''}
             {pendingLandlordCount > 0 && <> · <span style={{ color: 'var(--amber, #d97706)', fontWeight: 700 }}>{pendingLandlordCount} pending approval</span></>}
           </p>
         </div>
@@ -275,7 +288,7 @@ export default function Users() {
           : isAgent ? ['all', 'landlord', 'caretaker']
           : ['all', 'caretaker'] // landlord (either profile) — filtering by "landlord" is pointless, they only ever see themselves
         ).map(r => {
-          const count = r === 'all' ? users.length : (roleCounts[r] || 0);
+          const count = r === 'all' ? visibleUsers.length : (roleCounts[r] || 0);
           return (
             <button key={r} onClick={() => setRoleFilter(r)} style={{ padding: '7px 16px', borderRadius: 99, border: '1px solid var(--border)', background: roleFilter === r ? 'var(--primary, #7c3aed)' : 'var(--surface)', color: roleFilter === r ? '#fff' : 'var(--muted)', fontWeight: 600, fontSize: 13, textTransform: 'capitalize', cursor: 'pointer' }}>{r} ({count})</button>
           );

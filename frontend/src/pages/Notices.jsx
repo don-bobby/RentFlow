@@ -237,14 +237,22 @@ export default function Notices({ defaultTab = 'notices' }) {
             </div>
           ) : notices.map(n => {
             const p = PRIORITY[n.priority] || PRIORITY.info;
+            // Staff still see expired notices (kept as history, same as
+            // before) but they used to render identically to a live one —
+            // same colors, no indication the expiry date had passed. Dim
+            // the card and badge it explicitly instead.
+            const expired = !!n.is_expired;
             return (
-              <div key={n.id} style={{ background: 'var(--surface)', border: `1px solid var(--border)`, borderLeft: `4px solid ${p.color}`, borderRadius: 12, padding: isMobile ? '13px 14px' : '16px 20px', boxShadow: 'var(--shadow)' }}>
+              <div key={n.id} style={{ background: 'var(--surface)', border: `1px solid var(--border)`, borderLeft: `4px solid ${p.color}`, borderRadius: 12, padding: isMobile ? '13px 14px' : '16px 20px', boxShadow: 'var(--shadow)', opacity: expired ? 0.6 : 1 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 10 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
                     <span style={{ background: p.bg, color: p.color, padding: '3px 10px', borderRadius: 99, fontSize: 12, fontWeight: 700 }}>{p.icon} {p.label}</span>
                     <span style={{ background: 'var(--surface2)', color: 'var(--muted)', padding: '3px 10px', borderRadius: 99, fontSize: 12, fontWeight: 600, textTransform: 'capitalize' }}>
                       {n.target_type === 'all' ? '🌍 Everyone' : n.target_type === 'staff' ? '🔒 Staff Only' : n.target_type === 'property' ? '🏢 Property' : n.target_type === 'unit' ? '🏠 Unit' : '👤 Individual'}
                     </span>
+                    {expired && (
+                      <span style={{ background: 'var(--surface2)', color: 'var(--muted)', padding: '3px 10px', borderRadius: 99, fontSize: 12, fontWeight: 700, border: '1px solid var(--border)' }}>⏳ Expired</span>
+                    )}
                   </div>
                   <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                     <span style={{ fontSize: 12, color: 'var(--muted)' }}>{parseInt(n.read_count || 0)} read</span>
@@ -257,7 +265,7 @@ export default function Notices({ defaultTab = 'notices' }) {
                 <div style={{ fontSize: 14, color: 'var(--muted)', lineHeight: 1.6, marginBottom: 8 }}>{n.body}</div>
                 <div style={{ fontSize: 11, color: 'var(--muted)' }}>
                   Posted by {n.author_name} · {new Date(n.created_at).toLocaleDateString('en-KE', { day: 'numeric', month: 'short', year: 'numeric' })}
-                  {n.expires_at && ` · Expires ${new Date(n.expires_at).toLocaleDateString('en-KE')}`}
+                  {n.expires_at && ` · ${expired ? 'Expired' : 'Expires'} ${new Date(n.expires_at).toLocaleDateString('en-KE')}`}
                 </div>
               </div>
             );

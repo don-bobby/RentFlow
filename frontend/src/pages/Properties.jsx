@@ -216,13 +216,19 @@ export default function Properties() {
 
   function openAddHouse(plotId) {
     setEditing(null);
-    setForm({ unit_number: '', house_type: 'Bedsitter', rent_amount: '', deposit: '', plot_id: String(plotId || plots[0]?.id || ''), status: 'vacant' });
+    setForm({ unit_number: '', house_type: 'Bedsitter', rent_amount: '', deposit: '', plot_id: String(plotId || plots[0]?.id || ''), status: 'vacant', description: '' });
     setModal('house'); setError('');
   }
 
   function openEditHouse(house) {
     setEditing(house);
-    setForm({ unit_number: house.unit_number, house_type: house.house_type, rent_amount: house.rent_amount, deposit: house.deposit || '', plot_id: house.plot_id, status: house.status, meter_no: house.meter_no || '' });
+    // house.description comes from the same PATCH /houses/:id/description
+    // endpoint used below — this is the unit's public listing blurb, shown
+    // as-is on the public vacant-units page. There was previously no field
+    // anywhere in this form to see or change it, so whatever ended up in
+    // that column (including leftover test text) stayed stuck there with
+    // no way to clear it short of editing the database directly.
+    setForm({ unit_number: house.unit_number, house_type: house.house_type, rent_amount: house.rent_amount, deposit: house.deposit || '', plot_id: house.plot_id, status: house.status, meter_no: house.meter_no || '', description: house.description || '' });
     setModal('house'); setError('');
   }
 
@@ -250,10 +256,20 @@ export default function Properties() {
           status:     form.status,
           meter_no:   form.meter_no || '',
         };
+        let houseId = editing?.id;
         if (editing) {
           await API.put(`/houses/${editing.id}`, housePayload);
         } else {
-          await API.post('/houses', housePayload);
+          const createRes = await API.post('/houses', housePayload);
+          houseId = createRes.data?.data?.id;
+        }
+        // Separate endpoint — the main create/update above never touches
+        // `description` (confirmed in backend/routes/houses.js: neither
+        // POST / nor PUT /:id destructure it from the body), only
+        // PATCH /houses/:id/description does. Only staff who could already
+        // see this field (gated below on houses.edit) can call it.
+        if (can('houses.edit') && houseId) {
+          await API.patch(`/houses/${houseId}/description`, { description: form.description || null });
         }
       }
       await load();
@@ -784,6 +800,23 @@ export default function Properties() {
                     <option value="maintenance">Under Maintenance</option>
                   </select>
                 </div>
+                {can('houses.edit') && (
+                  <div>
+                    <label style={{ ...labelStyle, display: 'flex', alignItems: 'center', gap: 6 }}>
+                      Public Description
+                      <span style={{ fontSize: 10, fontWeight: 500, color: isDark ? 'rgba(255,255,255,0.38)' : '#94a3b8', textTransform: 'none', letterSpacing: 0 }}>
+                        — optional · shown as-is on the public listings page
+                      </span>
+                    </label>
+                    <textarea
+                      value={form.description || ''}
+                      onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
+                      placeholder="e.g. Bright corner unit with balcony, newly tiled."
+                      rows={3}
+                      style={{ ...inputStyle, resize: 'vertical', fontFamily: 'inherit', lineHeight: 1.5 }}
+                    />
+                  </div>
+                )}
               </>)}
             </div>
 

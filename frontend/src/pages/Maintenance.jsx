@@ -183,7 +183,12 @@ export default function Maintenance() {
   }, [modal]);
 
   function openNew() {
-    setForm({ tenant_id: tenants[0]?.id || '', issue: '', priority: 'medium' });
+    // Default to the first ACTIVE tenant — the dropdown below only ever
+    // lists active tenants, so defaulting from the full (unfiltered) list
+    // could silently preselect a moved-out tenant that isn't even an
+    // option in the select, while the box visually shows someone else.
+    const activeTenants = tenants.filter(t => t.is_active);
+    setForm({ tenant_id: activeTenants[0]?.id || '', issue: '', priority: 'medium' });
     setError('');
     setModal(true);
   }
