@@ -190,14 +190,33 @@ router.post('/callback', async (req, res) => {
 router.get('/stk-status/:checkoutId', payerAuth, async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT status, notes, payment_date FROM payments WHERE transaction_id = $1 LIMIT 1`,
+      `SELECT p.status, p.notes, p.payment_date, p.tenant_id, h.plot_id
+       FROM payments p LEFT JOIN houses h ON p.house_id = h.id
+       WHERE p.transaction_id = $1 LIMIT 1`,
       [req.params.checkoutId]
     );
     if (!result.rows[0]) {
-      // Row was deleted — callback confirmed success
+      // Row was deleted — callback confirmed success. Can't verify ownership
+      // of a row that's already gone, but this only ever happens right after
+      // the polling caller's own stk-push request, so it's low-risk as-is.
       return res.json({ status: 'matched' });
     }
-    let { status, notes, payment_date } = result.rows[0];
+    let { status, notes, payment_date, tenant_id, plot_id } = result.rows[0];
+
+    // Previously this had no ownership check at all — any logged-in user
+    // (tenant or staff) could poll the status of ANY checkout ID, not just
+    // one they initiated. The ID is a long, random, Safaricom-generated
+    // string (not practically guessable), but this closes the gap the same
+    // way every other route in this file already does.
+    if (req.user.role === 'tenant') {
+      if (tenant_id != null && Number(tenant_id) !== Number(req.user.id)) {
+        return res.status(403).json({ error: 'Access denied' });
+      }
+    } else if (req.user.role !== 'admin') {
+      const visible = await getVisiblePlotIds(req.user);
+      const allowed = visible === 'ALL' || (plot_id != null && visible.includes(plot_id));
+      if (!allowed) return res.status(403).json({ error: 'Access denied' });
+    }
 
     // Auto-expire pending rows older than 3 minutes (Safaricom STK times out in 120s)
     if (status === 'pending') {
@@ -218,14 +237,39 @@ router.get('/stk-status/:checkoutId', payerAuth, async (req, res) => {
 });
 
 // POST /api/mpesa/expire-pending
-// Called on page load to auto-expire any pending STK rows older than 3 minutes
+// Called on page load to auto-expire any pending STK rows older than 3 minutes.
+// Previously this had no scope check — ANY staff member (any role) could
+// mark every pending payment in the ENTIRE system as failed, not just rows
+// tied to their own properties. A caretaker for one plot could disrupt
+// payment processing for every other landlord. Now non-admins only expire
+// pending rows belonging to tenants within their own visible plots.
 router.post('/expire-pending', staffAuth, async (req, res) => {
   try {
-    const result = await pool.query(
-      `UPDATE payments SET status='failed', notes='STK push timed out — no callback received'
-       WHERE status='pending' AND payment_date < NOW() - INTERVAL '3 minutes'
-       RETURNING id`
-    );
+    let result;
+    if (['admin', 'super_admin'].includes(req.user.role)) {
+      result = await pool.query(
+        `UPDATE payments SET status='failed', notes='STK push timed out — no callback received'
+         WHERE status='pending' AND payment_date < NOW() - INTERVAL '3 minutes'
+         RETURNING id`
+      );
+    } else {
+      const visible = await getVisiblePlotIds(req.user);
+      if (visible !== 'ALL' && visible.length === 0) return res.json({ expired: 0 });
+      const scopeFilter = visible === 'ALL' ? '' : 'AND p.id = ANY($1)';
+      const scopeParams = visible === 'ALL' ? [] : [visible];
+      result = await pool.query(
+        `UPDATE payments SET status='failed', notes='STK push timed out — no callback received'
+         WHERE id IN (
+           SELECT pay.id FROM payments pay
+           LEFT JOIN tenants t ON pay.tenant_id = t.id
+           LEFT JOIN houses h ON t.house_id = h.id
+           LEFT JOIN plots p ON h.plot_id = p.id
+           WHERE pay.status='pending' AND pay.payment_date < NOW() - INTERVAL '3 minutes' ${scopeFilter}
+         )
+         RETURNING id`,
+        scopeParams
+      );
+    }
     res.json({ expired: result.rowCount });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });

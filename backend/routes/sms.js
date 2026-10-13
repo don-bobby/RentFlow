@@ -1,13 +1,31 @@
 const express = require('express');
 const router  = express.Router();
 const pool    = require('../database/db');
-const jwt     = require('jsonwebtoken');
+// Previously this file used its own `auth()` helper, which only checked for
+// a valid JWT — it never checked WHICH role the token belonged to. That let
+// a tenant's own login send arbitrary SMS (at the landlord's cost), trigger
+// a system-wide rent-reminder blast to every tenant (not just their own
+// unit), and read the full SMS history of every landlord's tenants. Staff
+// middleware/auth.js hard-rejects tenant tokens, same as every other
+// staff-only route in this project — using it here closes that off.
+const { authMiddleware: auth } = require('../middleware/auth');
+const { getVisiblePlotIds } = require('../middleware/scope');
 
-function auth(req, res, next) {
-  const token = req.headers.authorization?.split(' ')[1];
-  if (!token) return res.status(401).json({ error: 'No token provided' });
-  try { req.user = jwt.verify(token, process.env.JWT_SECRET); next(); }
-  catch { res.status(401).json({ error: 'Invalid token' }); }
+function requireAdmin(req, res, next) {
+  if (!['admin', 'super_admin'].includes(req.user.role)) return res.status(403).json({ error: 'Admin access required' });
+  next();
+}
+
+// SMS is an admin/agent-only feature — landlords and caretakers no longer
+// get any access to it (they previously could, since `auth` alone only
+// checked for a valid staff token, not which staff role). The tenant portal
+// never touches this file at all; tenant SMS (OTP delivery, PIN-reset codes)
+// is sent directly from auth.js, not through here.
+function requireAdminOrAgent(req, res, next) {
+  if (!['admin', 'super_admin', 'agent'].includes(req.user.role)) {
+    return res.status(403).json({ error: 'SMS access is limited to admin and agent accounts.' });
+  }
+  next();
 }
 
 function getAT() {
@@ -32,8 +50,9 @@ async function sendSMS(to_phone, message) {
   await pool.query(`INSERT INTO sms_logs (to_phone, message, status) VALUES ($1, $2, 'sent')`, [formatted, message]);
 }
 
-// POST /api/sms/send
-router.post('/send', auth, async (req, res) => {
+// POST /api/sms/send — free-form message to any phone number (a tenant's or
+// a landlord's). Admin/agent only.
+router.post('/send', auth, requireAdminOrAgent, async (req, res) => {
   const { to_phone, message } = req.body;
   if (!to_phone || !message) return res.status(400).json({ error: 'to_phone and message are required.' });
   try {
@@ -45,13 +64,24 @@ router.post('/send', auth, async (req, res) => {
   }
 });
 
-// POST /api/sms/send-reminders — send to all tenants with arrears
-router.post('/send-reminders', auth, async (req, res) => {
+// POST /api/sms/send-reminders — send to all tenants with arrears.
+// Admin/agent only, same as every other route in this file now. An agent's
+// getVisiblePlotIds already limits this to their own landlords' tenants;
+// admin's resolves to 'ALL'. Landlords and caretakers no longer reach this
+// route at all.
+router.post('/send-reminders', auth, requireAdminOrAgent, async (req, res) => {
   try {
+    const visible = await getVisiblePlotIds(req.user);
+    if (visible !== 'ALL' && visible.length === 0) {
+      return res.json({ success: true, results: { sent: 0, failed: 0, skipped: 0 } });
+    }
+    const scopeFilter = visible === 'ALL' ? '' : 'AND p.id = ANY($1)';
+    const scopeParams = visible === 'ALL' ? [] : [visible];
     const tenants = await pool.query(
       `SELECT t.id, t.full_name, t.phone, t.move_in_date, h.rent_amount, h.unit_number, p.name AS plot_name
        FROM tenants t LEFT JOIN houses h ON t.house_id=h.id LEFT JOIN plots p ON h.plot_id=p.id
-       WHERE t.is_active=true AND t.move_in_date IS NOT NULL AND t.phone IS NOT NULL`
+       WHERE t.is_active=true AND t.move_in_date IS NOT NULL AND t.phone IS NOT NULL ${scopeFilter}`,
+      scopeParams
     );
     const payments = await pool.query(
       `SELECT tenant_id,
@@ -91,8 +121,13 @@ router.post('/send-reminders', auth, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// GET /api/sms/logs
-router.get('/logs', auth, async (req, res) => {
+// GET /api/sms/logs — admin-only for now. sms_logs has no plot_id or
+// tenant_id column, so there's no way to scope these rows to "the
+// requester's properties" the way every other list route does — without
+// that link, any non-admin role would see every landlord's tenant phone
+// numbers and message content. Restricting to admin/super_admin until the
+// schema can tie a log row back to a tenant/plot.
+router.get('/logs', auth, requireAdmin, async (req, res) => {
   try {
     const result = await pool.query(`SELECT * FROM sms_logs ORDER BY sent_at DESC LIMIT 100`);
     res.json({ success: true, data: result.rows });

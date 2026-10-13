@@ -161,6 +161,18 @@ router.post('/users', authMiddleware, async (req, res) => {
       if (plotRes.rows.length > 0) assignedPlot = plotRes.rows[0].id;
     }
 
+    // Previously an explicitly-supplied plot_id was trusted outright — a
+    // landlord or agent could create a caretaker record pointing at a plot
+    // that isn't theirs, just by passing a different plot_id in the request
+    // body. Now checked against the requester's own visible plots, same as
+    // every other route that accepts a plot_id from a non-admin.
+    if (assignedPlot && !['admin', 'super_admin'].includes(requesterRole)) {
+      const visible = await getVisiblePlotIds(req.user);
+      if (visible !== 'ALL' && !visible.includes(Number(assignedPlot))) {
+        return res.status(403).json({ error: 'You do not have access to this plot.' });
+      }
+    }
+
     // Landlords created by an agent are auto-assigned to that agent.
     const assignedAgent = (requesterRole === 'agent' && role === 'landlord') ? requesterId : null;
 
@@ -486,6 +498,10 @@ router.patch('/users/:id/password', authMiddleware, async (req, res) => {
 });
 
 // ── GET /api/auth/users/:id/plots — get all plots assigned to a caretaker ──────
+// Previously had no scope check — any logged-in staff member could look up
+// which properties ANY caretaker is assigned to, just by guessing their
+// user id, not only caretakers on their own properties. Now scoped the same
+// way the assign-plot routes right below it already are.
 router.get('/users/:id/plots', authMiddleware, async (req, res) => {
   try {
     const result = await pool.query(
@@ -494,6 +510,18 @@ router.get('/users/:id/plots', authMiddleware, async (req, res) => {
        WHERE cp.caretaker_id = $1 ORDER BY p.name`,
       [req.params.id]
     );
+
+    if (!['admin', 'super_admin'].includes(req.user.role) && result.rows.length > 0) {
+      // Only block when there's actually something to protect — an empty
+      // result (caretaker has no plots assigned) leaks nothing either way.
+      const visible = await getVisiblePlotIds(req.user);
+      const ownAny = req.user.id === parseInt(req.params.id);
+      const sharesVisiblePlot = visible === 'ALL' || result.rows.some(p => visible.includes(p.id));
+      if (!ownAny && !sharesVisiblePlot) {
+        return res.status(403).json({ error: 'Access denied' });
+      }
+    }
+
     res.json({ success: true, data: result.rows });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });

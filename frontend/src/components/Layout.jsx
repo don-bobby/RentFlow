@@ -280,6 +280,10 @@ export default function Layout() {
     { to: '/manage/listings', icon: '🏷️', label: 'Listings',  roles: ['admin','super_admin','agent','landlord'] },
     { to: '/notices',     icon: '📢', label: 'Notices',    roles: ['admin','super_admin','agent','landlord','caretaker'] },
     { to: '/messages',    icon: '💬', label: 'Messages',   roles: ['admin','super_admin','agent','landlord','caretaker'] },
+    // Admin/agent only, same restriction as backend/routes/sms.js — SMS
+    // (direct messages to tenants/landlords, plus the arrears-reminder
+    // blast) is no longer something landlord or caretaker accounts see.
+    { to: '/sms',         icon: '📱', label: 'SMS',        roles: ['admin','super_admin','agent'] },
   ].filter(i => i.roles.includes(role));
 
   // Messages lives in the topbar (next to the profile dropdown) instead of

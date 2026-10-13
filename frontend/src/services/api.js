@@ -54,3 +54,8 @@ export const matchPayment         = (id, tenantId, houseId)   => API.patch(`/mpe
 // Maintenance
 export const getMaintenance = ()     => API.get('/maintenance');
 export const addMaintenance = (data) => API.post('/maintenance', data);
+
+// SMS (admin/agent only — see backend/routes/sms.js)
+export const sendSms      = (toPhone, message) => API.post('/sms/send', { to_phone: toPhone, message });
+export const sendSmsReminders = ()             => API.post('/sms/send-reminders');
+export const getSmsLogs       = ()             => API.get('/sms/logs');

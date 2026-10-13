@@ -16,6 +16,7 @@ import ListingsAdmin  from './pages/Listings';
 import Notices        from './pages/Notices';
 import RolesPermissions from './pages/RolesPermissions';
 import Expenses from './pages/Expenses';
+import SmsMessages from './pages/SmsMessages';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { initTheme } from './utils/theme';
 
@@ -89,6 +90,13 @@ function AppRoutes() {
         <Route path="roles" element={
           <ProtectedRoute allowedRoles={['admin', 'super_admin']}>
             <RolesPermissions />
+          </ProtectedRoute>
+        } />
+        {/* Admin/agent only — matches the backend's sms.js restriction
+            exactly. Landlord and caretaker never see this route at all. */}
+        <Route path="sms" element={
+          <ProtectedRoute allowedRoles={['admin', 'super_admin', 'agent']}>
+            <SmsMessages />
           </ProtectedRoute>
         } />
       </Route>
