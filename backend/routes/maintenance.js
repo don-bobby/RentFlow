@@ -153,8 +153,22 @@ router.patch('/:id', staffAuth, requirePermission('maintenance.update'), async (
 
 router.delete('/:id', staffAuth, requirePermission('maintenance.delete'), async (req, res) => {
   try {
+    const existing = await pool.query(
+      `SELECT m.id, h.plot_id FROM maintenance_requests m
+       LEFT JOIN houses h ON m.house_id = h.id
+       WHERE m.id = $1`,
+      [req.params.id]
+    );
+    if (existing.rows.length === 0) return res.status(404).json({ error: 'Request not found' });
+
+    if (!['admin', 'super_admin'].includes(req.user.role)) {
+      const visible = await getVisiblePlotIds(req.user);
+      const plotId = existing.rows[0].plot_id;
+      const allowed = visible === 'ALL' || (plotId != null && visible.includes(plotId));
+      if (!allowed) return res.status(403).json({ error: 'Access denied' });
+    }
+
     const result = await pool.query('DELETE FROM maintenance_requests WHERE id = $1 RETURNING *', [req.params.id]);
-    if (result.rows.length === 0) return res.status(404).json({ error: 'Request not found' });
     res.json({ success: true, message: 'Request deleted' });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
