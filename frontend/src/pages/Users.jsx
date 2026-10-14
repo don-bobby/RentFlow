@@ -34,9 +34,23 @@ export default function Users() {
   const [selectedAgent, setSelectedAgent] = useState('');   // agent_id chosen in the approve modal
   const [form,         setForm]         = useState({ name: '', email: '', password: '', role: 'caretaker', phone: '', plot_id: '' });
 
+  // Per-user-per-property permission overrides (admin only). `modal ===
+  // 'permissions'` reuses the existing `selected` user state above.
+  const [allPermissions, setAllPermissions] = useState([]); // distinct permission strings, for the "Add override" dropdown
+  const [permData,       setPermData]       = useState(null); // { profile, defaults, overrides } for the selected user
+  const [permLoading,    setPermLoading]    = useState(false);
+  const [newOverride,    setNewOverride]    = useState({ plot_id: '', permission: '', effect: 'grant' });
+
   const { user: me, can } = useAuth();
   const isAdmin = me?.role === 'admin' || me?.role === 'super_admin';
   const isAgent = me?.role === 'agent';
+
+  // Same floor the backend enforces (routes/auth.js) — kept here only so the
+  // dropdown doesn't even offer them; the backend is what actually stops it.
+  const NEVER_GRANTABLE = ['system.manage_roles', 'system.manage_permissions', 'users.create_super_admin'];
+  // Only these roles can have an override at all — admin/super_admin are
+  // always fully trusted and never go through this system.
+  const OVERRIDABLE_ROLES = ['agent', 'landlord', 'caretaker'];
 
   async function load() {
     setLoading(true);
@@ -46,6 +60,70 @@ export default function Users() {
       setPlots(Array.isArray(pr.data) ? pr.data : (pr.data.data || []));
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
+  }
+
+  // The "Add override" dropdown needs the full set of permission strings
+  // that exist anywhere in the system. The role-permissions matrix
+  // (GET /auth/role-permissions) already has one row per (profile,
+  // permission), so the distinct permission values out of that are exactly
+  // the list we want — admin-only endpoint, so only fetch it for admins.
+  useEffect(() => {
+    if (!isAdmin) return;
+    API.get('/auth/role-permissions')
+      .then(res => {
+        const rows = res.data.data || [];
+        const names = Array.from(new Set(rows.map(r => r.permission))).filter(p => !NEVER_GRANTABLE.includes(p)).sort();
+        setAllPermissions(names);
+      })
+      .catch(() => setAllPermissions([]));
+  }, [isAdmin]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function openPermissions(user) {
+    setSelected(user);
+    setError('');
+    setNewOverride({ plot_id: '', permission: '', effect: 'grant' });
+    setModal('permissions');
+    setPermLoading(true);
+    try {
+      const res = await API.get(`/auth/users/${user.id}/permission-overrides`);
+      setPermData(res.data.data);
+    } catch (e) {
+      setError(e.response?.data?.error || 'Failed to load permissions.');
+      setPermData(null);
+    } finally {
+      setPermLoading(false);
+    }
+  }
+
+  async function refreshPermData() {
+    if (!selected) return;
+    try {
+      const res = await API.get(`/auth/users/${selected.id}/permission-overrides`);
+      setPermData(res.data.data);
+    } catch (e) { setError(e.response?.data?.error || 'Failed to refresh permissions.'); }
+  }
+
+  async function handleAddOverride() {
+    if (!newOverride.permission) return;
+    setSaving(true); setError('');
+    try {
+      await API.post(`/auth/users/${selected.id}/permission-overrides`, {
+        plot_id: newOverride.plot_id || null,
+        permission: newOverride.permission,
+        effect: newOverride.effect,
+      });
+      setNewOverride({ plot_id: '', permission: '', effect: 'grant' });
+      await refreshPermData();
+    } catch (e) { setError(e.response?.data?.error || 'Failed to add override.'); }
+    finally { setSaving(false); }
+  }
+
+  async function handleRemoveOverride(overrideId) {
+    setError('');
+    try {
+      await API.delete(`/auth/users/${selected.id}/permission-overrides/${overrideId}`);
+      await refreshPermData();
+    } catch (e) { setError(e.response?.data?.error || 'Failed to remove override.'); }
   }
 
   useEffect(() => { load(); }, [me?.id]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -455,6 +533,12 @@ export default function Users() {
                       {isAdmin && (
                         <button onClick={() => handleResetPassword(u)} style={{ padding: '4px 10px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--surface)', fontSize: 12, fontWeight: 600, color: 'var(--muted)', cursor: 'pointer' }}>Reset PW</button>
                       )}
+                      {isAdmin && OVERRIDABLE_ROLES.includes(u.role) && (
+                        <button onClick={() => openPermissions(u)} title="Grant or revoke a specific permission for this user, globally or for one property"
+                          style={{ padding: '4px 10px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--surface)', fontSize: 12, fontWeight: 600, color: 'var(--primary, #7c3aed)', cursor: 'pointer' }}>
+                          🔑 Permissions
+                        </button>
+                      )}
                     </div>
                   </td>
                 </tr>
@@ -643,6 +727,105 @@ export default function Users() {
 
             <div style={{ marginTop: 24, textAlign: 'right' }}>
               <button onClick={() => setModal(null)} style={{ padding: '10px 20px', borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface)', fontWeight: 600, fontSize: 14, cursor: 'pointer' }}>Done</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Permission Overrides Modal (admin only) — grant/revoke one
+          permission for this user, either for every property they can
+          already see (plot_id = null) or for one specific property. This
+          is the UI for the backend's user_permission_overrides table. */}
+      {modal === 'permissions' && selected && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, padding: 20 }}>
+          <div style={{ background: 'var(--surface)', borderRadius: 16, padding: 28, width: '100%', maxWidth: 560, boxShadow: 'var(--shadow-lg)', maxHeight: '85vh', overflowY: 'auto' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+              <h2 style={{ fontFamily: 'Space Grotesk', fontWeight: 700, fontSize: 18 }}>🔑 Permissions — {selected.name}</h2>
+              <button onClick={() => { setModal(null); setPermData(null); }} style={{ width: 30, height: 30, borderRadius: '50%', border: 'none', background: 'var(--surface2)', cursor: 'pointer', fontSize: 16, color: 'var(--muted)' }}>×</button>
+            </div>
+            <p style={{ color: 'var(--muted)', fontSize: 13, marginBottom: 18 }}>
+              Role: <strong style={{ textTransform: 'capitalize' }}>{selected.role}</strong>{permData?.profile ? ` (${permData.profile.replace(/_/g, ' ')})` : ''}.
+              Overrides below add to or take away from this role's normal permissions — for every property this user can see, or just one.
+            </p>
+
+            {error && <div style={{ background: 'var(--red-light, #fee2e2)', color: 'var(--red, #dc2626)', padding: '9px 14px', borderRadius: 8, marginBottom: 14, fontSize: 13 }}>{error}</div>}
+
+            {permLoading ? (
+              <div style={{ color: 'var(--muted)', fontSize: 13, padding: '20px 0', textAlign: 'center' }}>Loading...</div>
+            ) : (
+              <>
+                {/* Role defaults — read-only, for context */}
+                <div style={{ marginBottom: 20 }}>
+                  <label style={labelStyle}>Role Defaults ({permData?.defaults?.length || 0})</label>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                    {(permData?.defaults || []).length === 0 ? (
+                      <span style={{ color: 'var(--muted)', fontSize: 13 }}>None.</span>
+                    ) : permData.defaults.map(p => (
+                      <span key={p} style={{ background: 'var(--surface2)', color: 'var(--muted)', padding: '3px 9px', borderRadius: 6, fontSize: 12 }}>{p}</span>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Active overrides */}
+                <div style={{ marginBottom: 20 }}>
+                  <label style={labelStyle}>Active Overrides ({permData?.overrides?.length || 0})</label>
+                  {(permData?.overrides || []).length === 0 ? (
+                    <div style={{ color: 'var(--muted)', fontSize: 13, padding: '10px 0' }}>No overrides set — this user just has their role's defaults everywhere.</div>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                      {permData.overrides.map(o => (
+                        <div key={o.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'var(--surface2)', border: '1px solid var(--border)', borderRadius: 8, padding: '10px 14px', gap: 10 }}>
+                          <div style={{ minWidth: 0 }}>
+                            <div style={{ fontWeight: 600, fontSize: 13 }}>{o.permission}</div>
+                            <div style={{ fontSize: 12, color: 'var(--muted)' }}>
+                              {o.plot_id ? `📍 ${o.plot_name || `Property #${o.plot_id}`}` : 'All properties'}
+                            </div>
+                          </div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+                            <span style={{
+                              background: o.effect === 'grant' ? 'var(--green-light, #dcfce7)' : 'var(--red-light, #fee2e2)',
+                              color: o.effect === 'grant' ? 'var(--green, #16a34a)' : 'var(--red, #dc2626)',
+                              padding: '3px 10px', borderRadius: 99, fontSize: 12, fontWeight: 600, textTransform: 'uppercase',
+                            }}>
+                              {o.effect}
+                            </span>
+                            <button onClick={() => handleRemoveOverride(o.id)} style={{ padding: '4px 10px', borderRadius: 6, border: 'none', background: 'var(--red-light, #fee2e2)', color: 'var(--red, #dc2626)', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>Remove</button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Add a new override */}
+                <div>
+                  <label style={labelStyle}>Add Override</label>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                    <select value={newOverride.permission} onChange={e => setNewOverride(f => ({ ...f, permission: e.target.value }))} style={inputStyle}>
+                      <option value="">— Select permission —</option>
+                      {allPermissions.map(p => <option key={p} value={p}>{p}</option>)}
+                    </select>
+                    <div style={{ display: 'flex', gap: 10 }}>
+                      <select value={newOverride.plot_id} onChange={e => setNewOverride(f => ({ ...f, plot_id: e.target.value }))} style={{ ...inputStyle, flex: 1 }}>
+                        <option value="">— All properties —</option>
+                        {plots.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                      </select>
+                      <select value={newOverride.effect} onChange={e => setNewOverride(f => ({ ...f, effect: e.target.value }))} style={{ ...inputStyle, flex: 1 }}>
+                        <option value="grant">Grant</option>
+                        <option value="revoke">Revoke</option>
+                      </select>
+                    </div>
+                    <button onClick={handleAddOverride} disabled={!newOverride.permission || saving}
+                      style={{ padding: '10px 16px', borderRadius: 8, border: 'none', background: 'var(--primary, #7c3aed)', color: '#fff', fontWeight: 600, fontSize: 14, cursor: 'pointer' }}>
+                      {saving ? 'Saving...' : '+ Add Override'}
+                    </button>
+                  </div>
+                </div>
+              </>
+            )}
+
+            <div style={{ marginTop: 24, textAlign: 'right' }}>
+              <button onClick={() => { setModal(null); setPermData(null); }} style={{ padding: '10px 20px', borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface)', fontWeight: 600, fontSize: 14, cursor: 'pointer' }}>Done</button>
             </div>
           </div>
         </div>

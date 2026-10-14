@@ -3,7 +3,7 @@ const router  = express.Router();
 const pool    = require('../database/db');
 const { getVisiblePlotIds } = require('../middleware/scope');
 const { authMiddleware: staffAuth } = require('../middleware/auth');
-const { requirePermission } = require('../middleware/permissions');
+const { requirePermission, getPermissions } = require('../middleware/permissions');
 const { logAudit } = require('../utils/audit');
 
 // GET all payments — admin/super_admin see all, agent sees their landlords',
@@ -14,7 +14,11 @@ router.get('/', staffAuth, requirePermission('payments.view'), async (req, res) 
     if (visible !== 'ALL' && visible.length === 0) return res.json({ success: true, data: [] });
 
     const query = `
-      SELECT p.*, t.full_name AS tenant_name, h.unit_number, pl.name AS plot_name
+      -- h.plot_id added so the frontend can check a plot-specific permission
+      -- override (AuthContext's can(permission, plotId)) against each row
+      -- without a second request — it was already joined in for plot_name,
+      -- just never selected out.
+      SELECT p.*, t.full_name AS tenant_name, h.unit_number, h.plot_id, pl.name AS plot_name
       FROM payments p
       LEFT JOIN tenants t ON p.tenant_id = t.id
       LEFT JOIN houses  h ON p.house_id  = h.id
@@ -29,7 +33,11 @@ router.get('/', staffAuth, requirePermission('payments.view'), async (req, res) 
 });
 
 // GET single payment
-router.get('/:id', staffAuth, requirePermission('payments.view'), async (req, res) => {
+// Was gated by requirePermission('payments.view') as middleware — that runs
+// BEFORE this payment's property is known, so a per-property override could
+// never apply. Permission check moved down to right after the payment (and
+// its plot) is loaded.
+router.get('/:id', staffAuth, async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT p.*, h.plot_id FROM payments p
@@ -39,6 +47,11 @@ router.get('/:id', staffAuth, requirePermission('payments.view'), async (req, re
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'Payment not found' });
     const payment = result.rows[0];
+
+    const { permissions } = await getPermissions(req.user, payment.plot_id);
+    if (!permissions.includes('*') && !permissions.includes('payments.view')) {
+      return res.status(403).json({ error: 'Missing permission: payments.view' });
+    }
 
     const visible = await getVisiblePlotIds(req.user);
     const canView = visible === 'ALL' || (payment.plot_id != null && visible.includes(payment.plot_id));
@@ -53,7 +66,10 @@ router.get('/:id', staffAuth, requirePermission('payments.view'), async (req, re
 // box shown before recording a payment (and before an STK push) is actually
 // accurate. This route never existed before, so that box has always silently
 // shown nothing (the frontend swallows the failed request and just hides it).
-router.get('/arrears/:tenantId', staffAuth, requirePermission('payments.view'), async (req, res) => {
+// Was gated by requirePermission('payments.view') as middleware, before the
+// tenant's property was known — same problem as GET /:id above. Permission
+// check moved down to right after the tenant (and plot) is loaded.
+router.get('/arrears/:tenantId', staffAuth, async (req, res) => {
   try {
     const tenantRes = await pool.query(
       `SELECT t.id, t.house_id, t.move_in_date, t.deposit_paid,
@@ -64,6 +80,11 @@ router.get('/arrears/:tenantId', staffAuth, requirePermission('payments.view'), 
     );
     const tenant = tenantRes.rows[0];
     if (!tenant) return res.status(404).json({ error: 'Tenant not found' });
+
+    const { permissions } = await getPermissions(req.user, tenant.plot_id);
+    if (!permissions.includes('*') && !permissions.includes('payments.view')) {
+      return res.status(403).json({ error: 'Missing permission: payments.view' });
+    }
 
     if (req.user.role !== 'admin' && req.user.role !== 'super_admin') {
       const visible = await getVisiblePlotIds(req.user);
@@ -119,7 +140,9 @@ router.get('/arrears/:tenantId', staffAuth, requirePermission('payments.view'), 
 });
 
 // POST record payment
-router.post('/', staffAuth, requirePermission('payments.record_manual'), async (req, res) => {
+// Was gated by requirePermission('payments.record_manual') as middleware,
+// before the target property was known — same problem as the routes above.
+router.post('/', staffAuth, async (req, res) => {
   const { tenant_id, unit_id, amount, payment_date, payment_method, reference_number, notes } = req.body;
   if (!tenant_id || !amount || !payment_date) return res.status(400).json({ error: 'tenant_id, amount and payment_date are required.' });
 
@@ -145,13 +168,19 @@ router.post('/', staffAuth, requirePermission('payments.record_manual'), async (
     if (!tenant) return res.status(404).json({ error: 'Tenant not found' });
     const houseId = unit_id || tenant.house_id || null;
 
+    let plotId = null;
+    if (houseId) {
+      const houseCheck = await pool.query('SELECT plot_id FROM houses WHERE id = $1', [houseId]);
+      plotId = houseCheck.rows[0]?.plot_id ?? null;
+    }
+
+    const { permissions } = await getPermissions(req.user, plotId);
+    if (!permissions.includes('*') && !permissions.includes('payments.record_manual')) {
+      return res.status(403).json({ error: 'Missing permission: payments.record_manual' });
+    }
+
     if (req.user.role !== 'admin' && req.user.role !== 'super_admin') {
       const visible = await getVisiblePlotIds(req.user);
-      let plotId = null;
-      if (houseId) {
-        const houseCheck = await pool.query('SELECT plot_id FROM houses WHERE id = $1', [houseId]);
-        plotId = houseCheck.rows[0]?.plot_id ?? null;
-      }
       const allowed = visible === 'ALL' || (plotId != null && visible.includes(plotId));
       if (!allowed) return res.status(403).json({ error: 'You are not authorized to record a payment for this tenant.' });
     }
@@ -312,7 +341,9 @@ router.post('/', staffAuth, requirePermission('payments.record_manual'), async (
 // for cases the automatic allocation (POST /) couldn't figure out on its
 // own (e.g. a payment recorded before the tenant had a rent_amount/
 // move_in_date set). Matched payments only.
-router.patch('/:id/allocate', staffAuth, requirePermission('payments.record_manual'), async (req, res) => {
+// Was gated by requirePermission('payments.record_manual') as middleware,
+// before the payment's property was known — same problem as above.
+router.patch('/:id/allocate', staffAuth, async (req, res) => {
   const { for_year, for_month } = req.body;
   if (!for_year || !for_month) return res.status(400).json({ error: 'for_year and for_month are required.' });
 
@@ -343,9 +374,14 @@ router.patch('/:id/allocate', staffAuth, requirePermission('payments.record_manu
       return res.status(400).json({ error: 'Only a matched payment can be allocated to a month.' });
     }
 
+    const plotId = existing.rows[0].plot_id;
+    const { permissions } = await getPermissions(req.user, plotId);
+    if (!permissions.includes('*') && !permissions.includes('payments.record_manual')) {
+      return res.status(403).json({ error: 'Missing permission: payments.record_manual' });
+    }
+
     if (req.user.role !== 'admin' && req.user.role !== 'super_admin') {
       const visible = await getVisiblePlotIds(req.user);
-      const plotId = existing.rows[0].plot_id;
       const allowed = visible === 'ALL' || (plotId != null && visible.includes(plotId));
       if (!allowed) return res.status(403).json({ error: 'Access denied' });
     }
@@ -366,9 +402,13 @@ router.patch('/:id/allocate', staffAuth, requirePermission('payments.record_manu
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// DELETE payment — no profile in the matrix has payments.delete, so this
-// stays effectively admin-only, same as before, but now driven by the matrix
-router.delete('/:id', staffAuth, requirePermission('payments.delete'), async (req, res) => {
+// DELETE payment — no profile in the matrix has payments.delete by default,
+// so this stays effectively admin-only in practice, but an admin can now
+// grant it to a specific agent/landlord/caretaker for a specific property
+// through an override, same as every other permission here.
+// Was gated by requirePermission('payments.delete') as middleware, before
+// the payment's property was known — same problem as the routes above.
+router.delete('/:id', staffAuth, async (req, res) => {
   try {
     const payment = await pool.query(
       `SELECT p.*, h.plot_id, t.full_name AS tenant_name, t.balance AS balance_before
@@ -380,9 +420,14 @@ router.delete('/:id', staffAuth, requirePermission('payments.delete'), async (re
     );
     if (payment.rows.length === 0) return res.status(404).json({ error: 'Payment not found' });
 
+    const plotId = payment.rows[0].plot_id;
+    const { permissions } = await getPermissions(req.user, plotId);
+    if (!permissions.includes('*') && !permissions.includes('payments.delete')) {
+      return res.status(403).json({ error: 'Missing permission: payments.delete' });
+    }
+
     if (req.user.role !== 'admin' && req.user.role !== 'super_admin') {
       const visible = await getVisiblePlotIds(req.user);
-      const plotId = payment.rows[0].plot_id;
       const allowed = visible === 'ALL' || (plotId != null && visible.includes(plotId));
       if (!allowed) return res.status(403).json({ error: 'Access denied' });
     }

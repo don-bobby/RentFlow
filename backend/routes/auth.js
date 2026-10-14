@@ -41,6 +41,23 @@ router.get('/me', liveAuthMiddleware, async (req, res) => {
       agent_name = a.rows[0]?.name || null;
     }
 
+    // `permissions` above is role-defaults + GLOBAL overrides only (no
+    // plotId was passed to getPermissions) — exactly what it was before.
+    // For the frontend to check a permission against ONE specific property
+    // (AuthContext's can(permission, plotId)) it also needs this user's own
+    // PLOT-SPECIFIC overrides, so it can layer them on top itself without a
+    // network round-trip on every check. super_admin/admin never have
+    // overrides applied to them (see middleware/permissions.js), so skip the
+    // query for them — it would always come back empty anyway.
+    let overrides = [];
+    if (profile !== 'super_admin') {
+      const o = await pool.query(
+        `SELECT plot_id, permission, effect FROM user_permission_overrides WHERE user_id = $1`,
+        [req.user.id]
+      );
+      overrides = o.rows;
+    }
+
     res.json({
       success: true,
       data: {
@@ -52,6 +69,7 @@ router.get('/me', liveAuthMiddleware, async (req, res) => {
         agent_name,
         profile,
         permissions,
+        overrides,
       },
     });
   } catch (err) {
@@ -546,13 +564,22 @@ router.get('/users/:id/plots', authMiddleware, async (req, res) => {
 });
 
 // ── POST /api/auth/users/:id/assign-plot — add a plot to a caretaker ──────────
-router.post('/users/:id/assign-plot', authMiddleware, requirePermission('users.assign_caretaker'), async (req, res) => {
+// Was gated by requirePermission('users.assign_caretaker') as middleware,
+// before the target property was known — moved down so a per-property
+// override on this permission actually applies to the right property.
+router.post('/users/:id/assign-plot', authMiddleware, async (req, res) => {
   const { plot_id } = req.body;
   if (!plot_id) return res.status(400).json({ error: 'plot_id is required.' });
   try {
+    const plotIdNum = Number(plot_id);
+    const { permissions } = await getPermissions(req.user, plotIdNum);
+    if (!permissions.includes('*') && !permissions.includes('users.assign_caretaker')) {
+      return res.status(403).json({ error: 'Missing permission: users.assign_caretaker' });
+    }
+
     if (req.user.role !== 'admin' && req.user.role !== 'super_admin') {
       const visible = await getVisiblePlotIds(req.user);
-      if (visible !== 'ALL' && !visible.includes(Number(plot_id))) {
+      if (visible !== 'ALL' && !visible.includes(plotIdNum)) {
         return res.status(403).json({ error: 'You do not have access to this property.' });
       }
     }
@@ -596,11 +623,19 @@ router.post('/users/:id/assign-plot', authMiddleware, requirePermission('users.a
 });
 
 // ── DELETE /api/auth/users/:id/assign-plot/:plotId — remove a plot from caretaker
-router.delete('/users/:id/assign-plot/:plotId', authMiddleware, requirePermission('users.assign_caretaker'), async (req, res) => {
+// Was gated by requirePermission('users.assign_caretaker') as middleware,
+// before the target property was known — same fix as POST above.
+router.delete('/users/:id/assign-plot/:plotId', authMiddleware, async (req, res) => {
   try {
+    const plotIdNum = Number(req.params.plotId);
+    const { permissions } = await getPermissions(req.user, plotIdNum);
+    if (!permissions.includes('*') && !permissions.includes('users.assign_caretaker')) {
+      return res.status(403).json({ error: 'Missing permission: users.assign_caretaker' });
+    }
+
     if (req.user.role !== 'admin' && req.user.role !== 'super_admin') {
       const visible = await getVisiblePlotIds(req.user);
-      if (visible !== 'ALL' && !visible.includes(Number(req.params.plotId))) {
+      if (visible !== 'ALL' && !visible.includes(plotIdNum)) {
         return res.status(403).json({ error: 'You do not have access to this property.' });
       }
     }
@@ -851,17 +886,26 @@ router.post('/tenant-login', async (req, res) => {
 // the PIN of ANY tenant in the system, not just their own, and agent was
 // excluded entirely despite having tenants.edit. Now matrix-driven + scoped,
 // matching every other write route in this project.
-router.patch('/tenants/:id/set-pin', authMiddleware, requirePermission('tenants.set_pin'), async (req, res) => {
+// Was gated by requirePermission('tenants.set_pin') as middleware, before
+// the tenant's property was known — moved down so a per-property override
+// actually applies.
+router.patch('/tenants/:id/set-pin', authMiddleware, async (req, res) => {
   const { pin } = req.body;
   if (!pin || pin.length < 4) return res.status(400).json({ error: 'PIN must be at least 4 digits.' });
   try {
+    const tenantRow = await pool.query(
+      `SELECT h.plot_id FROM tenants t LEFT JOIN houses h ON t.house_id = h.id WHERE t.id = $1`,
+      [req.params.id]
+    );
+    const plotId = tenantRow.rows[0]?.plot_id;
+
+    const { permissions } = await getPermissions(req.user, plotId);
+    if (!permissions.includes('*') && !permissions.includes('tenants.set_pin')) {
+      return res.status(403).json({ error: 'Missing permission: tenants.set_pin' });
+    }
+
     if (req.user.role !== 'admin' && req.user.role !== 'super_admin') {
       const visible = await getVisiblePlotIds(req.user);
-      const tenantRow = await pool.query(
-        `SELECT h.plot_id FROM tenants t LEFT JOIN houses h ON t.house_id = h.id WHERE t.id = $1`,
-        [req.params.id]
-      );
-      const plotId = tenantRow.rows[0]?.plot_id;
       const allowed = visible === 'ALL' || (plotId != null && visible.includes(plotId));
       if (!allowed) return res.status(403).json({ error: 'You do not have access to this tenant.' });
     }

@@ -221,7 +221,13 @@ router.get('/unpaid-months', staffAuth, requirePermission('tenants.view'), async
 });
 
 // GET single tenant
-router.get('/:id', staffAuth, requirePermission('tenants.view'), async (req, res) => {
+// Was gated by requirePermission('tenants.view') as middleware — that runs
+// BEFORE this tenant's property is known, so it could only ever check the
+// requester's ROLE default, never a per-property override for this specific
+// plot. Moved the permission check down to right after the tenant (and
+// their plot) is loaded, so an admin-granted "tenants.view for Plot X"
+// override actually takes effect here.
+router.get('/:id', staffAuth, async (req, res) => {
   try {
     const tenant = await pool.query(
       `SELECT
@@ -237,8 +243,14 @@ router.get('/:id', staffAuth, requirePermission('tenants.view'), async (req, res
     );
     if (tenant.rows.length === 0) return res.status(404).json({ error: 'Tenant not found' });
 
+    const plotId = tenant.rows[0].plot_id_actual;
+    const { permissions } = await getPermissions(req.user, plotId);
+    if (!permissions.includes('*') && !permissions.includes('tenants.view')) {
+      return res.status(403).json({ error: 'Missing permission: tenants.view' });
+    }
+
     const visible = await getVisiblePlotIds(req.user);
-    const allowed = visible === 'ALL' || visible.includes(tenant.rows[0].plot_id_actual);
+    const allowed = visible === 'ALL' || visible.includes(plotId);
     if (!allowed) return res.status(403).json({ error: 'Access denied' });
 
     const payments = await pool.query(
@@ -251,23 +263,35 @@ router.get('/:id', staffAuth, requirePermission('tenants.view'), async (req, res
 });
 
 // POST add new tenant
-router.post('/', staffAuth, requirePermission('tenants.create'), async (req, res) => {
+// Was gated by requirePermission('tenants.create') as middleware, checked
+// before the target property (house_id's plot) was known — so a per-property
+// grant of tenants.create could never apply. Also: the old scope check below
+// ran BEFORE the try block, so a database error in that one query (unlikely,
+// but possible) would have crashed the request instead of returning a clean
+// 500 — moved inside try/catch along with everything else.
+router.post('/', staffAuth, async (req, res) => {
   const { full_name, phone, email, national_id, house_id, move_in_date, rent_due_day, deposit_paid, emergency_phone } = req.body;
   if (!full_name || !house_id || !national_id || !phone) {
     return res.status(400).json({ error: 'full_name, house_id, national_id and phone are all required.' });
   }
 
-  if (req.user.role !== 'admin' && req.user.role !== 'super_admin') {
-    const visible = await getVisiblePlotIds(req.user);
+  try {
     const houseCheck = await pool.query('SELECT plot_id FROM houses WHERE id = $1', [house_id]);
     const housePlotId = houseCheck.rows[0]?.plot_id;
-    const allowed = visible === 'ALL' || (housePlotId && visible.includes(housePlotId));
-    if (!allowed) {
-      return res.status(403).json({ error: 'You do not have access to this unit.' });
-    }
-  }
 
-  try {
+    const { permissions } = await getPermissions(req.user, housePlotId);
+    if (!permissions.includes('*') && !permissions.includes('tenants.create')) {
+      return res.status(403).json({ error: 'Missing permission: tenants.create' });
+    }
+
+    if (req.user.role !== 'admin' && req.user.role !== 'super_admin') {
+      const visible = await getVisiblePlotIds(req.user);
+      const allowed = visible === 'ALL' || (housePlotId && visible.includes(housePlotId));
+      if (!allowed) {
+        return res.status(403).json({ error: 'You do not have access to this unit.' });
+      }
+    }
+
     const result = await pool.query(
       `INSERT INTO tenants (full_name, phone, email, national_id, house_id, move_in_date, rent_due_day, deposit_paid, emergency_phone)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
@@ -286,7 +310,10 @@ router.post('/', staffAuth, requirePermission('tenants.create'), async (req, res
 });
 
 // PUT update tenant
-router.put('/:id', staffAuth, requirePermission('tenants.edit'), async (req, res) => {
+// Was gated by requirePermission('tenants.edit') as middleware, before the
+// tenant's property was known — same problem as GET /:id above. Permission
+// check moved down to right after the previous row (and its plot) is loaded.
+router.put('/:id', staffAuth, async (req, res) => {
   const { full_name, phone, email, national_id, house_id, move_in_date, rent_due_day, deposit_paid, emergency_phone, is_active } = req.body;
   if (!full_name || !house_id || !national_id || !phone) {
     return res.status(400).json({ error: 'full_name, house_id, national_id and phone are all required.' });
@@ -301,8 +328,14 @@ router.put('/:id', staffAuth, requirePermission('tenants.edit'), async (req, res
     );
     if (prev.rows.length === 0) return res.status(404).json({ error: 'Tenant not found' });
 
+    const plotId = prev.rows[0].plot_id_actual;
+    const { permissions } = await getPermissions(req.user, plotId);
+    if (!permissions.includes('*') && !permissions.includes('tenants.edit')) {
+      return res.status(403).json({ error: 'Missing permission: tenants.edit' });
+    }
+
     const visible = await getVisiblePlotIds(req.user);
-    const allowed = visible === 'ALL' || (prev.rows[0].plot_id_actual != null && visible.includes(prev.rows[0].plot_id_actual));
+    const allowed = visible === 'ALL' || (plotId != null && visible.includes(plotId));
     if (!allowed) return res.status(403).json({ error: 'Access denied' });
 
     const oldHouseId  = prev.rows[0].house_id;
@@ -366,7 +399,10 @@ router.put('/:id', staffAuth, requirePermission('tenants.edit'), async (req, res
 });
 
 // DELETE (deactivate) tenant
-router.delete('/:id', staffAuth, requirePermission('tenants.deactivate'), async (req, res) => {
+// Was gated by requirePermission('tenants.deactivate') as middleware, before
+// the tenant's property was known — same problem as GET/PUT /:id above.
+// Permission check moved down to right after the tenant (and plot) is loaded.
+router.delete('/:id', staffAuth, async (req, res) => {
   try {
     const tenant = await pool.query(
       `SELECT t.house_id, p.id AS plot_id_actual
@@ -376,8 +412,14 @@ router.delete('/:id', staffAuth, requirePermission('tenants.deactivate'), async 
     );
     if (tenant.rows.length === 0) return res.status(404).json({ error: 'Tenant not found' });
 
+    const plotId = tenant.rows[0].plot_id_actual;
+    const { permissions } = await getPermissions(req.user, plotId);
+    if (!permissions.includes('*') && !permissions.includes('tenants.deactivate')) {
+      return res.status(403).json({ error: 'Missing permission: tenants.deactivate' });
+    }
+
     const visible = await getVisiblePlotIds(req.user);
-    const allowed = visible === 'ALL' || (tenant.rows[0].plot_id_actual != null && visible.includes(tenant.rows[0].plot_id_actual));
+    const allowed = visible === 'ALL' || (plotId != null && visible.includes(plotId));
     if (!allowed) return res.status(403).json({ error: 'Access denied' });
 
     await pool.query('UPDATE tenants SET is_active=false WHERE id=$1', [req.params.id]);

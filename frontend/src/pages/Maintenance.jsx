@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import API from '../services/api';
+import { useAuth } from '../context/AuthContext';
 
 /* ------------------------------------------------------------------
    Styling lives in one scoped stylesheet so we can use :hover, media
@@ -150,22 +151,24 @@ export default function Maintenance() {
   const [actionError, setActionError] = useState('');
   const [filter,   setFilter]   = useState('all');
   const [form,     setForm]     = useState({ tenant_id: '', issue: '', priority: 'medium' });
-  const [permissions, setPermissions] = useState([]);
-  function can(permission) {
-    return permissions.includes('*') || permissions.includes(permission);
-  }
+
+  // Previously this page fetched GET /auth/me itself and built its own
+  // can() from the flat permissions list — which meant it never saw
+  // per-property overrides at all, not even global ones (AuthContext,
+  // which every other page already uses, already has all of this from the
+  // same /me call the whole app makes once on load). Switching to it here
+  // both removes a duplicate network request and fixes that blind spot.
+  const { can } = useAuth();
 
   async function load() {
     setLoading(true);
     try {
-      const [mr, tr, meR] = await Promise.all([
+      const [mr, tr] = await Promise.all([
         API.get('/maintenance'),
         API.get('/tenants'),
-        API.get('/auth/me'),
       ]);
       setRequests(Array.isArray(mr.data) ? mr.data : (mr.data.data || []));
       setTenants(Array.isArray(tr.data) ? tr.data : (tr.data.data || []));
-      setPermissions(meR.data?.data?.permissions || []);
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
   }
@@ -299,8 +302,12 @@ export default function Maintenance() {
                     could see and click these buttons, which the backend then
                     had to reject. Gating on can() here means the buttons
                     simply aren't there for someone who can't use them,
-                    matching the fix already made on the Properties page. */}
-                {r.status !== 'completed' && can('maintenance.update') && (
+                    matching the fix already made on the Properties page.
+                    Now checked against THIS request's own property (r.plot_id,
+                    added to GET /maintenance's response) rather than just the
+                    role default — PATCH /maintenance/:id already resolves the
+                    permission the same way, against this exact plot. */}
+                {r.status !== 'completed' && can('maintenance.update', r.plot_id) && (
                   <div className="mt-actions">
                     {r.status === 'pending' && (
                       <button type="button" className="mt-act mt-act-start" disabled={busy} onClick={() => updateStatus(r.id, 'in_progress')}>

@@ -295,6 +295,11 @@ export default function Payments() {
           <p style={{ color: 'var(--muted)', fontSize: 14 }}>{payments.length} transactions · KES {payments.reduce((s,p)=>s+parseFloat(p.amount||0),0).toLocaleString()} total</p>
         </div>
         <div style={{ display: 'flex', gap: 10 }}>
+          {/* These three stay general (no plotId) — none of them has one
+              specific property picked yet at this point: Reconcile spans
+              every unmatched payment, and STK Push / Record Payment only
+              pick a tenant (and therefore a property) INSIDE their own
+              modal, after the button is already clicked. */}
           {can('payments.reconcile_mpesa') && (
             <button onClick={openReconcile} style={{ padding: '10px 18px', borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontWeight: 600, fontSize: 14, cursor: 'pointer' }}>
               🔗 Reconcile Unmatched
@@ -389,7 +394,7 @@ export default function Payments() {
                   <td style={{ padding: '12px 16px' }}>
                     {p.for_year && p.for_month ? (
                       <span style={{ background: isDark ? hexToRgba('#7c3aed', 0.22) : 'var(--primary-light)', color: isDark ? '#c4b5fd' : 'var(--primary, #7c3aed)', padding: '3px 10px', borderRadius: 99, fontSize: 12, fontWeight: 600 }}>{monthName(p.for_year, p.for_month)}</span>
-                    ) : p.status === 'matched' && can('payments.record_manual') ? (
+                    ) : p.status === 'matched' && can('payments.record_manual', p.plot_id) ? (
                       <button
                         onClick={() => { setAllocateModal(p); setAllocateError(''); const d = new Date(); setAllocateYear(d.getFullYear()); setAllocateMonth(d.getMonth() + 1); }}
                         title="The system couldn't automatically assign this to a month — set one manually"
@@ -416,7 +421,7 @@ export default function Payments() {
                         🧾
                       </button>
                     )}
-                    {can('payments.delete') && (
+                    {can('payments.delete', p.plot_id) && (
                       <button
                         onClick={() => handleDelete(p)}
                         disabled={deleting === p.id}

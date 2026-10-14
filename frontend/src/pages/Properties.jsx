@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import API from '../services/api';
+import { useAuth } from '../context/AuthContext';
 
 function getUser() {
   const token = localStorage.getItem('token');
@@ -135,20 +136,22 @@ export default function Properties() {
 
 
 
-  const [permissions, setPermissions] = useState([]);
-  function can(permission) {
-    return permissions.includes('*') || permissions.includes(permission);
-  }
+  // Previously this page fetched GET /auth/me itself and built its own
+  // can() from the flat permissions list — which never saw per-property
+  // overrides at all, not even global ones. AuthContext (already used by
+  // Tenants/Payments/Users/Notices) has all of this from the same /me
+  // call the whole app already makes once on load, so this both drops a
+  // duplicate request and fixes that blind spot.
+  const { can } = useAuth();
 
   async function load() {
     setLoading(true);
     try {
-      const requests = [API.get('/plots'), API.get('/houses'), API.get('/auth/me')];
+      const requests = [API.get('/plots'), API.get('/houses')];
       if (isAdmin) requests.push(API.get('/auth/users'));
-      const [pr, hr, meR, ur] = await Promise.all(requests);
+      const [pr, hr, ur] = await Promise.all(requests);
       setPlots(Array.isArray(pr.data) ? pr.data : (pr.data.data || []));
       setHouses(Array.isArray(hr.data) ? hr.data : (hr.data.data || []));
-      setPermissions(meR.data?.data?.permissions || []);
       if (ur) {
         const users = ur.data.data || [];
         setLandlords(users.filter(u => u.role === 'landlord' && u.is_approved));
@@ -267,8 +270,11 @@ export default function Properties() {
         // `description` (confirmed in backend/routes/houses.js: neither
         // POST / nor PUT /:id destructure it from the body), only
         // PATCH /houses/:id/description does. Only staff who could already
-        // see this field (gated below on houses.edit) can call it.
-        if (can('houses.edit') && houseId) {
+        // see this field (gated below on houses.edit, against this same
+        // plot) can call it. form.plot_id is this house's property either
+        // way — the plot picker above sets it on a new unit, and
+        // openEditHouse seeds it from the existing house on edit.
+        if (can('houses.edit', form.plot_id) && houseId) {
           await API.patch(`/houses/${houseId}/description`, { description: form.description || null });
         }
       }
@@ -544,10 +550,14 @@ export default function Properties() {
                       not showing it; the menu itself disappears when nothing
                       in it is actually allowed. */}
                   {(() => {
+                    // All three checked against THIS plot specifically
+                    // (plot.id) — POST /houses and PUT/DELETE /plots/:id
+                    // all resolve the permission the same way, against the
+                    // same plot.
                     const items = [
-                      ...(can('houses.create') ? [{ label: '+ Add Unit', onClick: () => openAddHouse(plot.id) }] : []),
-                      ...(can('plots.edit')    ? [{ label: 'Edit', onClick: () => openEditPlot(plot) }] : []),
-                      ...(can('plots.delete')  ? [{ label: 'Delete', onClick: () => handleDeletePlot(plot.id), danger: true }] : []),
+                      ...(can('houses.create', plot.id) ? [{ label: '+ Add Unit', onClick: () => openAddHouse(plot.id) }] : []),
+                      ...(can('plots.edit', plot.id)    ? [{ label: 'Edit', onClick: () => openEditPlot(plot) }] : []),
+                      ...(can('plots.delete', plot.id)  ? [{ label: 'Delete', onClick: () => handleDeletePlot(plot.id), danger: true }] : []),
                     ];
                     return items.length > 0
                       ? <ActionMenu id={`plot-${plot.id}`} openMenu={openMenu} setOpenMenu={setOpenMenu} items={items} />
@@ -581,9 +591,12 @@ export default function Properties() {
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 4 }}>
                         <div style={{ fontWeight: 700, fontSize: 15, color: 'var(--text)' }}>Unit {house.unit_number}</div>
                         {(() => {
+                          // Checked against THIS house's own property
+                          // (house.plot_id) — PUT/DELETE /houses/:id now
+                          // resolve the permission the same way.
                           const items = [
-                            ...(can('houses.edit')   ? [{ label: 'Edit', onClick: () => openEditHouse(house) }] : []),
-                            ...(can('houses.delete') ? [{ label: 'Delete', onClick: () => handleDeleteHouse(house.id), danger: true }] : []),
+                            ...(can('houses.edit', house.plot_id)   ? [{ label: 'Edit', onClick: () => openEditHouse(house) }] : []),
+                            ...(can('houses.delete', house.plot_id) ? [{ label: 'Delete', onClick: () => handleDeleteHouse(house.id), danger: true }] : []),
                           ];
                           return items.length > 0
                             ? <ActionMenu id={`house-${house.id}`} size="sm" openMenu={openMenu} setOpenMenu={setOpenMenu} items={items} />
@@ -651,7 +664,7 @@ export default function Properties() {
                         {house.rejection_reason && (
                           <span style={{ display: 'inline-block', background: 'var(--red-light, #fee2e2)', color: 'var(--red, #dc2626)', padding: '2px 10px', borderRadius: 99, fontSize: 11, fontWeight: 600 }}>❌ Rejected</span>
                         )}
-                        {house.is_approved !== true && can('houses.approve') && (
+                        {house.is_approved !== true && can('houses.approve', house.plot_id) && (
                           <>
                             <button onClick={() => approveHouse(house.id)} style={{ padding: '2px 8px', borderRadius: 6, border: 'none', background: 'var(--green, #16a34a)', color: '#fff', fontSize: 11, fontWeight: 600, cursor: 'pointer' }}>✓ Approve</button>
                             <button onClick={() => { setRejectTarget(house.id); setRejectReason(''); }} style={{ padding: '2px 8px', borderRadius: 6, border: 'none', background: 'var(--red-light, #fee2e2)', color: 'var(--red, #dc2626)', fontSize: 11, fontWeight: 600, cursor: 'pointer' }}>✗ Reject</button>
@@ -800,7 +813,7 @@ export default function Properties() {
                     <option value="maintenance">Under Maintenance</option>
                   </select>
                 </div>
-                {can('houses.edit') && (
+                {can('houses.edit', form.plot_id) && (
                   <div>
                     <label style={{ ...labelStyle, display: 'flex', alignItems: 'center', gap: 6 }}>
                       Public Description

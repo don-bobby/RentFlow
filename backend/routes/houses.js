@@ -3,7 +3,7 @@ const router  = express.Router();
 const pool    = require('../database/db');
 const { logAudit, diff } = require('../utils/audit');
 const { getVisiblePlotIds } = require('../middleware/scope');
-const { requirePermission } = require('../middleware/permissions');
+const { getPermissions } = require('../middleware/permissions');
 const { authMiddleware: auth } = require('../middleware/auth');
 
 
@@ -81,16 +81,28 @@ router.get('/:id', auth, async (req, res) => {
 // Admin/landlord: auto-approved. Agent/caretaker: pending approval — neither
 // one owns the property, they're both acting on a landlord's behalf, so a
 // unit either of them adds needs landlord/admin sign-off before it's live.
-router.post('/', auth, requirePermission('houses.create'), async (req, res) => {
+// Was gated by requirePermission('houses.create') as middleware — that runs
+// before the body is even parsed here, so a per-property override could
+// never apply. Unlike plots.js's own POST / (a brand new plot, with nothing
+// yet to scope against), this route always targets an EXISTING plot given
+// right in the request body, so the permission can be checked against that
+// plot immediately — no extra query needed to find it.
+router.post('/', auth, async (req, res) => {
   try {
     const { plot_id, unit_number, house_type, rent_amount, deposit, status, meter_no } = req.body;
     if (!plot_id || !unit_number || !rent_amount) return res.status(400).json({ error: 'plot_id, unit_number and rent_amount are required' });
+
+    const plotIdNum = parseInt(plot_id);
+    const { permissions } = await getPermissions(req.user, plotIdNum);
+    if (!permissions.includes('*') && !permissions.includes('houses.create')) {
+      return res.status(403).json({ error: 'Missing permission: houses.create' });
+    }
 
     // Scope check: does this user have access to the plot they're adding a unit to?
     // Covers landlord (own plots), agent (their landlords' plots), caretaker
     // (assigned plots) and admin (everything) via the same rules GET already uses.
     const visible = await getVisiblePlotIds(req.user);
-    if (visible !== 'ALL' && !visible.includes(parseInt(plot_id))) {
+    if (visible !== 'ALL' && !visible.includes(plotIdNum)) {
       return res.status(403).json({ error: 'You do not have access to this plot.' });
     }
 
@@ -128,7 +140,10 @@ router.post('/', auth, requirePermission('houses.create'), async (req, res) => {
 });
 
 // PUT update house
-router.put('/:id', auth, requirePermission('houses.edit'), async (req, res) => {
+// Was gated by requirePermission('houses.edit') as middleware — before this
+// house's property was known, so a per-property override could never apply.
+// Moved down to right after the house (and its plot) is loaded.
+router.put('/:id', auth, async (req, res) => {
   try {
     const check = await pool.query(
       'SELECT p.user_id, h.plot_id FROM houses h LEFT JOIN plots p ON h.plot_id = p.id WHERE h.id = $1',
@@ -136,11 +151,17 @@ router.put('/:id', auth, requirePermission('houses.edit'), async (req, res) => {
     );
     if (check.rows.length === 0) return res.status(404).json({ error: 'House not found' });
 
+    const plotId = check.rows[0].plot_id;
+    const { permissions } = await getPermissions(req.user, plotId);
+    if (!permissions.includes('*') && !permissions.includes('houses.edit')) {
+      return res.status(403).json({ error: 'Missing permission: houses.edit' });
+    }
+
     // Scope check: same rule as everywhere else — admin sees all, agent
     // covers their landlords' plots, landlord covers their own, caretaker
     // covers assigned plots.
     const visible = await getVisiblePlotIds(req.user);
-    if (visible !== 'ALL' && !visible.includes(check.rows[0].plot_id)) {
+    if (visible !== 'ALL' && !visible.includes(plotId)) {
       return res.status(403).json({ error: 'Access denied' });
     }
 
@@ -164,23 +185,35 @@ router.put('/:id', auth, requirePermission('houses.edit'), async (req, res) => {
 // Shared scope check for the four routes below — same rule as everywhere
 // else: admin sees all, agent covers their landlords' plots, landlord
 // covers their own, caretaker covers assigned plots.
+//
+// Now also hands back plotId — each of those four routes used to gate on
+// requirePermission(...) as middleware, before this house's property was
+// knowable at all, so a per-property override could never apply. They each
+// now check the permission themselves, right after calling this, against
+// the exact plot it resolves here.
 async function assertHouseInScope(req, houseId) {
   const row = await pool.query('SELECT plot_id FROM houses WHERE id = $1', [houseId]);
-  if (!row.rows[0]) return { ok: false, notFound: true };
+  if (!row.rows[0]) return { ok: false, notFound: true, plotId: null };
+  const plotId = row.rows[0].plot_id;
   const visible = await getVisiblePlotIds(req.user);
-  const ok = visible === 'ALL' || (row.rows[0].plot_id != null && visible.includes(row.rows[0].plot_id));
-  return { ok, notFound: false };
+  const ok = visible === 'ALL' || (plotId != null && visible.includes(plotId));
+  return { ok, notFound: false, plotId };
 }
 
 // PATCH /api/houses/:id/reject — rejects a caretaker-submitted unit.
 // Was hardcoded to ['admin','landlord'], which let EVERY landlord reject
 // (including landlord_with_agent, who shouldn't) and blocked agent entirely
 // (who the matrix does grant this to). Now matrix-driven + scoped.
-router.patch('/:id/reject', auth, requirePermission('houses.approve'), async (req, res) => {
+router.patch('/:id/reject', auth, async (req, res) => {
   const { reason } = req.body;
   try {
     const scope = await assertHouseInScope(req, req.params.id);
     if (scope.notFound) return res.status(404).json({ error: 'House not found' });
+
+    const { permissions } = await getPermissions(req.user, scope.plotId);
+    if (!permissions.includes('*') && !permissions.includes('houses.approve')) {
+      return res.status(403).json({ error: 'Missing permission: houses.approve' });
+    }
     if (!scope.ok) return res.status(403).json({ error: 'Access denied' });
 
     const result = await pool.query(
@@ -193,10 +226,15 @@ router.patch('/:id/reject', auth, requirePermission('houses.approve'), async (re
 });
 
 // PATCH /api/houses/:id/approve — same fix as reject above.
-router.patch('/:id/approve', auth, requirePermission('houses.approve'), async (req, res) => {
+router.patch('/:id/approve', auth, async (req, res) => {
   try {
     const scope = await assertHouseInScope(req, req.params.id);
     if (scope.notFound) return res.status(404).json({ error: 'House not found' });
+
+    const { permissions } = await getPermissions(req.user, scope.plotId);
+    if (!permissions.includes('*') && !permissions.includes('houses.approve')) {
+      return res.status(403).json({ error: 'Missing permission: houses.approve' });
+    }
     if (!scope.ok) return res.status(403).json({ error: 'Access denied' });
 
     // Clear any stale rejection_reason too — otherwise a unit rejected once
@@ -213,11 +251,16 @@ router.patch('/:id/approve', auth, requirePermission('houses.approve'), async (r
 
 // PATCH /api/houses/:id/description — previously had NO permission or scope
 // check at all; anyone authenticated could rewrite any house's description.
-router.patch('/:id/description', auth, requirePermission('houses.edit'), async (req, res) => {
+router.patch('/:id/description', auth, async (req, res) => {
   const { description } = req.body;
   try {
     const scope = await assertHouseInScope(req, req.params.id);
     if (scope.notFound) return res.status(404).json({ error: 'House not found' });
+
+    const { permissions } = await getPermissions(req.user, scope.plotId);
+    if (!permissions.includes('*') && !permissions.includes('houses.edit')) {
+      return res.status(403).json({ error: 'Missing permission: houses.edit' });
+    }
     if (!scope.ok) return res.status(403).json({ error: 'Access denied' });
 
     await pool.query('UPDATE houses SET description = $1 WHERE id = $2', [description || null, req.params.id]);
@@ -228,11 +271,37 @@ router.patch('/:id/description', auth, requirePermission('houses.edit'), async (
 // DELETE house — was hardcoded to 'admin' (not super_admin-aware). No
 // profile in the matrix has houses.delete, so this stays effectively
 // admin-only, but now driven by the matrix like every other DELETE route.
-router.delete('/:id', auth, requirePermission('houses.delete'), async (req, res) => {
+router.delete('/:id', auth, async (req, res) => {
   try {
     const scope = await assertHouseInScope(req, req.params.id);
     if (scope.notFound) return res.status(404).json({ error: 'House not found' });
+
+    const { permissions } = await getPermissions(req.user, scope.plotId);
+    if (!permissions.includes('*') && !permissions.includes('houses.delete')) {
+      return res.status(403).json({ error: 'Missing permission: houses.delete' });
+    }
     if (!scope.ok) return res.status(403).json({ error: 'Access denied' });
+
+    // The database has a foreign key from tenants.house_id to houses.id with
+    // no cascade, so deleting a unit that still has ANY tenant row attached
+    // — including a past tenant who moved out and was never reassigned or
+    // removed, which doesn't show anywhere on the Properties page, since
+    // that card only shows the current active tenant — used to just throw a
+    // raw Postgres error ("violates foreign key constraint
+    // tenants_house_id_fkey") straight into an alert() popup. Checking for
+    // this first and explaining it in plain language, instead of attempting
+    // the delete and letting it fail, is both clearer for the admin and
+    // avoids relying on the database to explain its own constraint names.
+    const linkedTenants = await pool.query(
+      'SELECT full_name, is_active FROM tenants WHERE house_id = $1 ORDER BY is_active DESC, full_name',
+      [req.params.id]
+    );
+    if (linkedTenants.rows.length > 0) {
+      const names = linkedTenants.rows.map(t => `${t.full_name}${t.is_active ? '' : ' (moved out)'}`).join(', ');
+      return res.status(400).json({
+        error: `Can't delete this unit — it still has tenant record(s) linked to it: ${names}. Move or delete them on the Tenants page first.`,
+      });
+    }
 
     const result = await pool.query('DELETE FROM houses WHERE id = $1 RETURNING *', [req.params.id]);
     if (result.rows.length === 0) return res.status(404).json({ error: 'House not found' });

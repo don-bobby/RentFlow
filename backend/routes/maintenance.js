@@ -4,7 +4,7 @@ const pool    = require('../database/db');
 const jwt     = require('jsonwebtoken');
 const { getVisiblePlotIds } = require('../middleware/scope');
 const { authMiddleware: staffAuth } = require('../middleware/auth');
-const { requirePermission } = require('../middleware/permissions');
+const { requirePermission, getPermissions } = require('../middleware/permissions');
 const { logAudit } = require('../utils/audit');
 
 function flexAuth(req, res, next) {
@@ -19,8 +19,12 @@ router.get('/', staffAuth, requirePermission('maintenance.view'), async (req, re
     const visible = await getVisiblePlotIds(req.user);
     if (visible !== 'ALL' && visible.length === 0) return res.json({ success: true, data: [] });
 
+    // h.plot_id added to the SELECT so the frontend can check a
+    // plot-specific permission override per card without a second request
+    // — it was already joined in for the WHERE filter below, just never
+    // actually returned to the caller.
     const query = `
-      SELECT m.*, t.full_name AS tenant_name, h.unit_number
+      SELECT m.*, t.full_name AS tenant_name, h.unit_number, h.plot_id
       FROM maintenance_requests m
       LEFT JOIN tenants t ON m.tenant_id = t.id
       LEFT JOIN houses  h ON m.house_id  = h.id
@@ -34,7 +38,10 @@ router.get('/', staffAuth, requirePermission('maintenance.view'), async (req, re
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-router.get('/:id', staffAuth, requirePermission('maintenance.view'), async (req, res) => {
+// Was gated by requirePermission('maintenance.view') as middleware — before
+// the request's property was known, so a per-property override could never
+// apply. Moved down to right after the request (and its plot) is loaded.
+router.get('/:id', staffAuth, async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT m.*, h.plot_id FROM maintenance_requests m
@@ -44,6 +51,11 @@ router.get('/:id', staffAuth, requirePermission('maintenance.view'), async (req,
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'Request not found' });
     const request = result.rows[0];
+
+    const { permissions } = await getPermissions(req.user, request.plot_id);
+    if (!permissions.includes('*') && !permissions.includes('maintenance.view')) {
+      return res.status(403).json({ error: 'Missing permission: maintenance.view' });
+    }
 
     const visible = await getVisiblePlotIds(req.user);
     const canView = visible === 'ALL' || (request.plot_id != null && visible.includes(request.plot_id));
@@ -98,7 +110,9 @@ router.post('/', flexAuth, async (req, res) => {
 // PATCH update status — now logs the status change. Was completely silent
 // before: a request moving from pending to in_progress to completed left
 // no trace of who did it or when.
-router.patch('/:id', staffAuth, requirePermission('maintenance.update'), async (req, res) => {
+// Was gated by requirePermission('maintenance.update') as middleware, before
+// the request's property was known — same fix as GET /:id above.
+router.patch('/:id', staffAuth, async (req, res) => {
   const { status } = req.body;
   const validStatuses = ['pending', 'in_progress', 'completed'];
   if (!validStatuses.includes(status)) return res.status(400).json({ error: `Status must be one of: ${validStatuses.join(', ')}` });
@@ -111,9 +125,14 @@ router.patch('/:id', staffAuth, requirePermission('maintenance.update'), async (
     );
     if (existing.rows.length === 0) return res.status(404).json({ error: 'Request not found' });
 
+    const plotId = existing.rows[0].plot_id;
+    const { permissions } = await getPermissions(req.user, plotId);
+    if (!permissions.includes('*') && !permissions.includes('maintenance.update')) {
+      return res.status(403).json({ error: 'Missing permission: maintenance.update' });
+    }
+
     if (!['admin', 'super_admin'].includes(req.user.role)) {
       const visible = await getVisiblePlotIds(req.user);
-      const plotId = existing.rows[0].plot_id;
       const allowed = visible === 'ALL' || (plotId != null && visible.includes(plotId));
       if (!allowed) return res.status(403).json({ error: 'Access denied' });
     }
@@ -151,7 +170,9 @@ router.patch('/:id', staffAuth, requirePermission('maintenance.update'), async (
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-router.delete('/:id', staffAuth, requirePermission('maintenance.delete'), async (req, res) => {
+// Was gated by requirePermission('maintenance.delete') as middleware,
+// before the request's property was known — same fix as above.
+router.delete('/:id', staffAuth, async (req, res) => {
   try {
     const existing = await pool.query(
       `SELECT m.id, h.plot_id FROM maintenance_requests m
@@ -161,9 +182,14 @@ router.delete('/:id', staffAuth, requirePermission('maintenance.delete'), async 
     );
     if (existing.rows.length === 0) return res.status(404).json({ error: 'Request not found' });
 
+    const plotId = existing.rows[0].plot_id;
+    const { permissions } = await getPermissions(req.user, plotId);
+    if (!permissions.includes('*') && !permissions.includes('maintenance.delete')) {
+      return res.status(403).json({ error: 'Missing permission: maintenance.delete' });
+    }
+
     if (!['admin', 'super_admin'].includes(req.user.role)) {
       const visible = await getVisiblePlotIds(req.user);
-      const plotId = existing.rows[0].plot_id;
       const allowed = visible === 'ALL' || (plotId != null && visible.includes(plotId));
       if (!allowed) return res.status(403).json({ error: 'Access denied' });
     }

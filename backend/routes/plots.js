@@ -4,7 +4,7 @@ const pool    = require('../database/db');
 const axios   = require('axios');
 const { getVisiblePlotIds } = require('../middleware/scope');
 const { authMiddleware: staffAuth } = require('../middleware/auth');
-const { requirePermission } = require('../middleware/permissions');
+const { requirePermission, getPermissions } = require('../middleware/permissions');
 const { logAudit, diff } = require('../utils/audit');
 
 async function geocodeOne(query) {
@@ -78,11 +78,19 @@ router.get('/', staffAuth, requirePermission('plots.view'), async (req, res) => 
 });
 
 // GET ONE plot
-router.get('/:id', staffAuth, requirePermission('plots.view'), async (req, res) => {
+// Was gated by requirePermission('plots.view') as middleware — before the
+// plot itself was loaded, so a per-property override could never apply.
+// Moved down to right after the plot is fetched.
+router.get('/:id', staffAuth, async (req, res) => {
   try {
     const result = await pool.query('SELECT * FROM plots WHERE id = $1', [req.params.id]);
     if (result.rows.length === 0) return res.status(404).json({ error: 'Plot not found' });
     const plot = result.rows[0];
+
+    const { permissions } = await getPermissions(req.user, plot.id);
+    if (!permissions.includes('*') && !permissions.includes('plots.view')) {
+      return res.status(403).json({ error: 'Missing permission: plots.view' });
+    }
 
     const visible = await getVisiblePlotIds(req.user);
     const canView = visible === 'ALL' || visible.includes(plot.id);
@@ -139,13 +147,21 @@ router.post('/', staffAuth, requirePermission('plots.create'), async (req, res) 
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-router.put('/:id', staffAuth, requirePermission('plots.edit'), async (req, res) => {
+// Was gated by requirePermission('plots.edit') as middleware, before the
+// plot was loaded — same problem as GET /:id above.
+router.put('/:id', staffAuth, async (req, res) => {
   try {
     const check = await pool.query('SELECT name, user_id, location, gps_lat, gps_lng FROM plots WHERE id = $1', [req.params.id]);
     if (check.rows.length === 0) return res.status(404).json({ error: 'Plot not found' });
 
+    const plotId = Number(req.params.id);
+    const { permissions } = await getPermissions(req.user, plotId);
+    if (!permissions.includes('*') && !permissions.includes('plots.edit')) {
+      return res.status(403).json({ error: 'Missing permission: plots.edit' });
+    }
+
     const visible = await getVisiblePlotIds(req.user);
-    const canEdit = visible === 'ALL' || visible.includes(Number(req.params.id));
+    const canEdit = visible === 'ALL' || visible.includes(plotId);
     if (!canEdit) return res.status(403).json({ error: 'Access denied' });
 
     const { name, location, description, owner_id, gps_lat, gps_lng } = req.body;
@@ -181,11 +197,35 @@ router.put('/:id', staffAuth, requirePermission('plots.edit'), async (req, res) 
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-router.delete('/:id', staffAuth, requirePermission('plots.delete'), async (req, res) => {
+// Was gated by requirePermission('plots.delete') as middleware, before the
+// plot was loaded — same problem as above.
+router.delete('/:id', staffAuth, async (req, res) => {
   try {
+    const plotId = Number(req.params.id);
+    const { permissions } = await getPermissions(req.user, plotId);
+    if (!permissions.includes('*') && !permissions.includes('plots.delete')) {
+      return res.status(403).json({ error: 'Missing permission: plots.delete' });
+    }
+
     const visible = await getVisiblePlotIds(req.user);
-    const canDelete = visible === 'ALL' || visible.includes(Number(req.params.id));
+    const canDelete = visible === 'ALL' || visible.includes(plotId);
     if (!canDelete) return res.status(403).json({ error: 'Access denied' });
+
+    // Same reasoning as houses.js's DELETE route: houses.plot_id has no
+    // ON DELETE CASCADE back to plots, so deleting a plot that still has
+    // units on it would otherwise throw a raw Postgres foreign-key error.
+    // Checking first lets us tell the admin exactly which units are in the
+    // way, instead of a cryptic database message.
+    const linkedHouses = await pool.query(
+      'SELECT unit_number FROM houses WHERE plot_id = $1 ORDER BY unit_number',
+      [plotId]
+    );
+    if (linkedHouses.rows.length > 0) {
+      const units = linkedHouses.rows.map(h => h.unit_number).join(', ');
+      return res.status(400).json({
+        error: `Can't delete this property — it still has unit(s) on it: ${units}. Delete those units first.`,
+      });
+    }
 
     const result = await pool.query('DELETE FROM plots WHERE id = $1 RETURNING *', [req.params.id]);
     if (result.rows.length === 0) return res.status(404).json({ error: 'Plot not found' });

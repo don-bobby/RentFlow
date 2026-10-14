@@ -35,11 +35,32 @@ export function AuthProvider({ children }) {
 
   useEffect(() => { refresh(); }, [refresh]);
 
-  // permissions is ['*'] for super_admin, or a real list for everyone else.
+  // permissions is ['*'] for super_admin, or a real list (role defaults +
+  // any GLOBAL overrides) for everyone else — that part is unchanged.
+  //
+  // Pass a second argument, plotId, to check the permission against ONE
+  // specific property instead: this now matches the backend's
+  // getPermissions(user, plotId) resolution exactly — most specific wins —
+  // using the per-property overrides GET /auth/me now sends down in
+  // user.overrides. If there's no override for that exact property, the
+  // answer falls back to the plain (role + global-override) permissions
+  // list, same as calling can(permission) with no plotId at all.
   const can = useCallback(
-    (permission) => {
+    (permission, plotId) => {
       if (!user) return false;
-      return user.permissions?.includes('*') || user.permissions?.includes(permission);
+      if (user.permissions?.includes('*')) return true;
+
+      let allowed = user.permissions?.includes(permission) ?? false;
+
+      if (plotId != null && Array.isArray(user.overrides)) {
+        const plotIdNum = Number(plotId);
+        const override = user.overrides.find(
+          (o) => o.plot_id === plotIdNum && o.permission === permission
+        );
+        if (override) allowed = override.effect === 'grant';
+      }
+
+      return allowed;
     },
     [user]
   );

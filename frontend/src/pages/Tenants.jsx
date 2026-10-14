@@ -50,10 +50,10 @@ export default function Tenants() {
   const [pinSuccess,setPinSuccess]= useState('');
 
   const { can }   = useAuth();
+  // No specific tenant/property picked yet at this point, so this stays a
+  // plain general check, same as the backend: POST /tenants doesn't know
+  // which plot it's for until a unit is chosen in the form below.
   const canAdd     = can('tenants.create');
-  const canEditRow = can('tenants.edit');
-  const canSetPin  = can('tenants.set_pin');
-  const canManageRow = canEditRow || canSetPin; // whether the Actions column shows at all
   const isDark    = useIsDarkMode();
   const location  = useLocation();
   const navigate  = useNavigate();
@@ -142,6 +142,23 @@ export default function Tenants() {
   function tenantPlotName(t) {
     return t.plot_name || allHouses.find(h => h.id === t.house_id)?.plot_name || '—';
   }
+
+  // GET /tenants doesn't send back a numeric plot id (only the plot's
+  // name, for display) — but /houses does, and it's already loaded here.
+  // Needed so each row's Edit/Set PIN buttons can be checked against a
+  // plot-specific permission override (can(permission, plotId)), matching
+  // how the backend now checks these same two routes.
+  function tenantPlotId(t) {
+    return allHouses.find(h => h.id === t.house_id)?.plot_id ?? null;
+  }
+
+  // Whether this role can EVER manage a tenant row, regardless of
+  // property — decides whether the table shows an Actions column at all
+  // (vs. "Last Payment"). The per-row buttons below check the SAME
+  // permission again, but for that row's specific property, since an
+  // override could grant or revoke it for just one — so a particular row
+  // can still end up with no buttons even when this is true.
+  const canManageAny = can('tenants.edit') || can('tenants.set_pin');
 
   const propertyOptions = [...new Set(allHouses.map(h => h.plot_name).filter(Boolean))].sort();
 
@@ -294,13 +311,21 @@ export default function Tenants() {
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
               <tr style={{ background: 'var(--surface2)' }}>
-                {['Name', 'Phone', 'Unit', 'Property', 'Move-in', 'Rent Balance', 'Deposit', 'Status', ...(canManageRow ? [''] : ['Last Payment'])].map(h => (
+                {['Name', 'Phone', 'Unit', 'Property', 'Move-in', 'Rent Balance', 'Deposit', 'Status', ...(canManageAny ? [''] : ['Last Payment'])].map(h => (
                   <th key={h} style={{ padding: '10px 20px', textAlign: 'left', fontSize: 12, fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
-              {filtered.map((t, i) => (
+              {filtered.map((t, i) => {
+                // Per-row, per-property check — a plot-specific override can
+                // grant or revoke either of these for just this tenant's
+                // property, separately from the role's normal default.
+                const plotId     = tenantPlotId(t);
+                const canEditRow = can('tenants.edit', plotId);
+                const canSetPin  = can('tenants.set_pin', plotId);
+                const canManageRow = canEditRow || canSetPin;
+                return (
                 <tr key={t.id} style={{ borderTop: '1px solid var(--border)', background: i % 2 === 0 ? 'var(--surface)' : 'var(--surface2)' }}>
                   <td style={{ padding: '13px 20px' }}>
                     <div style={{ fontWeight: 600, color: isDark ? 'var(--blue, #2563eb)' : 'var(--text)' }}>{t.full_name}</div>
@@ -350,7 +375,7 @@ export default function Tenants() {
                       {t.is_active ? 'Active' : 'Inactive'}
                     </span>
                   </td>
-                  {canManageRow ? (
+                  {canManageAny ? (
                     <td style={{ padding: '13px 20px' }}>
                       <div style={{ display: 'flex', gap: 6 }}>
                         {canEditRow && (
@@ -388,7 +413,7 @@ export default function Tenants() {
                     </td>
                   )}
                 </tr>
-              ))}
+              );})}
             </tbody>
           </table>
         )}
