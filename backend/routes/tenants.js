@@ -398,7 +398,19 @@ router.put('/:id', staffAuth, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// DELETE (deactivate) tenant
+// DELETE = "Move out" a tenant. This is the normal, everyday action — it
+// keeps the tenant's full history (payments, deposits, maintenance
+// requests) but ends their tenancy: marks them inactive AND clears their
+// house_id, so they stop being linked to that unit.
+//
+// Clearing house_id (not just flipping is_active) is the actual fix for the
+// unit/property delete bug: a tenant who "moved out" used to keep pointing
+// at house_id forever, which is exactly what made a "vacant" unit still
+// block deletion — the vacant/occupied badge is a separate status field
+// from this link, so the unit looked empty while the database still saw a
+// tenant attached to it. Now moving a tenant out actually releases the
+// unit.
+//
 // Was gated by requirePermission('tenants.deactivate') as middleware, before
 // the tenant's property was known — same problem as GET/PUT /:id above.
 // Permission check moved down to right after the tenant (and plot) is loaded.
@@ -422,12 +434,66 @@ router.delete('/:id', staffAuth, async (req, res) => {
     const allowed = visible === 'ALL' || (plotId != null && visible.includes(plotId));
     if (!allowed) return res.status(403).json({ error: 'Access denied' });
 
-    await pool.query('UPDATE tenants SET is_active=false WHERE id=$1', [req.params.id]);
-    await logAudit({ user: req.user, action: 'tenant.deactivate', entityType: 'tenant', entityId: req.params.id, changes: { is_active: { from: true, to: false } } });
-    if (tenant.rows[0].house_id) {
-      await pool.query("UPDATE houses SET status='vacant', status_changed_at=NOW() WHERE id=$1 AND status != 'vacant'", [tenant.rows[0].house_id]);
+    const oldHouseId = tenant.rows[0].house_id;
+    await pool.query('UPDATE tenants SET is_active=false, house_id=NULL WHERE id=$1', [req.params.id]);
+    await logAudit({
+      user: req.user, action: 'tenant.move_out', entityType: 'tenant', entityId: req.params.id,
+      changes: { is_active: { from: true, to: false }, house_id: { from: oldHouseId, to: null } },
+    });
+    if (oldHouseId) {
+      await pool.query("UPDATE houses SET status='vacant', status_changed_at=NOW() WHERE id=$1 AND status != 'vacant'", [oldHouseId]);
     }
-    res.json({ success: true, message: 'Tenant deactivated' });
+    res.json({ success: true, message: 'Tenant moved out' });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// DELETE /:id/permanent — actually removes the tenant row. Reserved for the
+// rare "added this tenant by mistake" cleanup, not for a normal move-out
+// (use plain DELETE /:id for that — it keeps history and just ends the
+// tenancy).
+//
+// Restricted directly to admin/super_admin rather than going through the
+// per-property override system like every other route here: this is a
+// destructive, irreversible action, and it shouldn't be something a
+// landlord or caretaker can be accidentally granted via an override. Only
+// the two built-in admin roles can do this, full stop.
+//
+// Payments, deposit_transactions and maintenance_requests all reference a
+// tenant the same way houses/tenants used to (no cascade), so a tenant with
+// any real history on file can't be permanently deleted this way — that
+// matches "mistake cleanup", since a tenant with payments or requests on
+// record was never really a mistake. Those tenants should be moved out
+// instead, which keeps their history intact.
+router.delete('/:id/permanent', staffAuth, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin' && req.user.role !== 'super_admin') {
+      return res.status(403).json({ error: 'Only an admin can permanently delete a tenant.' });
+    }
+
+    const tenant = await pool.query('SELECT full_name FROM tenants WHERE id = $1', [req.params.id]);
+    if (tenant.rows.length === 0) return res.status(404).json({ error: 'Tenant not found' });
+
+    const [payments, deposits, maintenance] = await Promise.all([
+      pool.query('SELECT COUNT(*)::int AS n FROM payments WHERE tenant_id = $1', [req.params.id]),
+      pool.query('SELECT COUNT(*)::int AS n FROM deposit_transactions WHERE tenant_id = $1', [req.params.id]),
+      pool.query('SELECT COUNT(*)::int AS n FROM maintenance_requests WHERE tenant_id = $1', [req.params.id]),
+    ]);
+    const blockers = [];
+    if (payments.rows[0].n > 0)    blockers.push(`${payments.rows[0].n} payment record(s)`);
+    if (deposits.rows[0].n > 0)    blockers.push(`${deposits.rows[0].n} deposit transaction(s)`);
+    if (maintenance.rows[0].n > 0) blockers.push(`${maintenance.rows[0].n} maintenance request(s)`);
+    if (blockers.length > 0) {
+      return res.status(400).json({
+        error: `Can't permanently delete ${tenant.rows[0].full_name} — they have ${blockers.join(', ')} on file. Use "Move out" instead to keep their history.`,
+      });
+    }
+
+    await pool.query('DELETE FROM tenants WHERE id = $1', [req.params.id]);
+    await logAudit({
+      user: req.user, action: 'tenant.delete', entityType: 'tenant', entityId: req.params.id,
+      changes: { full_name: { from: tenant.rows[0].full_name, to: null } },
+    });
+    res.json({ success: true, message: 'Tenant permanently deleted' });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
