@@ -257,7 +257,9 @@ router.get('/users', authMiddleware, async (req, res) => {
            SELECT agent_id AS user_id, STRING_AGG(name, ', ' ORDER BY name) AS plot_names
            FROM plots WHERE agent_id IS NOT NULL GROUP BY agent_id
          ) ap ON ap.user_id = u.id AND u.role = 'agent'
-         ORDER BY u.created_at DESC`
+         WHERE u.id != $1
+         ORDER BY u.created_at DESC`,
+        [req.user.id]
       );
     } else if (req.user.role === 'landlord') {
       result = await pool.query(
