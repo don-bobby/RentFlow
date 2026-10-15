@@ -3,7 +3,7 @@ const router  = express.Router();
 const pool    = require('../database/db');
 const { getVisiblePlotIds } = require('../middleware/scope');
 const { authMiddleware: staffAuth } = require('../middleware/auth');
-const { requirePermission } = require('../middleware/permissions');
+const { requirePermission, getPermissions } = require('../middleware/permissions');
 
 
 // GET all expenses — admin/super_admin see all, agent sees their landlords',
@@ -30,11 +30,19 @@ router.get('/', staffAuth, requirePermission('expenses.view'), async (req, res) 
 });
 
 // GET single expense
-router.get('/:id', staffAuth, requirePermission('expenses.view'), async (req, res) => {
+// Was gated by requirePermission('expenses.view') as middleware — before the
+// expense's property was known, so a per-property override could never
+// apply. Moved down to right after the expense (and its plot) is loaded.
+router.get('/:id', staffAuth, async (req, res) => {
   try {
     const result = await pool.query('SELECT * FROM expenses WHERE id = $1', [req.params.id]);
     if (result.rows.length === 0) return res.status(404).json({ error: 'Expense not found' });
     const expense = result.rows[0];
+
+    const { permissions } = await getPermissions(req.user, expense.plot_id);
+    if (!permissions.includes('*') && !permissions.includes('expenses.view')) {
+      return res.status(403).json({ error: 'Missing permission: expenses.view' });
+    }
 
     const visible = await getVisiblePlotIds(req.user);
     const canView = visible === 'ALL' || (expense.plot_id != null && visible.includes(expense.plot_id));
@@ -46,22 +54,33 @@ router.get('/:id', staffAuth, requirePermission('expenses.view'), async (req, re
 
 // POST create expense — matrix grants expenses.add to agent and
 // landlord_self (not landlord_with_agent or caretaker)
-router.post('/', staffAuth, requirePermission('expenses.add'), async (req, res) => {
+// Was gated by requirePermission('expenses.add') as middleware, before the
+// target property was known. Also: the scope check below used to run
+// OUTSIDE the try/catch, so a database hiccup in that one query would have
+// crashed the request instead of returning a clean 500 — folded into the
+// same try/catch as everything else.
+router.post('/', staffAuth, async (req, res) => {
   const { plot_id, category, description, amount, expense_date, receipt_url } = req.body;
 
   if (!amount || !expense_date) {
     return res.status(400).json({ error: 'amount and expense_date are required.' });
   }
 
-  if (!['admin', 'super_admin'].includes(req.user.role)) {
-    if (!plot_id) return res.status(400).json({ error: 'plot_id is required.' });
-    const visible = await getVisiblePlotIds(req.user);
-    if (!(visible === 'ALL' || visible.includes(Number(plot_id)))) {
-      return res.status(403).json({ error: 'You do not have access to this plot.' });
-    }
-  }
-
   try {
+    const plotIdNum = plot_id != null ? Number(plot_id) : null;
+    const { permissions } = await getPermissions(req.user, plotIdNum);
+    if (!permissions.includes('*') && !permissions.includes('expenses.add')) {
+      return res.status(403).json({ error: 'Missing permission: expenses.add' });
+    }
+
+    if (!['admin', 'super_admin'].includes(req.user.role)) {
+      if (!plot_id) return res.status(400).json({ error: 'plot_id is required.' });
+      const visible = await getVisiblePlotIds(req.user);
+      if (!(visible === 'ALL' || visible.includes(plotIdNum))) {
+        return res.status(403).json({ error: 'You do not have access to this plot.' });
+      }
+    }
+
     const result = await pool.query(
       `INSERT INTO expenses (plot_id, category, description, amount, expense_date, receipt_url)
        VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
@@ -76,16 +95,36 @@ router.post('/', staffAuth, requirePermission('expenses.add'), async (req, res) 
 // to add them, and blocked agent entirely despite the matrix granting them
 // expenses.add. Migration 005 adds expenses.edit for agent + landlord_self,
 // matching expenses.add's grant exactly, so this is now consistent with POST.
-router.put('/:id', staffAuth, requirePermission('expenses.edit'), async (req, res) => {
+// Was gated by requirePermission('expenses.edit') as middleware, before the
+// expense's property was known. Also: the existing row was previously only
+// fetched inside the non-admin branch, which meant a plot-aware permission
+// check had no plot to check against for an admin request — now fetched
+// unconditionally so the permission check always has it.
+router.put('/:id', staffAuth, async (req, res) => {
   const { plot_id, category, description, amount, expense_date, receipt_url } = req.body;
   try {
-    if (req.user.role !== 'admin' && req.user.role !== 'super_admin') {
-      const existing = await pool.query('SELECT plot_id FROM expenses WHERE id = $1', [req.params.id]);
-      if (existing.rows.length === 0) return res.status(404).json({ error: 'Expense not found' });
+    const existing = await pool.query('SELECT plot_id FROM expenses WHERE id = $1', [req.params.id]);
+    if (existing.rows.length === 0) return res.status(404).json({ error: 'Expense not found' });
 
+    const oldPlot = existing.rows[0].plot_id;
+    const newPlot = plot_id != null ? Number(plot_id) : oldPlot;
+
+    // If this edit also moves the expense onto a different property, the
+    // permission must hold for BOTH the old and the new one — otherwise an
+    // override granted for just one property could be used to quietly move
+    // an expense onto a property it was never meant to touch.
+    const oldCheck = await getPermissions(req.user, oldPlot);
+    let hasPermission = oldCheck.permissions.includes('*') || oldCheck.permissions.includes('expenses.edit');
+    if (hasPermission && newPlot !== oldPlot) {
+      const newCheck = await getPermissions(req.user, newPlot);
+      hasPermission = newCheck.permissions.includes('*') || newCheck.permissions.includes('expenses.edit');
+    }
+    if (!hasPermission) {
+      return res.status(403).json({ error: 'Missing permission: expenses.edit' });
+    }
+
+    if (req.user.role !== 'admin' && req.user.role !== 'super_admin') {
       const visible = await getVisiblePlotIds(req.user);
-      const oldPlot = existing.rows[0].plot_id;
-      const newPlot = plot_id != null ? Number(plot_id) : oldPlot;
       const ownsOld = oldPlot != null && visible.includes(oldPlot);
       const ownsNew = newPlot != null && visible.includes(newPlot);
       if (!ownsOld || !ownsNew) return res.status(403).json({ error: 'Access denied' });
@@ -103,14 +142,22 @@ router.put('/:id', staffAuth, requirePermission('expenses.edit'), async (req, re
 
 // DELETE expense — same fix as PUT above. Migration 005 adds expenses.delete
 // for agent + landlord_self.
-router.delete('/:id', staffAuth, requirePermission('expenses.delete'), async (req, res) => {
+// Was gated by requirePermission('expenses.delete') as middleware, before
+// the expense's property was known — same problem as the routes above.
+router.delete('/:id', staffAuth, async (req, res) => {
   try {
-    if (req.user.role !== 'admin' && req.user.role !== 'super_admin') {
-      const existing = await pool.query('SELECT plot_id FROM expenses WHERE id = $1', [req.params.id]);
-      if (existing.rows.length === 0) return res.status(404).json({ error: 'Expense not found' });
+    const existing = await pool.query('SELECT plot_id FROM expenses WHERE id = $1', [req.params.id]);
+    if (existing.rows.length === 0) return res.status(404).json({ error: 'Expense not found' });
 
+    const plotId = existing.rows[0].plot_id;
+    const { permissions } = await getPermissions(req.user, plotId);
+    if (!permissions.includes('*') && !permissions.includes('expenses.delete')) {
+      return res.status(403).json({ error: 'Missing permission: expenses.delete' });
+    }
+
+    if (req.user.role !== 'admin' && req.user.role !== 'super_admin') {
       const visible = await getVisiblePlotIds(req.user);
-      if (existing.rows[0].plot_id == null || !visible.includes(existing.rows[0].plot_id)) {
+      if (plotId == null || !visible.includes(plotId)) {
         return res.status(403).json({ error: 'Access denied' });
       }
     }

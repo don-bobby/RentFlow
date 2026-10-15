@@ -211,22 +211,6 @@ router.delete('/:id', staffAuth, async (req, res) => {
     const canDelete = visible === 'ALL' || visible.includes(plotId);
     if (!canDelete) return res.status(403).json({ error: 'Access denied' });
 
-    // Same reasoning as houses.js's DELETE route: houses.plot_id has no
-    // ON DELETE CASCADE back to plots, so deleting a plot that still has
-    // units on it would otherwise throw a raw Postgres foreign-key error.
-    // Checking first lets us tell the admin exactly which units are in the
-    // way, instead of a cryptic database message.
-    const linkedHouses = await pool.query(
-      'SELECT unit_number FROM houses WHERE plot_id = $1 ORDER BY unit_number',
-      [plotId]
-    );
-    if (linkedHouses.rows.length > 0) {
-      const units = linkedHouses.rows.map(h => h.unit_number).join(', ');
-      return res.status(400).json({
-        error: `Can't delete this property — it still has unit(s) on it: ${units}. Delete those units first.`,
-      });
-    }
-
     const result = await pool.query('DELETE FROM plots WHERE id = $1 RETURNING *', [req.params.id]);
     if (result.rows.length === 0) return res.status(404).json({ error: 'Plot not found' });
 

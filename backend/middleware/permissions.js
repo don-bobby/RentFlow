@@ -20,7 +20,23 @@ function profileFor(user) {
 }
 
 // Returns { profile, permissions: [...] }. permissions is ['*'] for super_admin.
-async function getPermissions(user) {
+//
+// plotId is optional. Pass it when checking a permission against one
+// specific property; omit it for a general check (e.g. GET /auth/me, or any
+// existing call site that hasn't been migrated to pass a property yet).
+//
+// On top of the role's default list (role_permissions), this layers in any
+// per-user overrides from user_permission_overrides — see
+// claude/per-user-per-property-permissions-scoping.md in the project for
+// the full design. Resolution order, most specific wins:
+//   1. role default
+//   2. an override with plot_id IS NULL ("applies to every property")
+//   3. an override for this exact plotId (only considered when a plotId was
+//      actually passed in) — this is the final word either way
+// super_admin (and 'admin', which still means the same thing until the role
+// rename) always gets everything and is returned before any of this runs —
+// overrides can never apply to those accounts, by design.
+async function getPermissions(user, plotId) {
   const profile = profileFor(user);
   if (profile === 'super_admin') return { profile, permissions: ['*'] };
   if (!profile) return { profile: null, permissions: [] };
@@ -29,7 +45,24 @@ async function getPermissions(user) {
     `SELECT permission FROM role_permissions WHERE profile = $1 AND allowed = true`,
     [profile]
   );
-  return { profile, permissions: result.rows.map(r => r.permission) };
+  const permissions = new Set(result.rows.map(r => r.permission));
+
+  const overrides = await pool.query(
+    `SELECT plot_id, permission, effect FROM user_permission_overrides
+     WHERE user_id = $1 AND (plot_id IS NULL OR plot_id = $2)`,
+    [user.id, plotId ?? null]
+  );
+
+  const apply = (o) => {
+    if (o.effect === 'grant') permissions.add(o.permission);
+    else permissions.delete(o.permission);
+  };
+  // Global overrides first, then the plot-specific one (if any) — so the
+  // plot-specific row always has the last word when both exist.
+  overrides.rows.filter(o => o.plot_id === null).forEach(apply);
+  if (plotId != null) overrides.rows.filter(o => o.plot_id === plotId).forEach(apply);
+
+  return { profile, permissions: Array.from(permissions) };
 }
 
 // Express middleware: use after authMiddleware.

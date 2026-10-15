@@ -49,24 +49,11 @@ export default function Tenants() {
   const [pinError,  setPinError]  = useState('');
   const [pinSuccess,setPinSuccess]= useState('');
 
-  const [moveOutModal, setMoveOutModal] = useState(null); // tenant object
-  const [moveOutSaving, setMoveOutSaving] = useState(false);
-  const [moveOutError,  setMoveOutError]  = useState('');
-
-  const [deleteModal, setDeleteModal] = useState(null); // tenant object
-  const [deleteSaving, setDeleteSaving] = useState(false);
-  const [deleteError,  setDeleteError]  = useState('');
-
-  const { can, user } = useAuth();
+  const { can }   = useAuth();
   // No specific tenant/property picked yet at this point, so this stays a
   // plain general check, same as the backend: POST /tenants doesn't know
   // which plot it's for until a unit is chosen in the form below.
   const canAdd     = can('tenants.create');
-  // Permanent delete is gated directly by role on the backend (not the
-  // per-property override system — it's a destructive, irreversible action
-  // that shouldn't be grantable to a caretaker or landlord by mistake), so
-  // the frontend check mirrors that directly instead of going through can().
-  const isAdmin = user?.role === 'admin' || user?.role === 'super_admin';
   const isDark    = useIsDarkMode();
   const location  = useLocation();
   const navigate  = useNavigate();
@@ -140,37 +127,6 @@ export default function Tenants() {
     } finally { setSaving(false); }
   }
 
-  // "Move out" — the everyday way to end a tenancy. Keeps the tenant's
-  // history (payments, deposits, maintenance requests) but frees their unit,
-  // so that unit can be deleted or re-let afterward without the old FK error.
-  async function handleMoveOut() {
-    if (!moveOutModal) return;
-    setMoveOutSaving(true); setMoveOutError('');
-    try {
-      await API.delete(`/tenants/${moveOutModal.id}`);
-      await load();
-      setMoveOutModal(null);
-    } catch (e) {
-      setMoveOutError(e.response?.data?.error || 'Failed to move out tenant.');
-    } finally { setMoveOutSaving(false); }
-  }
-
-  // Permanent delete — the rare "added by mistake" cleanup. The backend
-  // refuses this if the tenant has any payment, deposit or maintenance
-  // history on file, so this can only ever remove a tenant who truly never
-  // had anything recorded against them.
-  async function handleDeleteTenant() {
-    if (!deleteModal) return;
-    setDeleteSaving(true); setDeleteError('');
-    try {
-      await API.delete(`/tenants/${deleteModal.id}/permanent`);
-      await load();
-      setDeleteModal(null);
-    } catch (e) {
-      setDeleteError(e.response?.data?.error || 'Failed to delete tenant.');
-    } finally { setDeleteSaving(false); }
-  }
-
   async function handleSetPin() {
     if (!pin || pin.length < 4) { setPinError('PIN must be at least 4 digits.'); return; }
     setPinSaving(true); setPinError(''); setPinSuccess('');
@@ -202,7 +158,7 @@ export default function Tenants() {
   // permission again, but for that row's specific property, since an
   // override could grant or revoke it for just one — so a particular row
   // can still end up with no buttons even when this is true.
-  const canManageAny = can('tenants.edit') || can('tenants.set_pin') || can('tenants.deactivate') || isAdmin;
+  const canManageAny = can('tenants.edit') || can('tenants.set_pin');
 
   const propertyOptions = [...new Set(allHouses.map(h => h.plot_name).filter(Boolean))].sort();
 
@@ -368,8 +324,7 @@ export default function Tenants() {
                 const plotId     = tenantPlotId(t);
                 const canEditRow = can('tenants.edit', plotId);
                 const canSetPin  = can('tenants.set_pin', plotId);
-                const canMoveOutRow = can('tenants.deactivate', plotId) && t.is_active;
-                const canManageRow = canEditRow || canSetPin || canMoveOutRow || isAdmin;
+                const canManageRow = canEditRow || canSetPin;
                 return (
                 <tr key={t.id} style={{ borderTop: '1px solid var(--border)', background: i % 2 === 0 ? 'var(--surface)' : 'var(--surface2)' }}>
                   <td style={{ padding: '13px 20px' }}>
@@ -438,26 +393,6 @@ export default function Tenants() {
                             Set PIN
                           </button>
                         )}
-                        {canMoveOutRow && (
-                          <button onClick={() => { setMoveOutModal(t); setMoveOutError(''); }} style={{
-                            padding: '5px 14px', borderRadius: 8, border: 'none',
-                            background: isDark ? hexToRgba('#d97706', 0.22) : 'var(--amber-light, #fef3c7)',
-                            color: isDark ? '#fbbf24' : 'var(--amber, #b45309)',
-                            fontSize: 12, fontWeight: 600, cursor: 'pointer',
-                          }}>
-                            Move out
-                          </button>
-                        )}
-                        {isAdmin && (
-                          <button onClick={() => { setDeleteModal(t); setDeleteError(''); }} style={{
-                            padding: '5px 14px', borderRadius: 8, border: 'none',
-                            background: isDark ? hexToRgba('#dc2626', 0.22) : 'var(--red-light)',
-                            color: isDark ? '#f87171' : 'var(--red)',
-                            fontSize: 12, fontWeight: 600, cursor: 'pointer',
-                          }}>
-                            Delete
-                          </button>
-                        )}
                       </div>
                     </td>
                   ) : (
@@ -506,49 +441,6 @@ export default function Tenants() {
               <button onClick={() => setPinModal(null)} style={{ padding: '10px 20px', borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface)', fontWeight: 600, fontSize: 14, color: 'var(--text)' }}>Close</button>
               <button onClick={handleSetPin} disabled={pinSaving} style={{ padding: '10px 20px', borderRadius: 10, border: 'none', background: 'var(--primary, #7c3aed)', color: '#fff', fontWeight: 600, fontSize: 14 }}>
                 {pinSaving ? 'Saving...' : 'Set PIN'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Move Out confirmation */}
-      {moveOutModal && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, padding: 20 }}>
-          <div style={{ background: 'var(--surface)', borderRadius: 16, padding: 28, width: '100%', maxWidth: 420, boxShadow: 'var(--shadow-lg)' }}>
-            <h2 style={{ fontFamily: 'Space Grotesk', fontWeight: 700, fontSize: 18, marginBottom: 6, color: 'var(--text)' }}>Move out tenant</h2>
-            <p style={{ color: 'var(--muted)', fontSize: 13, marginBottom: 20 }}>
-              Move out <strong>{moveOutModal.full_name}</strong>
-              {moveOutModal.unit_number ? ` (Unit ${moveOutModal.unit_number})` : ''}? This ends their tenancy and
-              frees up the unit for a new tenant or for deletion. Their payment and maintenance history is kept —
-              this does not delete anything.
-            </p>
-            {moveOutError && <div style={{ background: isDark ? hexToRgba('#dc2626', 0.2) : 'var(--red-light)', color: isDark ? '#f87171' : 'var(--red)', padding: '10px 14px', borderRadius: 8, marginBottom: 14, fontSize: 13 }}>{moveOutError}</div>}
-            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
-              <button onClick={() => setMoveOutModal(null)} style={{ padding: '10px 20px', borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface)', fontWeight: 600, fontSize: 14, color: 'var(--text)' }}>Cancel</button>
-              <button onClick={handleMoveOut} disabled={moveOutSaving} style={{ padding: '10px 20px', borderRadius: 10, border: 'none', background: 'var(--amber, #d97706)', color: '#fff', fontWeight: 600, fontSize: 14 }}>
-                {moveOutSaving ? 'Moving out...' : 'Move out'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Permanent Delete confirmation — admin-only, reserved for a tenant added by mistake */}
-      {deleteModal && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, padding: 20 }}>
-          <div style={{ background: 'var(--surface)', borderRadius: 16, padding: 28, width: '100%', maxWidth: 420, boxShadow: 'var(--shadow-lg)' }}>
-            <h2 style={{ fontFamily: 'Space Grotesk', fontWeight: 700, fontSize: 18, marginBottom: 6, color: 'var(--red, #dc2626)' }}>Permanently delete tenant</h2>
-            <p style={{ color: 'var(--muted)', fontSize: 13, marginBottom: 20 }}>
-              Permanently delete <strong>{deleteModal.full_name}</strong>? This cannot be undone and completely
-              removes their record. It only works if they have no payments, deposits, or maintenance requests on
-              file — if they have any history, use <strong>Move out</strong> instead, which keeps that history.
-            </p>
-            {deleteError && <div style={{ background: isDark ? hexToRgba('#dc2626', 0.2) : 'var(--red-light)', color: isDark ? '#f87171' : 'var(--red)', padding: '10px 14px', borderRadius: 8, marginBottom: 14, fontSize: 13 }}>{deleteError}</div>}
-            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
-              <button onClick={() => setDeleteModal(null)} style={{ padding: '10px 20px', borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface)', fontWeight: 600, fontSize: 14, color: 'var(--text)' }}>Cancel</button>
-              <button onClick={handleDeleteTenant} disabled={deleteSaving} style={{ padding: '10px 20px', borderRadius: 10, border: 'none', background: 'var(--red, #dc2626)', color: '#fff', fontWeight: 600, fontSize: 14 }}>
-                {deleteSaving ? 'Deleting...' : 'Permanently delete'}
               </button>
             </div>
           </div>

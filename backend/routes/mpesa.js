@@ -5,7 +5,7 @@ const jwt     = require('jsonwebtoken');
 const axios   = require('axios');
 const { authMiddleware: staffAuth } = require('../middleware/auth');
 const { getVisiblePlotIds } = require('../middleware/scope');
-const { requirePermission } = require('../middleware/permissions');
+const { requirePermission, getPermissions } = require('../middleware/permissions');
 
 // Shared by BOTH the tenant portal (paying their own rent) and staff
 // (recording/checking a payment on a tenant's behalf), so this can't use
@@ -285,14 +285,23 @@ router.get('/unmatched', staffAuth, requirePermission('payments.reconcile_mpesa'
 // PATCH /api/mpesa/:id/match — scoped: you can only match a stray payment to
 // a tenant/house that's actually yours (or your assigned landlords', for an
 // agent). Previously this had no check at all.
-router.patch('/:id/match', staffAuth, requirePermission('payments.reconcile_mpesa'), async (req, res) => {
+// Was gated by requirePermission('payments.reconcile_mpesa') as middleware,
+// before the target property was known — moved down so a per-property
+// override on this permission actually applies to the right property.
+router.patch('/:id/match', staffAuth, async (req, res) => {
   const { tenant_id, house_id } = req.body;
   if (!tenant_id || !house_id) return res.status(400).json({ error: 'tenant_id and house_id are required.' });
   try {
+    const houseRow = await pool.query('SELECT plot_id FROM houses WHERE id = $1', [house_id]);
+    const plotId = houseRow.rows[0]?.plot_id ?? null;
+
+    const { permissions } = await getPermissions(req.user, plotId);
+    if (!permissions.includes('*') && !permissions.includes('payments.reconcile_mpesa')) {
+      return res.status(403).json({ error: 'Missing permission: payments.reconcile_mpesa' });
+    }
+
     if (req.user.role !== 'admin') {
       const visible = await getVisiblePlotIds(req.user);
-      const houseRow = await pool.query('SELECT plot_id FROM houses WHERE id = $1', [house_id]);
-      const plotId = houseRow.rows[0]?.plot_id;
       const allowed = visible === 'ALL' || (plotId != null && visible.includes(plotId));
       if (!allowed) return res.status(403).json({ error: 'You do not have access to this unit.' });
     }
