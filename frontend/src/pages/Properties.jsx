@@ -774,11 +774,16 @@ export default function Properties() {
                   )}
                 </div>
 
-                {isAdmin && (
+                {(isAdmin || isAgent) && (
                   <div>
                     <label style={labelStyle}>{editing ? 'Reassign Owner' : 'Assign to Landlord'}</label>
                     <select value={form.owner_id} onChange={e => setForm(f => ({ ...f, owner_id: e.target.value }))} style={inputStyle}>
-                      <option value="">— Admin (self) —</option>
+                      {/* Admin may leave this on "— Admin (self) —" and own the plot
+                          themselves; an agent has no such option — the backend
+                          requires a real landlord (one actually assigned to this
+                          agent) for every plot an agent creates, so there's nothing
+                          valid to submit until they pick one. */}
+                      {isAdmin && <option value="">— Admin (self) —</option>}
                       {landlords.map(l => <option key={l.id} value={l.id}>{l.name} ({l.email})</option>)}
                     </select>
                   </div>
