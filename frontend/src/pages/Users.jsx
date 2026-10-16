@@ -513,15 +513,18 @@ export default function Users() {
                       {isAdmin && u.role === 'landlord' && u.is_approved && (
                         <>
                           <button onClick={() => handleReject(u)} style={{ padding: '4px 10px', borderRadius: 6, border: 'none', background: 'var(--amber, #d97706)', color: '#fff', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>Suspend</button>
-                          <select
-                            value={u.agent_id || ''}
-                            onChange={e => handleAgentChange(u, e.target.value)}
-                            title="Assign or change this landlord's agent"
-                            style={{ padding: '4px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--surface2)', fontSize: 12, color: 'var(--text)', cursor: 'pointer' }}
-                          >
-                            <option value="">— Self-managed —</option>
-                            {agents.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
-                          </select>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                            <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--muted)', whiteSpace: 'nowrap' }}>Agent:</span>
+                            <select
+                              value={u.agent_id || ''}
+                              onChange={e => handleAgentChange(u, e.target.value)}
+                              title="Assign or change this landlord's agent"
+                              style={{ padding: '4px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--surface2)', fontSize: 12, color: 'var(--text)', cursor: 'pointer' }}
+                            >
+                              <option value="">— Self-managed —</option>
+                              {agents.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+                            </select>
+                          </div>
                         </>
                       )}
                       {isAdmin && u.role === 'agent' && u.is_approved && (
