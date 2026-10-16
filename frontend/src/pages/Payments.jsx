@@ -65,6 +65,7 @@ export default function Payments() {
   const [saving,         setSaving]         = useState(false);
   const [error,          setError]          = useState('');
   const [filter,         setFilter]         = useState('all');
+  const [tenantFilter,   setTenantFilter]   = useState('all'); // 'all' or a tenant id — narrows the payments list to one tenant
   const [form,           setForm]           = useState({
     tenant_id: '', amount: '', payment_date: '', payment_method: 'mpesa', reference_number: '', notes: '',
   });
@@ -248,7 +249,17 @@ export default function Payments() {
     }, 5000);
   }
 
-  const filtered    = filter === 'all' ? payments : payments.filter(p => p.status === filter);
+  const filtered    = payments
+    .filter(p => filter === 'all' || p.status === filter)
+    .filter(p => tenantFilter === 'all' || String(p.tenant_id) === String(tenantFilter));
+  // Tenant options for the filter dropdown: every tenant who actually has a
+  // payment record here, not every tenant in the system — a landlord/caretaker
+  // with a long tenant roster but few payments shouldn't have to scroll past
+  // names with nothing to show. Sorted alphabetically, de-duplicated by id
+  // (a tenant can have several payment rows).
+  const paymentTenantOptions = Array.from(
+    new Map(payments.filter(p => p.tenant_id).map(p => [p.tenant_id, p.tenant_name])).entries()
+  ).sort((a, b) => (a[1] || '').localeCompare(b[1] || ''));
   const total       = filtered.reduce((s, p) => s + parseFloat(p.amount || 0), 0);
   const isDark      = useIsDarkMode();
   const statusColor = {
@@ -338,6 +349,15 @@ export default function Payments() {
         {['all','matched','unmatched','review','pending','failed'].map(f => (
           <button key={f} onClick={() => setFilter(f)} style={{ padding: '7px 16px', borderRadius: 99, border: '1px solid var(--border)', background: filter === f ? 'var(--primary, #7c3aed)' : 'var(--surface)', color: filter === f ? '#fff' : 'var(--muted)', fontWeight: 600, fontSize: 13, textTransform: 'capitalize', cursor: 'pointer' }}>{f}</button>
         ))}
+        <select
+          value={tenantFilter}
+          onChange={e => setTenantFilter(e.target.value)}
+          title="Filter by tenant"
+          style={{ padding: '7px 12px', borderRadius: 99, border: '1px solid var(--border)', background: tenantFilter === 'all' ? 'var(--surface)' : 'var(--primary, #7c3aed)', color: tenantFilter === 'all' ? 'var(--muted)' : '#fff', fontWeight: 600, fontSize: 13, cursor: 'pointer' }}
+        >
+          <option value="all">All tenants</option>
+          {paymentTenantOptions.map(([id, name]) => <option key={id} value={id}>{name || `Tenant #${id}`}</option>)}
+        </select>
         <div style={{ marginLeft: 'auto', fontWeight: 700, color: 'var(--primary, #7c3aed)', fontSize: 15, display: 'flex', alignItems: 'center' }}>
           KES {total.toLocaleString()}
         </div>
