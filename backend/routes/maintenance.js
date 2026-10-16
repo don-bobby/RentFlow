@@ -4,7 +4,7 @@ const pool    = require('../database/db');
 const jwt     = require('jsonwebtoken');
 const { getVisiblePlotIds } = require('../middleware/scope');
 const { authMiddleware: staffAuth } = require('../middleware/auth');
-const { requirePermission, getPermissions } = require('../middleware/permissions');
+const { requirePermission, getPermissions, filterRowsByPermission } = require('../middleware/permissions');
 const { logAudit } = require('../utils/audit');
 
 function flexAuth(req, res, next) {
@@ -19,12 +19,8 @@ router.get('/', staffAuth, requirePermission('maintenance.view'), async (req, re
     const visible = await getVisiblePlotIds(req.user);
     if (visible !== 'ALL' && visible.length === 0) return res.json({ success: true, data: [] });
 
-    // h.plot_id added to the SELECT so the frontend can check a
-    // plot-specific permission override per card without a second request
-    // — it was already joined in for the WHERE filter below, just never
-    // actually returned to the caller.
     const query = `
-      SELECT m.*, t.full_name AS tenant_name, h.unit_number, h.plot_id
+      SELECT m.*, h.plot_id, t.full_name AS tenant_name, h.unit_number
       FROM maintenance_requests m
       LEFT JOIN tenants t ON m.tenant_id = t.id
       LEFT JOIN houses  h ON m.house_id  = h.id
@@ -34,7 +30,12 @@ router.get('/', staffAuth, requirePermission('maintenance.view'), async (req, re
     `;
     const params = visible === 'ALL' ? [] : [visible];
     const result = await pool.query(query, params);
-    res.json({ success: true, data: result.rows });
+    // getVisiblePlotIds (above) answers "can this user see this property at
+    // all" — it doesn't know about a per-property maintenance.view revoke.
+    // This narrows the same list down to rows that override hasn't hidden,
+    // without changing the "do you have maintenance.view at all" gate above.
+    const data = await filterRowsByPermission(req.user, result.rows, 'maintenance.view', (row) => row.plot_id);
+    res.json({ success: true, data });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 

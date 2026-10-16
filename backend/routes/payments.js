@@ -3,7 +3,7 @@ const router  = express.Router();
 const pool    = require('../database/db');
 const { getVisiblePlotIds } = require('../middleware/scope');
 const { authMiddleware: staffAuth } = require('../middleware/auth');
-const { requirePermission, getPermissions } = require('../middleware/permissions');
+const { requirePermission, getPermissions, filterRowsByPermission } = require('../middleware/permissions');
 const { logAudit } = require('../utils/audit');
 
 // GET all payments — admin/super_admin see all, agent sees their landlords',
@@ -14,11 +14,7 @@ router.get('/', staffAuth, requirePermission('payments.view'), async (req, res) 
     if (visible !== 'ALL' && visible.length === 0) return res.json({ success: true, data: [] });
 
     const query = `
-      -- h.plot_id added so the frontend can check a plot-specific permission
-      -- override (AuthContext's can(permission, plotId)) against each row
-      -- without a second request — it was already joined in for plot_name,
-      -- just never selected out.
-      SELECT p.*, t.full_name AS tenant_name, h.unit_number, h.plot_id, pl.name AS plot_name
+      SELECT p.*, h.plot_id, t.full_name AS tenant_name, h.unit_number, pl.name AS plot_name
       FROM payments p
       LEFT JOIN tenants t ON p.tenant_id = t.id
       LEFT JOIN houses  h ON p.house_id  = h.id
@@ -28,7 +24,13 @@ router.get('/', staffAuth, requirePermission('payments.view'), async (req, res) 
     `;
     const params = visible === 'ALL' ? [] : [visible];
     const result = await pool.query(query, params);
-    res.json({ success: true, data: result.rows });
+    // getVisiblePlotIds (above) answers "can this user see this property at
+    // all" — it doesn't know about a per-property payments.view revoke.
+    // This narrows the same list down to rows where that specific override
+    // hasn't hidden it, without changing the "do you have payments.view at
+    // all" gate above.
+    const data = await filterRowsByPermission(req.user, result.rows, 'payments.view', (row) => row.plot_id);
+    res.json({ success: true, data });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 

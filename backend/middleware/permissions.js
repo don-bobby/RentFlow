@@ -65,6 +65,83 @@ async function getPermissions(user, plotId) {
   return { profile, permissions: Array.from(permissions) };
 }
 
+// Batch version of getPermissions, for LIST endpoints whose rows span many
+// properties at once — a single plotId isn't enough there, and calling
+// getPermissions() once per row would mean two extra DB queries per row.
+// Resolves every id in plotIds in exactly two queries total (role defaults,
+// then all of this user's overrides), then applies the same resolution
+// order as getPermissions() to each plot id in memory.
+// Returns a Map<plotId, permissions[]>.
+async function getPermissionsForPlots(user, plotIds) {
+  const profile = profileFor(user);
+  const uniqueIds = [...new Set(plotIds.filter((id) => id != null))];
+
+  if (profile === 'super_admin') return new Map(uniqueIds.map((id) => [id, ['*']]));
+  if (!profile) return new Map(uniqueIds.map((id) => [id, []]));
+
+  const roleResult = await pool.query(
+    `SELECT permission FROM role_permissions WHERE profile = $1 AND allowed = true`,
+    [profile]
+  );
+  const basePermissions = roleResult.rows.map((r) => r.permission);
+
+  const overridesResult = await pool.query(
+    `SELECT plot_id, permission, effect FROM user_permission_overrides WHERE user_id = $1`,
+    [user.id]
+  );
+  const globalOverrides = overridesResult.rows.filter((o) => o.plot_id === null);
+  const byPlot = new Map();
+  for (const o of overridesResult.rows) {
+    if (o.plot_id === null) continue;
+    if (!byPlot.has(o.plot_id)) byPlot.set(o.plot_id, []);
+    byPlot.get(o.plot_id).push(o);
+  }
+
+  const apply = (set, o) => {
+    if (o.effect === 'grant') set.add(o.permission);
+    else set.delete(o.permission);
+  };
+
+  const resolved = new Map();
+  for (const plotId of uniqueIds) {
+    const set = new Set(basePermissions);
+    globalOverrides.forEach((o) => apply(set, o));
+    (byPlot.get(plotId) || []).forEach((o) => apply(set, o));
+    resolved.set(plotId, Array.from(set));
+  }
+  return resolved;
+}
+
+// Filters a list of rows down to the ones this user may view for `permission`,
+// resolved per-row by that row's own plot. For LIST routes (GET /, etc.)
+// where the existing top-of-route requirePermission(x) check only answers
+// "can this user ever see X" — it can't catch a property-specific revoke,
+// since it runs with no plot in view. This is the row-level complement: it
+// hides just the rows for properties where the permission has been revoked
+// for this user, rather than rejecting (or allowing) the whole list.
+//
+// getPlotId(row) pulls the plot id out of a row — varies by table (some
+// have plot_id directly, others only via a joined house/plot). A row whose
+// plot id can't be determined (null/undefined) is left in as-is, same as
+// before this filter existed — there's nothing to scope it by.
+//
+// Known gap: this can only narrow access, not widen it — a plot-specific
+// GRANT override can't surface rows for a permission the user's role lacks
+// entirely, because the top-of-route requirePermission(x) check already
+// rejected the request before this ever runs. Fixing that needs removing
+// that top-level gate in favor of this filter alone, which would also turn
+// a "no access anywhere" request into an empty 200 instead of a 403 — a
+// bigger behavior change, left for a follow-up.
+async function filterRowsByPermission(user, rows, permission, getPlotId) {
+  const byPlot = await getPermissionsForPlots(user, rows.map(getPlotId));
+  return rows.filter((row) => {
+    const plotId = getPlotId(row);
+    if (plotId == null) return true;
+    const permissions = byPlot.get(plotId) || [];
+    return permissions.includes('*') || permissions.includes(permission);
+  });
+}
+
 // Express middleware: use after authMiddleware.
 // e.g. router.post('/', authMiddleware, requirePermission('tenants.create'), ...)
 function requirePermission(permission) {
@@ -79,4 +156,10 @@ function requirePermission(permission) {
   };
 }
 
-module.exports = { profileFor, getPermissions, requirePermission };
+module.exports = {
+  profileFor,
+  getPermissions,
+  getPermissionsForPlots,
+  filterRowsByPermission,
+  requirePermission,
+};

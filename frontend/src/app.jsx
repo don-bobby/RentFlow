@@ -15,6 +15,7 @@ import TenantPortal   from './pages/TenantPortal';
 import ListingsAdmin  from './pages/Listings';
 import Notices        from './pages/Notices';
 import RolesPermissions from './pages/RolesPermissions';
+import PermissionOverrides from './pages/PermissionOverrides';
 import Expenses from './pages/Expenses';
 import SmsMessages from './pages/SmsMessages';
 import { AuthProvider, useAuth } from './context/AuthContext';
@@ -90,6 +91,15 @@ function AppRoutes() {
         <Route path="roles" element={
           <ProtectedRoute allowedRoles={['admin', 'super_admin']}>
             <RolesPermissions />
+          </ProtectedRoute>
+        } />
+        {/* Same admin-only gate as "roles" above — this page's own backend
+            endpoint (GET /api/auth/permission-overrides) is requireAdmin
+            too, so this route guard is a UX nicety (redirect instead of a
+            403 flash), not the actual enforcement. */}
+        <Route path="permission-overrides" element={
+          <ProtectedRoute allowedRoles={['admin', 'super_admin']}>
+            <PermissionOverrides />
           </ProtectedRoute>
         } />
         {/* Admin/agent only — matches the backend's sms.js restriction

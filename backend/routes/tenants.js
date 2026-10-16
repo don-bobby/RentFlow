@@ -4,7 +4,7 @@ const pool    = require('../database/db');
 const { logAudit, diff } = require('../utils/audit');
 const { getVisiblePlotIds } = require('../middleware/scope');
 const { authMiddleware: staffAuth } = require('../middleware/auth');
-const { requirePermission, getPermissions } = require('../middleware/permissions');
+const { requirePermission, getPermissions, filterRowsByPermission } = require('../middleware/permissions');
 
 // Strips national_id / emergency_phone / lease_url from tenant rows unless
 // the requester's profile has tenants.view_sensitive. Server-side, so the
@@ -49,6 +49,7 @@ router.get('/', staffAuth, requirePermission('tenants.view'), async (req, res) =
         -- arrears (t.balance) — these are two separate things that were
         -- both previously folded into a single misleading "Paid Up" badge.
         h.deposit AS required_deposit,
+        h.plot_id,
         p.name AS plot_name,
         u.name AS owner_name,
 
@@ -102,7 +103,12 @@ router.get('/', staffAuth, requirePermission('tenants.view'), async (req, res) =
       ORDER BY t.full_name
     `, params);
 
-    const data = await stripSensitiveFields(req, result.rows);
+    // getVisiblePlotIds (above) answers "can this user see this property at
+    // all" — it doesn't know about a per-property tenants.view revoke. This
+    // narrows the same list down to rows that override hasn't hidden,
+    // without changing the "do you have tenants.view at all" gate above.
+    const visibleRows = await filterRowsByPermission(req.user, result.rows, 'tenants.view', (row) => row.plot_id);
+    const data = await stripSensitiveFields(req, visibleRows);
     res.json({ success: true, data });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });

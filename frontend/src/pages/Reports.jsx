@@ -3,18 +3,24 @@ import API from '../services/api';
 import { useAuth } from '../context/AuthContext';
 
 // ── Report definitions ────────────────────────────────────────────────────────
+// `permission` is the reports.* string this report is gated by (matches a
+// row in role_permissions / user_permission_overrides, same as every other
+// permission in the system) — only set on the 10 report types that actually
+// have one today. A report with no `permission` field is left exactly as it
+// was before this change: visible to anyone who can open the Reports page
+// (`adminAgentOnly` is the one existing exception to that, for 'assignments').
 const REPORTS = [
-  { id: 'payments',       icon: '💳', label: 'Payment Collection',    desc: 'All rent payments received',           color: 'var(--green)',   light: 'var(--green-light)'   },
+  { id: 'payments',       icon: '💳', label: 'Payment Collection',    desc: 'All rent payments received',           color: 'var(--green)',   light: 'var(--green-light)',   permission: 'reports.payment_collection' },
   { id: 'paymenthistory', icon: '🧾', label: 'Payment History',       desc: 'One tenant\'s full rent + deposit timeline', color: 'var(--primary)', light: 'var(--primary-light)' },
-  { id: 'unpaid',         icon: '⚠️', label: 'Unpaid Rent',           desc: 'Outstanding balances, with aging',     color: 'var(--red)',     light: 'var(--red-light)'     },
-  { id: 'tenants',        icon: '👥', label: 'Tenant List',           desc: 'All active and inactive tenants',      color: 'var(--primary)', light: 'var(--primary-light)' },
-  { id: 'maintenance',    icon: '🔧', label: 'Maintenance Records',   desc: 'All maintenance requests by status',   color: 'var(--amber)',   light: 'var(--amber-light)'   },
-  { id: 'properties',     icon: '🏢', label: 'Property Summary',      desc: 'Plots, units, occupancy overview',     color: 'var(--blue)',    light: 'var(--blue-light)'    },
-  { id: 'occupancy',      icon: '📊', label: 'Occupancy Report',      desc: 'Vacant vs occupied units over time',   color: '#8b5cf6',       light: '#ede9fe'              },
-  { id: 'expenses',       icon: '💸', label: 'Expenses Report',       desc: 'All property expenses by category',   color: '#f97316',       light: '#fff7ed'              },
-  { id: 'revenue',        icon: '📈', label: 'Revenue Summary',       desc: 'Monthly and yearly revenue totals',    color: 'var(--green)',   light: 'var(--green-light)'   },
-  { id: 'moveins',        icon: '🏠', label: 'Move-in / Move-out',    desc: 'Tenant movement history',              color: 'var(--primary)', light: 'var(--primary-light)' },
-  { id: 'expiring',       icon: '📅', label: 'Expiring Leases',       desc: 'Tenants with leases 11+ months old',   color: 'var(--amber)',   light: 'var(--amber-light)'   },
+  { id: 'unpaid',         icon: '⚠️', label: 'Unpaid Rent',           desc: 'Outstanding balances, with aging',     color: 'var(--red)',     light: 'var(--red-light)',     permission: 'reports.unpaid_rent' },
+  { id: 'tenants',        icon: '👥', label: 'Tenant List',           desc: 'All active and inactive tenants',      color: 'var(--primary)', light: 'var(--primary-light)', permission: 'reports.tenant_list' },
+  { id: 'maintenance',    icon: '🔧', label: 'Maintenance Records',   desc: 'All maintenance requests by status',   color: 'var(--amber)',   light: 'var(--amber-light)',   permission: 'reports.maintenance' },
+  { id: 'properties',     icon: '🏢', label: 'Property Summary',      desc: 'Plots, units, occupancy overview',     color: 'var(--blue)',    light: 'var(--blue-light)',    permission: 'reports.property_summary' },
+  { id: 'occupancy',      icon: '📊', label: 'Occupancy Report',      desc: 'Vacant vs occupied units over time',   color: '#8b5cf6',       light: '#ede9fe',              permission: 'reports.occupancy' },
+  { id: 'expenses',       icon: '💸', label: 'Expenses Report',       desc: 'All property expenses by category',   color: '#f97316',       light: '#fff7ed',              permission: 'reports.expenses' },
+  { id: 'revenue',        icon: '📈', label: 'Revenue Summary',       desc: 'Monthly and yearly revenue totals',    color: 'var(--green)',   light: 'var(--green-light)',   permission: 'reports.revenue_summary' },
+  { id: 'moveins',        icon: '🏠', label: 'Move-in / Move-out',    desc: 'Tenant movement history',              color: 'var(--primary)', light: 'var(--primary-light)', permission: 'reports.move_in_out' },
+  { id: 'expiring',       icon: '📅', label: 'Expiring Leases',       desc: 'Tenants with leases 11+ months old',   color: 'var(--amber)',   light: 'var(--amber-light)',   permission: 'reports.expiring_leases' },
   { id: 'rentroll',       icon: '📋', label: 'Rent Roll',             desc: 'Snapshot of every occupied unit',      color: 'var(--blue)',    light: 'var(--blue-light)'    },
   { id: 'paymentmethods', icon: '🏦', label: 'Payment Methods',       desc: 'Collections by mpesa / bank / cash',   color: '#8b5cf6',        light: '#ede9fe'              },
   { id: 'performance',    icon: '🏆', label: 'Property Performance', desc: 'Plots ranked by occupancy & revenue',  color: 'var(--blue)',    light: 'var(--blue-light)'    },
@@ -491,7 +497,7 @@ function HBarChart({ title, data, series, format = (v) => Number(v).toLocaleStri
 }
 
 export default function Reports() {
-  const { user: me } = useAuth();
+  const { user: me, can } = useAuth();
   const isAdminOrAgent = me?.role === 'admin' || me?.role === 'super_admin' || me?.role === 'agent';
   const [active,   setActive]   = useState('payments');
   const [data,     setData]     = useState({});
@@ -561,6 +567,17 @@ export default function Reports() {
         deposits = arr(dr.data);
       } catch { deposits = []; }
 
+      // Per-property permission map — { plotId: ['permission', ...] } — for
+      // reports that need to trim out just one property's rows rather than
+      // show or hide the whole report (see canForPlot below). Swallowed on
+      // failure same as the other best-effort fetches above: a report just
+      // falls back to its un-trimmed, role-level behavior if this fails.
+      let plotPermissions = {};
+      try {
+        const ppr = await API.get('/auth/my-plot-permissions');
+        plotPermissions = ppr.data?.data || {};
+      } catch { plotPermissions = {}; }
+
       let auditLog = [], auditDenied = false;
       try {
         const ar = await API.get('/audit-log');
@@ -570,12 +587,27 @@ export default function Reports() {
       setData({
         tenants: arr(tr.data), payments: arr(pr.data), houses: arr(hr.data),
         requests: arr(mr.data), plots: arr(plr.data), expenses: arr(er.data), users, deposits, auditLog, auditDenied, caretakerPlots,
+        plotPermissions,
       });
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
   }
 
   function arr(d) { return Array.isArray(d) ? d : (d?.data || []); }
+
+  // Per-property check for report data trimming: "may I see THIS permission
+  // for THIS specific property", as opposed to `can()` which only answers
+  // "do I have this permission at all, anywhere". A role-level '*' (or the
+  // flat permission itself, when no plot is involved) short-circuits before
+  // ever looking at the per-plot map, same precedence as the backend.
+  // Falls back to the flat `can()` check when a plot's entry isn't in the
+  // map (e.g. the fetch failed, or the row has no plot) — same as "no
+  // override exists, use the role default".
+  function canForPlot(permission, plotId, plotPermissions) {
+    if (me?.permissions?.includes('*')) return true;
+    if (plotId == null || !plotPermissions || !(plotId in plotPermissions)) return can(permission);
+    return plotPermissions[plotId].includes(permission);
+  }
 
   function filterByPeriod(items, dateField) {
     return items.filter(item => {
@@ -641,7 +673,7 @@ export default function Reports() {
   let auditOptions = { actions: [], entities: [], users: [] };
 
   if (data.payments) {
-    const { tenants, payments, houses, requests, plots, expenses, users, deposits, auditLog, caretakerPlots } = data;
+    const { tenants, payments, houses, requests, plots, expenses, users, deposits, auditLog, caretakerPlots, plotPermissions } = data;
 
     // Shared lookups for the analytical reports below
     const houseById = Object.fromEntries(houses.map(h => [h.id, h]));
@@ -899,7 +931,11 @@ export default function Reports() {
     }
 
     if (active === 'payments') {
-      const filtered = filterByPeriod(payments, 'payment_date');
+      // See canForPlot above — a property-specific revoke of
+      // reports.payment_collection trims that property's transactions out
+      // rather than hiding the whole report.
+      const visiblePayments = payments.filter(p => canForPlot('reports.payment_collection', p.plot_id, plotPermissions));
+      const filtered = filterByPeriod(visiblePayments, 'payment_date');
       // The table below still lists every transaction, pending and failed
       // ones included, so staff can see what was attempted — but the
       // headline "Total Collected" figure only counts money that actually
@@ -984,7 +1020,11 @@ export default function Reports() {
         const d = new Date(p.payment_date);
         if (!lastPaymentByTenant[p.tenant_name] || d > lastPaymentByTenant[p.tenant_name]) lastPaymentByTenant[p.tenant_name] = d;
       });
-      const unpaid = filterByPeriod(tenants.filter(t => t.is_active && parseFloat(t.balance || 0) > 0), 'move_in_date');
+      // A property-specific revoke of reports.unpaid_rent hides just that
+      // property's tenants from this report (trims the data, doesn't hide
+      // the whole report) — see canForPlot above.
+      const visibleTenants = tenants.filter(t => canForPlot('reports.unpaid_rent', t.plot_id, plotPermissions));
+      const unpaid = filterByPeriod(visibleTenants.filter(t => t.is_active && parseFloat(t.balance || 0) > 0), 'move_in_date');
       const total  = unpaid.reduce((s, t) => s + parseFloat(t.balance || 0), 0);
       const now = new Date();
       const withAging = unpaid.map(t => {
@@ -1019,7 +1059,11 @@ export default function Reports() {
     }
 
     if (active === 'tenants') {
+      // See canForPlot above — a property-specific revoke of
+      // reports.tenant_list trims that property's tenants out rather than
+      // hiding the whole report.
       const filtered = tenants
+        .filter(t => canForPlot('reports.tenant_list', t.plot_id, plotPermissions))
         .filter(t => filters.status === 'all' || (filters.status === 'active' ? t.is_active : !t.is_active))
         .filter(t => filters.landlord === 'all' || t.owner_name === filters.landlord);
       columns = ['Name', 'Phone', 'Email', 'Unit', 'Plot', 'Move-in', 'Balance (KES)', 'Status'];
@@ -1038,7 +1082,11 @@ export default function Reports() {
     }
 
     if (active === 'maintenance') {
-      const filtered = filterByPeriod(requests, 'reported_at').filter(r => filters.status === 'all' || r.status === filters.status);
+      // See canForPlot above — a property-specific revoke of
+      // reports.maintenance trims that property's requests out rather than
+      // hiding the whole report.
+      const visibleRequests = requests.filter(r => canForPlot('reports.maintenance', r.plot_id, plotPermissions));
+      const filtered = filterByPeriod(visibleRequests, 'reported_at').filter(r => filters.status === 'all' || r.status === filters.status);
       columns = ['#', 'Issue', 'Priority', 'Status', 'Unit', 'Reported', 'Resolved'];
       rows    = filtered.map(r => ({
         '#': r.id,
@@ -1054,11 +1102,17 @@ export default function Reports() {
     }
 
     if (active === 'properties') {
-      const filteredPlots = plots.filter(p =>
-        (filters.propertyName === 'all' || p.name === filters.propertyName) &&
-        (filters.location === 'all' || p.location === filters.location) &&
-        (filters.landlord === 'all' || p.owner_name === filters.landlord)
-      );
+      // See canForPlot above — a property-specific revoke of
+      // reports.property_summary drops that one property's row rather than
+      // hiding the whole report. Here the plot IS the row, so it's the
+      // plot's own id being checked, not a joined plot_id field.
+      const filteredPlots = plots
+        .filter(p => canForPlot('reports.property_summary', p.id, plotPermissions))
+        .filter(p =>
+          (filters.propertyName === 'all' || p.name === filters.propertyName) &&
+          (filters.location === 'all' || p.location === filters.location) &&
+          (filters.landlord === 'all' || p.owner_name === filters.landlord)
+        );
       columns = ['Plot', 'Location', 'Total Units', 'Occupied', 'Vacant', 'Monthly Revenue (KES)'];
       rows    = filteredPlots.map(p => {
         const units    = houses.filter(h => h.plot_id === p.id);
@@ -1079,12 +1133,16 @@ export default function Reports() {
     }
 
     if (active === 'occupancy') {
-      const occupied = houses.filter(h => h.status === 'occupied');
-      const vacant   = houses.filter(h => h.status === 'vacant');
-      const rate     = houses.length > 0 ? Math.round((occupied.length / houses.length) * 100) : 0;
+      // See canForPlot above — a property-specific revoke of
+      // reports.occupancy drops that property's units out rather than
+      // hiding the whole report.
+      const visibleHouses = houses.filter(h => canForPlot('reports.occupancy', h.plot_id, plotPermissions));
+      const occupied = visibleHouses.filter(h => h.status === 'occupied');
+      const vacant   = visibleHouses.filter(h => h.status === 'vacant');
+      const rate     = visibleHouses.length > 0 ? Math.round((occupied.length / visibleHouses.length) * 100) : 0;
       const now = new Date();
       columns = ['Unit', 'Type', 'Plot', 'Rent (KES)', 'Status', 'Days Vacant'];
-      rows    = houses.map(h => ({
+      rows    = visibleHouses.map(h => ({
         Unit: `Unit ${h.unit_number}`,
         Type: h.house_type,
         Plot: h.plot_name || '—',
@@ -1106,7 +1164,11 @@ export default function Reports() {
     }
 
     if (active === 'expenses') {
-      const filtered = filterByPeriod(expenses, 'expense_date');
+      // See canForPlot above — a property-specific revoke of
+      // reports.expenses trims that property's expenses out rather than
+      // hiding the whole report.
+      const visibleExpenses = expenses.filter(e => canForPlot('reports.expenses', e.plot_id, plotPermissions));
+      const filtered = filterByPeriod(visibleExpenses, 'expense_date');
       const total    = filtered.reduce((s, e) => s + parseFloat(e.amount || 0), 0);
       columns = ['Plot', 'Category', 'Description', 'Amount (KES)', 'Date'];
       rows    = filtered.map(e => ({
@@ -1125,8 +1187,12 @@ export default function Reports() {
     }
 
     if (active === 'revenue') {
+      // See canForPlot above — a property-specific revoke of
+      // reports.revenue_summary leaves that property's payments out of the
+      // totals rather than hiding the whole report.
+      const visiblePayments = payments.filter(p => canForPlot('reports.revenue_summary', p.plot_id, plotPermissions));
       const byMonth = {};
-      payments.filter(isCollected).filter(p => new Date(p.payment_date).getFullYear() === filters.year).forEach(p => {
+      visiblePayments.filter(isCollected).filter(p => new Date(p.payment_date).getFullYear() === filters.year).forEach(p => {
         const m = new Date(p.payment_date).getMonth();
         if (!byMonth[m]) byMonth[m] = 0;
         byMonth[m] += parseFloat(p.amount || 0);
@@ -1135,7 +1201,7 @@ export default function Reports() {
       rows    = months.map((m, i) => ({
         Month: `${m} ${filters.year}`,
         'Revenue (KES)': (byMonth[i] || 0).toLocaleString(),
-        Transactions: payments.filter(isCollected).filter(p => new Date(p.payment_date).getMonth() === i && new Date(p.payment_date).getFullYear() === filters.year).length,
+        Transactions: visiblePayments.filter(isCollected).filter(p => new Date(p.payment_date).getMonth() === i && new Date(p.payment_date).getFullYear() === filters.year).length,
       }));
       const total = Object.values(byMonth).reduce((s, v) => s + v, 0);
       summary = [{ label: `Total ${filters.year}`, value: `KES ${total.toLocaleString()}`, color: 'var(--green)' }];
@@ -1144,7 +1210,11 @@ export default function Reports() {
     }
 
     if (active === 'moveins') {
-      const filtered = filterByPeriod(tenants.filter(t => t.move_in_date), 'move_in_date');
+      // See canForPlot above — a property-specific revoke of
+      // reports.move_in_out trims that property's tenants out rather than
+      // hiding the whole report.
+      const visibleTenants = tenants.filter(t => canForPlot('reports.move_in_out', t.plot_id, plotPermissions));
+      const filtered = filterByPeriod(visibleTenants.filter(t => t.move_in_date), 'move_in_date');
       columns = ['Tenant', 'Phone', 'Unit', 'Plot', 'Move-in Date', 'Status'];
       rows    = filtered.map(t => ({
         Tenant: t.full_name,
@@ -1159,8 +1229,12 @@ export default function Reports() {
     }
 
     if (active === 'expiring') {
+      // See canForPlot above — a property-specific revoke of
+      // reports.expiring_leases trims that property's tenants out rather
+      // than hiding the whole report.
+      const visibleTenants = tenants.filter(t => canForPlot('reports.expiring_leases', t.plot_id, plotPermissions));
       const elevenMonthsAgo = new Date(); elevenMonthsAgo.setMonth(elevenMonthsAgo.getMonth() - 11);
-      const expiring = tenants.filter(t => t.is_active && t.move_in_date && new Date(t.move_in_date) <= elevenMonthsAgo);
+      const expiring = visibleTenants.filter(t => t.is_active && t.move_in_date && new Date(t.move_in_date) <= elevenMonthsAgo);
       columns = ['Tenant', 'Phone', 'Unit', 'Plot', 'Move-in Date', 'Tenancy'];
       rows    = expiring.map(t => {
         const tenureMonths = Math.floor((new Date() - new Date(t.move_in_date)) / (1000 * 60 * 60 * 24 * 30));
@@ -1501,9 +1575,23 @@ export default function Reports() {
     else { setSortCol(col); setSortDir('asc'); }
   }
 
-  const visibleReports = REPORTS.filter(r => !r.adminAgentOnly || isAdminOrAgent);
+  // A report with a `permission` is hidden unless the user's role (or a
+  // per-user override on top of it) grants that reports.* permission — see
+  // the comment on REPORTS above. Reports with no `permission` field keep
+  // their previous behavior and aren't affected by this check.
+  const visibleReports = REPORTS.filter(r => (!r.adminAgentOnly || isAdminOrAgent) && (!r.permission || can(r.permission)));
   const pinnedReports = visibleReports.filter(r => pinned.includes(r.id));
   const otherReports   = visibleReports.filter(r => !pinned.includes(r.id));
+
+  // If the currently-open report just became hidden (permissions changed
+  // underneath the user, or they land here with a pinned report they've
+  // since lost access to), fall back to the first one they can still see
+  // instead of showing a blank/broken panel for a report they can't view.
+  useEffect(() => {
+    if (visibleReports.length === 0) return;
+    if (!visibleReports.some(r => r.id === active)) setActive(visibleReports[0].id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visibleReports.map(r => r.id).join(',')]);
 
   function renderReportItem(r) {
     const on = active === r.id;

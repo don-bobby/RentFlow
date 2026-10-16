@@ -25,7 +25,7 @@ function requireAdmin(req, res, next) {
 // action) so the UI always reflects the LIVE database state, not the
 // token's snapshot from up to 7 days ago.
 const { authMiddleware: liveAuthMiddleware } = require('../middleware/auth');
-const { getPermissions, requirePermission } = require('../middleware/permissions');
+const { getPermissions, getPermissionsForPlots, requirePermission } = require('../middleware/permissions');
 const { getVisiblePlotIds } = require('../middleware/scope');
 
 router.get('/me', liveAuthMiddleware, async (req, res) => {
@@ -41,23 +41,6 @@ router.get('/me', liveAuthMiddleware, async (req, res) => {
       agent_name = a.rows[0]?.name || null;
     }
 
-    // `permissions` above is role-defaults + GLOBAL overrides only (no
-    // plotId was passed to getPermissions) — exactly what it was before.
-    // For the frontend to check a permission against ONE specific property
-    // (AuthContext's can(permission, plotId)) it also needs this user's own
-    // PLOT-SPECIFIC overrides, so it can layer them on top itself without a
-    // network round-trip on every check. super_admin/admin never have
-    // overrides applied to them (see middleware/permissions.js), so skip the
-    // query for them — it would always come back empty anyway.
-    let overrides = [];
-    if (profile !== 'super_admin') {
-      const o = await pool.query(
-        `SELECT plot_id, permission, effect FROM user_permission_overrides WHERE user_id = $1`,
-        [req.user.id]
-      );
-      overrides = o.rows;
-    }
-
     res.json({
       success: true,
       data: {
@@ -69,9 +52,37 @@ router.get('/me', liveAuthMiddleware, async (req, res) => {
         agent_name,
         profile,
         permissions,
-        overrides,
       },
     });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── GET /api/auth/my-plot-permissions — per-property permission map ───────────
+// /auth/me's `permissions` is a single flat list — enough for most of the UI
+// (show/hide a button, a whole page), but not for anything that needs to
+// know "am I allowed to do X for property A specifically, even though I'm
+// not for property B" (e.g. a report that mixes several properties into one
+// view and needs to trim out just the ones a per-property override blocks).
+// This is that: { [plotId]: ['permission', ...] } for every property the
+// requesting user can see at all — resolved with the same role-default →
+// global-override → plot-override rules as everywhere else (see
+// getPermissionsForPlots in middleware/permissions.js).
+//
+// Returns {} for super_admin/admin and for anyone with no visible
+// properties — the frontend already short-circuits on a flat '*' before
+// ever consulting this, so there's nothing useful to compute for them.
+router.get('/my-plot-permissions', liveAuthMiddleware, async (req, res) => {
+  try {
+    const visible = await getVisiblePlotIds(req.user);
+    if (visible === 'ALL' || !Array.isArray(visible) || visible.length === 0) {
+      return res.json({ success: true, data: {} });
+    }
+    const byPlot = await getPermissionsForPlots(req.user, visible);
+    const data = {};
+    for (const [plotId, permissions] of byPlot) data[plotId] = permissions;
+    res.json({ success: true, data });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -257,9 +268,7 @@ router.get('/users', authMiddleware, async (req, res) => {
            SELECT agent_id AS user_id, STRING_AGG(name, ', ' ORDER BY name) AS plot_names
            FROM plots WHERE agent_id IS NOT NULL GROUP BY agent_id
          ) ap ON ap.user_id = u.id AND u.role = 'agent'
-         WHERE u.id != $1
-         ORDER BY u.created_at DESC`,
-        [req.user.id]
+         ORDER BY u.created_at DESC`
       );
     } else if (req.user.role === 'landlord') {
       result = await pool.query(
@@ -1100,6 +1109,32 @@ router.patch('/role-permissions', authMiddleware, requireAdmin, async (req, res)
 // for the full design this implements.
 
 const OVERRIDABLE_ROLES = ['agent', 'landlord', 'caretaker'];
+
+// GET /api/auth/permission-overrides — EVERY active override in the system,
+// across every user and property, in one list. The per-user endpoint below
+// answers "what's special about this one person"; this answers "what's
+// special, anywhere" — for an admin auditing the system as a whole rather
+// than checking one user at a time. Read-only: adding/removing an override
+// still goes through the per-user routes below, so there's exactly one
+// code path that enforces the admin-only/no-admin-targets/known-permission
+// rules, rather than two that could drift apart.
+router.get('/permission-overrides', authMiddleware, requireAdmin, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT o.id, o.user_id, u.name AS user_name, u.role AS user_role,
+              o.plot_id, p.name AS plot_name, o.permission, o.effect,
+              o.created_at, c.name AS granted_by_name
+       FROM user_permission_overrides o
+       JOIN users u ON u.id = o.user_id
+       LEFT JOIN plots p ON p.id = o.plot_id
+       LEFT JOIN users c ON c.id = o.created_by
+       ORDER BY u.name, o.plot_id NULLS FIRST, o.permission`
+    );
+    res.json({ success: true, data: result.rows });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
 // GET /api/auth/users/:id/permission-overrides — this user's role defaults
 // plus every override currently set for them (global and per-property).

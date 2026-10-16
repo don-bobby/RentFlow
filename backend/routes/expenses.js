@@ -3,7 +3,7 @@ const router  = express.Router();
 const pool    = require('../database/db');
 const { getVisiblePlotIds } = require('../middleware/scope');
 const { authMiddleware: staffAuth } = require('../middleware/auth');
-const { requirePermission, getPermissions } = require('../middleware/permissions');
+const { requirePermission, getPermissions, filterRowsByPermission } = require('../middleware/permissions');
 
 
 // GET all expenses — admin/super_admin see all, agent sees their landlords',
@@ -25,7 +25,12 @@ router.get('/', staffAuth, requirePermission('expenses.view'), async (req, res) 
     `;
     const params = visible === 'ALL' ? [] : [visible];
     const result = await pool.query(query, params);
-    res.json({ success: true, data: result.rows });
+    // getVisiblePlotIds (above) answers "can this user see this property at
+    // all" — it doesn't know about a per-property expenses.view revoke. This
+    // narrows the same list down to rows that override hasn't hidden,
+    // without changing the "do you have expenses.view at all" gate above.
+    const data = await filterRowsByPermission(req.user, result.rows, 'expenses.view', (row) => row.plot_id);
+    res.json({ success: true, data });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 

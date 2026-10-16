@@ -277,6 +277,7 @@ export default function Layout() {
     { to: '/expenses',    icon: '🧾', label: 'Expenses',   roles: ['admin','super_admin','agent','landlord','caretaker'] },
     { to: '/users',       icon: '👤', label: 'Users',      roles: ['admin','super_admin','agent','landlord'] },
     { to: '/roles',       icon: '🛡️', label: 'Roles & Permissions', roles: ['admin','super_admin'] },
+    { to: '/permission-overrides', icon: '🔑', label: 'Permission Overrides', roles: ['admin','super_admin'] },
     { to: '/manage/listings', icon: '🏷️', label: 'Listings',  roles: ['admin','super_admin','agent','landlord'] },
     { to: '/notices',     icon: '📢', label: 'Notices',    roles: ['admin','super_admin','agent','landlord','caretaker'] },
     { to: '/messages',    icon: '💬', label: 'Messages',   roles: ['admin','super_admin','agent','landlord','caretaker'] },
