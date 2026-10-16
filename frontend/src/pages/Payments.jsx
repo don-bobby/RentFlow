@@ -66,6 +66,7 @@ export default function Payments() {
   const [error,          setError]          = useState('');
   const [filter,         setFilter]         = useState('all');
   const [tenantFilter,   setTenantFilter]   = useState('all'); // 'all' or a tenant id — narrows the payments list to one tenant
+  const [allocatedSort,  setAllocatedSort]  = useState(null); // null (table order) | 'asc' | 'desc' — sorts rows by the "Allocated To" month
   const [form,           setForm]           = useState({
     tenant_id: '', amount: '', payment_date: '', payment_method: 'mpesa', reference_number: '', notes: '',
   });
@@ -260,6 +261,21 @@ export default function Payments() {
   const paymentTenantOptions = Array.from(
     new Map(payments.filter(p => p.tenant_id).map(p => [p.tenant_id, p.tenant_name])).entries()
   ).sort((a, b) => (a[1] || '').localeCompare(b[1] || ''));
+  // Sortable "Allocated To" column: for_year/for_month combine into one
+  // comparable number (year*12+month). A payment with neither (unallocated,
+  // or auto-matched with nothing assigned yet) sorts to the end regardless
+  // of direction — there's no month to rank it by, so it shouldn't jump to
+  // the top under 'desc' just because missing data compares as small.
+  const monthKey = p => (p.for_year && p.for_month) ? (p.for_year * 12 + p.for_month) : null;
+  const displayed = allocatedSort
+    ? [...filtered].sort((a, b) => {
+        const ka = monthKey(a), kb = monthKey(b);
+        if (ka === null && kb === null) return 0;
+        if (ka === null) return 1;
+        if (kb === null) return -1;
+        return allocatedSort === 'asc' ? ka - kb : kb - ka;
+      })
+    : filtered;
   const total       = filtered.reduce((s, p) => s + parseFloat(p.amount || 0), 0);
   const isDark      = useIsDarkMode();
   const statusColor = {
@@ -383,12 +399,24 @@ export default function Payments() {
             <thead>
               <tr style={{ background: 'var(--surface2)' }}>
                 {['Tenant', 'Receipt / Ref', 'Amount', 'Allocated To', 'Method', 'Status', 'Date', 'Actions'].map(h => (
-                  <th key={h} style={{ padding: '10px 16px', textAlign: 'left', fontSize: 12, fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>{h}</th>
+                  <th
+                    key={h}
+                    onClick={h === 'Allocated To' ? () => setAllocatedSort(s => s === 'asc' ? 'desc' : s === 'desc' ? null : 'asc') : undefined}
+                    title={h === 'Allocated To' ? 'Sort by month' : undefined}
+                    style={{
+                      padding: '10px 16px', textAlign: 'left', fontSize: 12, fontWeight: 700, color: 'var(--muted)',
+                      textTransform: 'uppercase', letterSpacing: '0.5px',
+                      cursor: h === 'Allocated To' ? 'pointer' : 'default',
+                      userSelect: h === 'Allocated To' ? 'none' : 'auto',
+                    }}
+                  >
+                    {h}{h === 'Allocated To' && (allocatedSort === 'asc' ? ' ▲' : allocatedSort === 'desc' ? ' ▼' : ' ⇅')}
+                  </th>
                 ))}
               </tr>
             </thead>
             <tbody>
-              {filtered.map((p, i) => (
+              {displayed.map((p, i) => (
                 <tr key={p.id} className="pm-row" style={{ borderTop: '1px solid var(--border)', background: i % 2 === 0 ? 'var(--surface)' : 'var(--surface2)' }}>
                   <td style={{ padding: '12px 16px' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
