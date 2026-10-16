@@ -203,7 +203,13 @@ export default function Properties() {
 
   function openAddPlot() {
     setEditing(null);
-    setForm({ name: '', location: '', description: '', owner_id: landlords[0]?.id || '', gps_lat: '', gps_lng: '' });
+    // Admin's blank owner_id means "— Admin (self) —", a valid choice, so
+    // defaulting it to the first landlord is just a convenience. An agent
+    // has no such self-own option — blank is only ever a placeholder they
+    // must change — so don't pre-pick landlords[0] for them; leave it blank
+    // and let the required "— Select landlord —" placeholder force an
+    // actual, deliberate selection instead of one chosen by load order.
+    setForm({ name: '', location: '', description: '', owner_id: isAgent ? '' : (landlords[0]?.id || ''), gps_lat: '', gps_lng: '' });
     setModal('plot'); setError('');
   }
 
@@ -784,9 +790,18 @@ export default function Properties() {
                       {/* Admin may leave this on "— Admin (self) —" and own the plot
                           themselves; an agent has no such option — the backend
                           requires a real landlord (one actually assigned to this
-                          agent) for every plot an agent creates, so there's nothing
-                          valid to submit until they pick one. */}
+                          agent) for every plot an agent creates. An agent always
+                          gets an explicit "— Select landlord —" placeholder (value
+                          "") rather than defaulting to landlords[0]: that default
+                          was racy against the landlord list still loading or just
+                          having changed, and once the control displays a name with
+                          no matching option, the browser shows a selection the
+                          submitted form.owner_id state doesn't actually have —
+                          exactly the "owner_id is required" rejection seen with a
+                          landlord visibly selected. Requiring a real pick here
+                          keeps what's shown and what's submitted in sync. */}
                       {isAdmin && <option value="">— Admin (self) —</option>}
+                      {isAgent && <option value="">— Select landlord —</option>}
                       {landlords.map(l => <option key={l.id} value={l.id}>{l.name} ({l.email})</option>)}
                     </select>
                   </div>
