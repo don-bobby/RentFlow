@@ -148,7 +148,10 @@ export default function Properties() {
     setLoading(true);
     try {
       const requests = [API.get('/plots'), API.get('/houses')];
-      if (isAdmin) requests.push(API.get('/auth/users'));
+      // Agents need this too — it's where their own landlord list (for the
+      // "Assign to Landlord" field) comes from, not just admin's owner/
+      // caretaker/agent filters.
+      if (isAdmin || isAgent) requests.push(API.get('/auth/users'));
       const [pr, hr, ur] = await Promise.all(requests);
       setPlots(Array.isArray(pr.data) ? pr.data : (pr.data.data || []));
       setHouses(Array.isArray(hr.data) ? hr.data : (hr.data.data || []));
