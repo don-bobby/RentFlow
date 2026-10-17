@@ -50,10 +50,26 @@ export default function Tenants() {
   const [pinSuccess,setPinSuccess]= useState('');
 
   const { can }   = useAuth();
-  // No specific tenant/property picked yet at this point, so this stays a
-  // plain general check, same as the backend: POST /tenants doesn't know
-  // which plot it's for until a unit is chosen in the form below.
-  const canAdd     = can('tenants.create');
+  // A flat global check misses a property-specific GRANT — someone whose
+  // role doesn't have tenants.create at all, but who was given it for just
+  // one property via an override, has no entry in user.permissions and so
+  // would never see this button even though they're allowed to add a
+  // tenant to that one property. So: show the button if tenants.create is
+  // true for ANY property this user can see a unit in (global permission
+  // included — can() already falls back to it when there's no per-plot
+  // override), using the same per-plot allHouses data the row-level
+  // Edit/Set PIN buttons below already check against.
+  const addablePlotIds = [...new Set(allHouses.map(h => h.plot_id).filter(id => id != null))]
+    .filter(plotId => can('tenants.create', plotId));
+  const canAdd = addablePlotIds.length > 0;
+  // Plain global flag, kept separate from canAdd above — used below to
+  // decide whether the unit dropdown needs narrowing at all. When this is
+  // true, every property-having-a-vacant-unit is already addable and no
+  // filtering is needed; when it's false, canAdd being true only because
+  // of a property-specific grant means the dropdown must be narrowed to
+  // just those properties, or she could still submit a tenant for a unit
+  // she doesn't actually have the permission for.
+  const canAddGlobally = can('tenants.create');
   const isDark    = useIsDarkMode();
   const location  = useLocation();
   const navigate  = useNavigate();
@@ -91,7 +107,7 @@ export default function Tenants() {
 
   function openAdd() {
     setEditing(null);
-    setForm({ ...emptyForm, house_id: houses[0]?.id || '' });
+    setForm({ ...emptyForm, house_id: addableHouses[0]?.id || '' });
     setModal('add'); setError('');
   }
 
@@ -203,10 +219,19 @@ export default function Tenants() {
     inactive: tenants.filter(t => !t.is_active).length,
   };
 
+  // Vacant units this user can actually add a tenant to. When tenants.create
+  // is a plain global permission (canAddGlobally), every vacant unit
+  // qualifies, same as before. When it's only true because of a
+  // property-specific grant, narrow this to just those properties — showing
+  // every vacant unit here would let her pick one she doesn't actually have
+  // tenants.create for, and the backend's own per-plot check (same pattern
+  // as the edit/set-pin routes) would then reject the save anyway.
+  const addableHouses = canAddGlobally ? houses : houses.filter(h => addablePlotIds.includes(h.plot_id));
+
   // For edit modal, include the tenant's current unit even if occupied
   const unitOptions = modal === 'edit'
     ? allHouses.filter(h => h.status === 'vacant' || h.id === editing?.house_id)
-    : houses;
+    : addableHouses;
 
   // Required deposit for whichever unit is currently selected in the form —
   // shown as a hint next to "Deposit Paid" so a short deposit is caught at
