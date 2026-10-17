@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import API from '../services/api';
 import { useAuth } from '../context/AuthContext';
 
@@ -14,6 +14,50 @@ function initialsAvatar(name) {
   return { initials, color: AVATAR_COLORS[hash] };
 }
 const inputStyle = { width: '100%', padding: '10px 12px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface2)', fontSize: 14, color: 'var(--text)', outline: 'none', boxSizing: 'border-box' };
+
+// Turns a raw "category.action" permission string (e.g. "reports.unpaid_rent")
+// into something an admin can actually read without knowing the codebase:
+// a plain-English group label ("Reports") and a plain-English action label
+// ("Unpaid rent"). This is a formatting pass over whatever permissions the
+// backend returns — not a hardcoded permission list — so a new permission
+// added on the backend shows up here automatically, grouped under its
+// category, without this file needing an update.
+const PERMISSION_CATEGORY_LABELS = {
+  plots: 'Properties',
+  houses: 'Units',
+  tenants: 'Tenants',
+  payments: 'Payments',
+  maintenance: 'Maintenance',
+  expenses: 'Expenses',
+  deposits: 'Deposits',
+  notices: 'Notices',
+  messages: 'Messages',
+  users: 'Users',
+  reports: 'Reports',
+  listings: 'Listings',
+  system: 'System',
+};
+function describePermission(permission) {
+  const [category, ...rest] = permission.split('.');
+  const action = rest.join(' ').replace(/_/g, ' ');
+  const categoryLabel = PERMISSION_CATEGORY_LABELS[category] || (category.charAt(0).toUpperCase() + category.slice(1));
+  const actionLabel = action ? action.charAt(0).toUpperCase() + action.slice(1) : permission;
+  return { categoryLabel, actionLabel };
+}
+// Groups a flat, sorted list of permission strings into
+// [{ categoryLabel, permissions: [{ value, actionLabel }] }], ordered by
+// category label so the dropdown reads as one coherent list of areas
+// instead of an alphabetical jumble of unrelated keys.
+function groupPermissions(permissions) {
+  const groups = new Map();
+  for (const permission of permissions) {
+    const { categoryLabel, actionLabel } = describePermission(permission);
+    if (!groups.has(categoryLabel)) groups.set(categoryLabel, []);
+    groups.get(categoryLabel).push({ value: permission, actionLabel });
+  }
+  return Array.from(groups, ([categoryLabel, items]) => ({ categoryLabel, permissions: items }))
+    .sort((a, b) => a.categoryLabel.localeCompare(b.categoryLabel));
+}
 
 export default function Users() {
   const [users,        setUsers]        = useState([]);
@@ -40,6 +84,10 @@ export default function Users() {
   const [permData,       setPermData]       = useState(null); // { profile, defaults, overrides } for the selected user
   const [permLoading,    setPermLoading]    = useState(false);
   const [newOverride,    setNewOverride]    = useState({ plot_id: '', permission: '', effect: 'grant' });
+  // Same `allPermissions` list, reshaped into labeled groups for the "Add
+  // override" dropdown (see groupPermissions/describePermission above) —
+  // recomputed only when the available permission set actually changes.
+  const groupedPermissions = useMemo(() => groupPermissions(allPermissions), [allPermissions]);
 
   const { user: me, can } = useAuth();
   const isAdmin = me?.role === 'admin' || me?.role === 'super_admin';
@@ -806,8 +854,15 @@ export default function Users() {
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                     <select value={newOverride.permission} onChange={e => setNewOverride(f => ({ ...f, permission: e.target.value }))} style={inputStyle}>
                       <option value="">— Select permission —</option>
-                      {allPermissions.map(p => <option key={p} value={p}>{p}</option>)}
+                      {groupedPermissions.map(g => (
+                        <optgroup key={g.categoryLabel} label={g.categoryLabel}>
+                          {g.permissions.map(p => <option key={p.value} value={p.value} title={p.value}>{p.actionLabel}</option>)}
+                        </optgroup>
+                      ))}
                     </select>
+                    <div style={{ color: 'var(--muted)', fontSize: 12, marginTop: -4 }}>
+                      Grouped by area, e.g. Reports → Unpaid rent, Payments → Record manual. Hover an option to see its exact permission key.
+                    </div>
                     <div style={{ display: 'flex', gap: 10 }}>
                       <select value={newOverride.plot_id} onChange={e => setNewOverride(f => ({ ...f, plot_id: e.target.value }))} style={{ ...inputStyle, flex: 1 }}>
                         <option value="">— All properties —</option>
