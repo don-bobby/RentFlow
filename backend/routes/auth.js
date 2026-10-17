@@ -41,6 +41,22 @@ router.get('/me', liveAuthMiddleware, async (req, res) => {
       agent_name = a.rows[0]?.name || null;
     }
 
+    // `permissions` above only ever reflects role defaults + GLOBAL overrides
+    // (plot_id IS NULL) — that's all getPermissions(req.user) with no plotId
+    // can see. AuthContext.jsx's can(permission, plotId) on the frontend
+    // needs the raw per-property overrides themselves to check anything
+    // property-specific (e.g. "does this landlord have tenants.create on
+    // just this one property"), so send those down too. Empty for
+    // admin/super_admin — they're never targeted by this system at all.
+    let overrides = [];
+    if (!['admin', 'super_admin'].includes(req.user.role)) {
+      const o = await pool.query(
+        `SELECT plot_id, permission, effect FROM user_permission_overrides WHERE user_id = $1`,
+        [req.user.id]
+      );
+      overrides = o.rows;
+    }
+
     res.json({
       success: true,
       data: {
@@ -52,6 +68,7 @@ router.get('/me', liveAuthMiddleware, async (req, res) => {
         agent_name,
         profile,
         permissions,
+        overrides,
       },
     });
   } catch (err) {
