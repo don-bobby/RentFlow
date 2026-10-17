@@ -129,8 +129,8 @@ export default function PermissionOverrides() {
               {users.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
             </select>
             <select value={plotFilter} onChange={e => setPlotFilter(e.target.value)} style={inputStyle}>
-              <option value="all">All properties</option>
-              <option value="global">Global (all properties) only</option>
+              <option value="all">Show all</option>
+              <option value="global">Not tied to a property</option>
               {plots.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
             </select>
             <select value={effectFilter} onChange={e => setEffectFilter(e.target.value)} style={inputStyle}>
