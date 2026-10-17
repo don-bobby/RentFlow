@@ -27,3 +27,9 @@ local_schema_dump.sql
 # Actual uploaded tenant/listing files — keep the folder, not its contents
 backend/uploads/*
 !backend/uploads/.gitkeep
+
+# Local backups from the permission-overrides deploy script
+_permission-update-backup-*/
+
+# Any other local SQL dumps/scratch files not already covered above
+*.sql
