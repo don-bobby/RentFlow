@@ -11,7 +11,14 @@ const { requirePermission, getPermissions, filterRowsByPermission } = require('.
 // scoping at all: every authenticated user, of any role, saw every expense
 // in the system. An expense with no plot_id attached is only visible to
 // admin, since it isn't tied to anything a non-admin role can be scoped to.
-router.get('/', staffAuth, requirePermission('expenses.view'), async (req, res) => {
+// Was gated by requirePermission('expenses.view') as middleware, which ran
+// BEFORE the per-row filter below and only ever checked the requester's
+// ROLE default — so a role with no expenses.view by default got a flat 403
+// here no matter what per-property override was granted. Removed; the
+// filterRowsByPermission call below is now the only permission gate on this
+// list. Someone with no access to anything now gets an empty list (200)
+// instead of a 403.
+router.get('/', staffAuth, async (req, res) => {
   try {
     const visible = await getVisiblePlotIds(req.user);
     if (visible !== 'ALL' && visible.length === 0) return res.json({ success: true, data: [] });
@@ -26,9 +33,10 @@ router.get('/', staffAuth, requirePermission('expenses.view'), async (req, res) 
     const params = visible === 'ALL' ? [] : [visible];
     const result = await pool.query(query, params);
     // getVisiblePlotIds (above) answers "can this user see this property at
-    // all" — it doesn't know about a per-property expenses.view revoke. This
-    // narrows the same list down to rows that override hasn't hidden,
-    // without changing the "do you have expenses.view at all" gate above.
+    // all" — it doesn't know about a per-property expenses.view grant or
+    // revoke. This is now the ONLY permission check on this list: it
+    // narrows the rows down to ones this user actually has expenses.view
+    // for, property by property.
     const data = await filterRowsByPermission(req.user, result.rows, 'expenses.view', (row) => row.plot_id);
     res.json({ success: true, data });
   } catch (err) { res.status(500).json({ error: err.message }); }

@@ -19,7 +19,14 @@ async function stripSensitiveFields(req, rows) {
 }
 
 // GET all tenants — balance calculated dynamically from move-in date
-router.get('/', staffAuth, requirePermission('tenants.view'), async (req, res) => {
+// Was gated by requirePermission('tenants.view') as middleware, which ran
+// BEFORE the per-row filter below and only ever checked the requester's
+// ROLE default — so a role with no tenants.view by default got a flat 403
+// here no matter what per-property override was granted. Removed; the
+// filterRowsByPermission call below is now the only permission gate on this
+// list. Someone with no access to anything now gets an empty list (200)
+// instead of a 403.
+router.get('/', staffAuth, async (req, res) => {
   try {
     const visible = await getVisiblePlotIds(req.user);
     const filter = visible === 'ALL' ? '' : (visible.length === 0 ? 'WHERE 1=0' : 'WHERE p.id = ANY($1)');
@@ -104,9 +111,10 @@ router.get('/', staffAuth, requirePermission('tenants.view'), async (req, res) =
     `, params);
 
     // getVisiblePlotIds (above) answers "can this user see this property at
-    // all" — it doesn't know about a per-property tenants.view revoke. This
-    // narrows the same list down to rows that override hasn't hidden,
-    // without changing the "do you have tenants.view at all" gate above.
+    // all" — it doesn't know about a per-property tenants.view grant or
+    // revoke. This is now the ONLY permission check on this list: it
+    // narrows the rows down to ones this user actually has tenants.view
+    // for, property by property.
     const visibleRows = await filterRowsByPermission(req.user, result.rows, 'tenants.view', (row) => row.plot_id);
     const data = await stripSensitiveFields(req, visibleRows);
     res.json({ success: true, data });
@@ -114,7 +122,16 @@ router.get('/', staffAuth, requirePermission('tenants.view'), async (req, res) =
 });
 
 // GET unpaid months — must be BEFORE /:id to avoid route conflict
-router.get('/unpaid-months', staffAuth, requirePermission('tenants.view'), async (req, res) => {
+// Was gated by requirePermission('tenants.view') as middleware, same problem
+// as the main list above. Unlike the main list, this route never had a
+// filterRowsByPermission step of its own — it only checked getVisiblePlotIds
+// (property visibility), not a per-property tenants.view grant/revoke.
+// Removing the old middleware gate without adding that here would have left
+// a real hole: a role with no tenants.view by default, but visibility into
+// a property, would see unpaid-months data for tenants they have no
+// permission to view. h.plot_id is now selected and filterRowsByPermission
+// is applied for parity with GET /.
+router.get('/unpaid-months', staffAuth, async (req, res) => {
   try {
     const visible = await getVisiblePlotIds(req.user);
     if (visible !== 'ALL' && visible.length === 0) return res.json({ success: true, data: [] });
@@ -122,20 +139,22 @@ router.get('/unpaid-months', staffAuth, requirePermission('tenants.view'), async
     // Step 1: fetch all active tenants with their rent_amount from houses
     const tenantQuery = visible === 'ALL'
       ? `SELECT t.id, t.full_name, t.move_in_date, t.phone,
-                h.rent_amount, h.unit_number, p.name AS plot_name
+                h.rent_amount, h.unit_number, h.plot_id, p.name AS plot_name
          FROM tenants t
          LEFT JOIN houses h ON t.house_id = h.id
          LEFT JOIN plots  p ON h.plot_id  = p.id
          WHERE t.is_active = true AND t.move_in_date IS NOT NULL`
       : `SELECT t.id, t.full_name, t.move_in_date, t.phone,
-                h.rent_amount, h.unit_number, p.name AS plot_name
+                h.rent_amount, h.unit_number, h.plot_id, p.name AS plot_name
          FROM tenants t
          LEFT JOIN houses h ON t.house_id = h.id
          LEFT JOIN plots  p ON h.plot_id  = p.id
          WHERE t.is_active = true AND t.move_in_date IS NOT NULL
            AND p.id = ANY($1)`;
     const tenantParams = visible === 'ALL' ? [] : [visible];
-    const tenants = await pool.query(tenantQuery, tenantParams);
+    const tenantsResult = await pool.query(tenantQuery, tenantParams);
+
+    const tenants = { rows: await filterRowsByPermission(req.user, tenantsResult.rows, 'tenants.view', (row) => row.plot_id) };
 
     const tenantIds = tenants.rows.map(t => t.id);
     if (tenantIds.length === 0) return res.json({ success: true, data: [] });

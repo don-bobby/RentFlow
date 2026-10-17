@@ -8,7 +8,14 @@ const { logAudit } = require('../utils/audit');
 
 // GET all payments — admin/super_admin see all, agent sees their landlords',
 // landlord sees own, caretaker sees assigned (scoping lives in one place now)
-router.get('/', staffAuth, requirePermission('payments.view'), async (req, res) => {
+// Was gated by requirePermission('payments.view') as middleware, which ran
+// BEFORE the per-row filter below and only ever checked the requester's
+// ROLE default — so a role with no payments.view by default got a flat 403
+// here no matter what per-property override was granted. Removed; the
+// filterRowsByPermission call below is now the only permission gate on this
+// list, and it already understands per-property grants and revokes. Someone
+// with no access to anything now gets an empty list (200) instead of a 403.
+router.get('/', staffAuth, async (req, res) => {
   try {
     const visible = await getVisiblePlotIds(req.user);
     if (visible !== 'ALL' && visible.length === 0) return res.json({ success: true, data: [] });
@@ -25,10 +32,10 @@ router.get('/', staffAuth, requirePermission('payments.view'), async (req, res) 
     const params = visible === 'ALL' ? [] : [visible];
     const result = await pool.query(query, params);
     // getVisiblePlotIds (above) answers "can this user see this property at
-    // all" — it doesn't know about a per-property payments.view revoke.
-    // This narrows the same list down to rows where that specific override
-    // hasn't hidden it, without changing the "do you have payments.view at
-    // all" gate above.
+    // all" — it doesn't know about a per-property payments.view grant or
+    // revoke. This is now the ONLY permission check on this list: it
+    // narrows the rows down to ones this user actually has payments.view
+    // for, property by property.
     const data = await filterRowsByPermission(req.user, result.rows, 'payments.view', (row) => row.plot_id);
     res.json({ success: true, data });
   } catch (err) { res.status(500).json({ error: err.message }); }
