@@ -5,6 +5,7 @@ import { MapContainer, TileLayer, Marker, Popup } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import API from '../services/api';
+import { useAuth } from '../context/AuthContext';
 // PendingLandlordsAlert / PendingUnitsAlert banners moved to Layout.jsx as
 // floating, dismissible toasts (bottom-right, global across every page)
 // instead of two permanent full-width rows at the top of just this page.
@@ -375,6 +376,14 @@ export default function Dashboard() {
   const [rejectReason,  setRejectReason]  = useState('');
   const isDark = useIsDarkMode();
   const navigate = useNavigate();
+  const { user: me } = useAuth();
+  // The caretaker badge/tile is for the people who actually manage
+  // caretakers day to day (landlords, and agents acting on their behalf) —
+  // not admin, who oversees every landlord's caretakers at once and has
+  // its own Users page for that. Admin accounts can still have caretakers
+  // show up in `caretakers` (the data isn't scoped out), so this needs its
+  // own role gate rather than relying on the list being empty for them.
+  const showCaretakerBadge = me?.role && me.role !== 'admin';
 
   useEffect(() => {
     async function load() {
@@ -562,7 +571,7 @@ export default function Dashboard() {
         {/* Caretaker badge — a quick-glance, always-visible shortcut to the
             same details the Caretaker Workload tile below opens, for anyone
             who manages caretakers and wants it without scanning the grid. */}
-        {caretakers.length > 0 && (
+        {showCaretakerBadge && caretakers.length > 0 && (
           <button onClick={() => setModal('caretakers')} style={{
             display: 'flex', alignItems: 'center', gap: 8, padding: '10px 18px', borderRadius: 12,
             border: '1px solid var(--green, #16a34a)', background: isDark ? 'rgba(52,211,153,0.12)' : 'var(--green-light, #dcfce7)',
@@ -592,7 +601,7 @@ export default function Dashboard() {
           )}
           <StatCard label="Total Properties"  value={plots.length}           icon="🏢" colorKey="primary" onClick={() => setModal('plots')} sub={`${houses.length} total units`} />
           <StatCard label="Expiring Leases"   value={expiringLeases.length}  icon="📅" colorKey="amber"   onClick={() => setModal('expiring')} sub="11+ months tenancy" />
-          {caretakers.length > 0 && (
+          {showCaretakerBadge && caretakers.length > 0 && (
             <StatCard label="Caretaker Workload" value={caretakers.length} icon="🧑‍🔧" colorKey="green" onClick={() => setModal('caretakers')} sub={`across ${plots.length} plot${plots.length !== 1 ? 's' : ''}`} />
           )}
         </div>
