@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import API from '../services/api';
 import { useAuth } from '../context/AuthContext';
 
@@ -14,6 +14,50 @@ function initialsAvatar(name) {
   return { initials, color: AVATAR_COLORS[hash] };
 }
 const inputStyle = { width: '100%', padding: '10px 12px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface2)', fontSize: 14, color: 'var(--text)', outline: 'none', boxSizing: 'border-box' };
+
+// Turns a raw "category.action" permission string (e.g. "reports.unpaid_rent")
+// into something an admin can actually read without knowing the codebase:
+// a plain-English group label ("Reports") and a plain-English action label
+// ("Unpaid rent"). This is a formatting pass over whatever permissions the
+// backend returns — not a hardcoded permission list — so a new permission
+// added on the backend shows up here automatically, grouped under its
+// category, without this file needing an update.
+const PERMISSION_CATEGORY_LABELS = {
+  plots: 'Properties',
+  houses: 'Units',
+  tenants: 'Tenants',
+  payments: 'Payments',
+  maintenance: 'Maintenance',
+  expenses: 'Expenses',
+  deposits: 'Deposits',
+  notices: 'Notices',
+  messages: 'Messages',
+  users: 'Users',
+  reports: 'Reports',
+  listings: 'Listings',
+  system: 'System',
+};
+function describePermission(permission) {
+  const [category, ...rest] = permission.split('.');
+  const action = rest.join(' ').replace(/_/g, ' ');
+  const categoryLabel = PERMISSION_CATEGORY_LABELS[category] || (category.charAt(0).toUpperCase() + category.slice(1));
+  const actionLabel = action ? action.charAt(0).toUpperCase() + action.slice(1) : permission;
+  return { categoryLabel, actionLabel };
+}
+// Groups a flat, sorted list of permission strings into
+// [{ categoryLabel, permissions: [{ value, actionLabel }] }], ordered by
+// category label so the dropdown reads as one coherent list of areas
+// instead of an alphabetical jumble of unrelated keys.
+function groupPermissions(permissions) {
+  const groups = new Map();
+  for (const permission of permissions) {
+    const { categoryLabel, actionLabel } = describePermission(permission);
+    if (!groups.has(categoryLabel)) groups.set(categoryLabel, []);
+    groups.get(categoryLabel).push({ value: permission, actionLabel });
+  }
+  return Array.from(groups, ([categoryLabel, items]) => ({ categoryLabel, permissions: items }))
+    .sort((a, b) => a.categoryLabel.localeCompare(b.categoryLabel));
+}
 
 export default function Users() {
   const [users,        setUsers]        = useState([]);
@@ -34,9 +78,27 @@ export default function Users() {
   const [selectedAgent, setSelectedAgent] = useState('');   // agent_id chosen in the approve modal
   const [form,         setForm]         = useState({ name: '', email: '', password: '', role: 'caretaker', phone: '', plot_id: '' });
 
+  // Per-user-per-property permission overrides (admin only). `modal ===
+  // 'permissions'` reuses the existing `selected` user state above.
+  const [allPermissions, setAllPermissions] = useState([]); // distinct permission strings, for the "Add override" dropdown
+  const [permData,       setPermData]       = useState(null); // { profile, defaults, overrides } for the selected user
+  const [permLoading,    setPermLoading]    = useState(false);
+  const [newOverride,    setNewOverride]    = useState({ plot_id: '', permission: '', effect: 'grant', reason: '' });
+  // Same `allPermissions` list, reshaped into labeled groups for the "Add
+  // override" dropdown (see groupPermissions/describePermission above) —
+  // recomputed only when the available permission set actually changes.
+  const groupedPermissions = useMemo(() => groupPermissions(allPermissions), [allPermissions]);
+
   const { user: me, can } = useAuth();
   const isAdmin = me?.role === 'admin' || me?.role === 'super_admin';
   const isAgent = me?.role === 'agent';
+
+  // Same floor the backend enforces (routes/auth.js) — kept here only so the
+  // dropdown doesn't even offer them; the backend is what actually stops it.
+  const NEVER_GRANTABLE = ['system.manage_roles', 'system.manage_permissions', 'users.create_super_admin'];
+  // Only these roles can have an override at all — admin/super_admin are
+  // always fully trusted and never go through this system.
+  const OVERRIDABLE_ROLES = ['agent', 'landlord', 'caretaker'];
 
   async function load() {
     setLoading(true);
@@ -46,6 +108,71 @@ export default function Users() {
       setPlots(Array.isArray(pr.data) ? pr.data : (pr.data.data || []));
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
+  }
+
+  // The "Add override" dropdown needs the full set of permission strings
+  // that exist anywhere in the system. The role-permissions matrix
+  // (GET /auth/role-permissions) already has one row per (profile,
+  // permission), so the distinct permission values out of that are exactly
+  // the list we want — admin-only endpoint, so only fetch it for admins.
+  useEffect(() => {
+    if (!isAdmin) return;
+    API.get('/auth/role-permissions')
+      .then(res => {
+        const rows = res.data.data || [];
+        const names = Array.from(new Set(rows.map(r => r.permission))).filter(p => !NEVER_GRANTABLE.includes(p)).sort();
+        setAllPermissions(names);
+      })
+      .catch(() => setAllPermissions([]));
+  }, [isAdmin]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function openPermissions(user) {
+    setSelected(user);
+    setError('');
+    setNewOverride({ plot_id: '', permission: '', effect: 'grant', reason: '' });
+    setModal('permissions');
+    setPermLoading(true);
+    try {
+      const res = await API.get(`/auth/users/${user.id}/permission-overrides`);
+      setPermData(res.data.data);
+    } catch (e) {
+      setError(e.response?.data?.error || 'Failed to load permissions.');
+      setPermData(null);
+    } finally {
+      setPermLoading(false);
+    }
+  }
+
+  async function refreshPermData() {
+    if (!selected) return;
+    try {
+      const res = await API.get(`/auth/users/${selected.id}/permission-overrides`);
+      setPermData(res.data.data);
+    } catch (e) { setError(e.response?.data?.error || 'Failed to refresh permissions.'); }
+  }
+
+  async function handleAddOverride() {
+    if (!newOverride.permission) return;
+    setSaving(true); setError('');
+    try {
+      await API.post(`/auth/users/${selected.id}/permission-overrides`, {
+        plot_id: newOverride.plot_id || null,
+        permission: newOverride.permission,
+        effect: newOverride.effect,
+        reason: newOverride.reason.trim() || null,
+      });
+      setNewOverride({ plot_id: '', permission: '', effect: 'grant', reason: '' });
+      await refreshPermData();
+    } catch (e) { setError(e.response?.data?.error || 'Failed to add override.'); }
+    finally { setSaving(false); }
+  }
+
+  async function handleRemoveOverride(overrideId) {
+    setError('');
+    try {
+      await API.delete(`/auth/users/${selected.id}/permission-overrides/${overrideId}`);
+      await refreshPermData();
+    } catch (e) { setError(e.response?.data?.error || 'Failed to remove override.'); }
   }
 
   useEffect(() => { load(); }, [me?.id]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -90,6 +217,10 @@ export default function Users() {
       const agentId = selectedAgent ? parseInt(selectedAgent) : null;
       await API.patch(`/auth/users/${approveTarget.id}/approve`, { agent_id: agentId });
       setUsers(us => us.map(u => u.id === approveTarget.id ? { ...u, is_approved: true, agent_id: agentId } : u));
+      // The sidebar/topbar "pending landlords" badge (Layout.jsx) only
+      // otherwise refreshes on a 30s poll — fire this so it updates
+      // immediately instead of looking stale right after an approval.
+      window.dispatchEvent(new Event('pending-landlords-changed'));
       setModal(null);
       setApproveTarget(null);
       setMsg('Landlord approved.');
@@ -110,6 +241,9 @@ export default function Users() {
         if (user.role === 'agent' && u.agent_id === user.id) return { ...u, agent_id: null };
         return u;
       }));
+      // Suspending a landlord puts them back into "pending" — refresh the
+      // sidebar/topbar badge immediately rather than waiting on its poll.
+      if (user.role === 'landlord') window.dispatchEvent(new Event('pending-landlords-changed'));
     } catch (e) { alert(e.response?.data?.error || 'Failed to suspend user.'); }
   }
 
@@ -182,18 +316,43 @@ export default function Users() {
     } catch (e) { setError(e.response?.data?.error || 'Failed to remove plot.'); }
   }
 
-  const agents = users.filter(u => u.role === 'agent');
-  const roleCounts = users.reduce((m, u) => { m[u.role] = (m[u.role] || 0) + 1; return m; }, {});
-  const pendingLandlordCount = users.filter(u => u.role === 'landlord' && !u.is_approved).length;
+  // Only active, approved agents are real choices for "assign an agent to
+  // manage this landlord" — a suspended agent can't log in or act on
+  // anything, so a landlord/agent assigned to one is silently cut off with
+  // no error anywhere in the UI. Both the Approve-Landlord modal and the
+  // inline per-row reassignment <select> read from this same list.
+  const agents = users.filter(u => u.role === 'agent' && u.is_approved);
 
-  const filtered = users.filter(u => {
+  // Non-admins never see themselves in the list (a landlord managing their
+  // own caretakers shouldn't see "themselves" as a row), so every other
+  // count on this page needs to be taken AFTER that exclusion too — not
+  // from the raw `users` array. Previously the header ("N total users") and
+  // the role badges counted the raw array while the table applied
+  // `notSelf` separately, so a landlord with no caretakers yet saw
+  // "1 total user" (themselves, counted) right above a "No users found"
+  // table (themselves, excluded) — same list, two different answers.
+  const visibleUsers = users.filter(u => isAdmin || u.id !== me?.id);
+  const roleCounts = visibleUsers.reduce((m, u) => { m[u.role] = (m[u.role] || 0) + 1; return m; }, {});
+  const pendingLandlordCount = visibleUsers.filter(u => u.role === 'landlord' && !u.is_approved).length;
+
+  const filtered = visibleUsers.filter(u => {
     const matchRole    = roleFilter === 'all' || u.role === roleFilter;
     const matchSearch  = search === '' || u.name?.toLowerCase().includes(search.toLowerCase()) || u.email?.toLowerCase().includes(search.toLowerCase());
     const matchPending = !pendingOnly || (u.role === 'landlord' && !u.is_approved);
-    // Landlord should not see themselves in the list
-    const notSelf = isAdmin || u.id !== me?.id;
-    return matchRole && matchSearch && matchPending && notSelf;
+    return matchRole && matchSearch && matchPending;
   });
+
+  // The whole point of this: before an admin adds a new override, show them
+  // whether this exact permission is ALREADY set for this user somewhere
+  // else — a global grant, or a different property's revoke, etc. Without
+  // this, "Active Overrides" above is just a flat list with no connection
+  // to whatever permission you're about to pick, so it's easy to grant a
+  // permission that's already revoked elsewhere (or vice versa) and only
+  // find out later that the two don't agree. Only populated once a
+  // permission is actually selected in the form below.
+  const matchingOverrides = newOverride.permission
+    ? (permData?.overrides || []).filter(o => o.permission === newOverride.permission)
+    : [];
 
   const roleBadge = (role, approved) => {
     const colors = {
@@ -237,7 +396,7 @@ export default function Users() {
         <div>
           <h1 style={{ fontFamily: 'Space Grotesk', fontSize: 26, fontWeight: 700, marginBottom: 4, color: 'var(--text)' }}>Users</h1>
           <p style={{ color: 'var(--muted)', fontSize: 14 }}>
-            {users.length} total user{users.length !== 1 ? 's' : ''}
+            {visibleUsers.length} total user{visibleUsers.length !== 1 ? 's' : ''}
             {pendingLandlordCount > 0 && <> · <span style={{ color: 'var(--amber, #d97706)', fontWeight: 700 }}>{pendingLandlordCount} pending approval</span></>}
           </p>
         </div>
@@ -268,7 +427,7 @@ export default function Users() {
           : isAgent ? ['all', 'landlord', 'caretaker']
           : ['all', 'caretaker'] // landlord (either profile) — filtering by "landlord" is pointless, they only ever see themselves
         ).map(r => {
-          const count = r === 'all' ? users.length : (roleCounts[r] || 0);
+          const count = r === 'all' ? visibleUsers.length : (roleCounts[r] || 0);
           return (
             <button key={r} onClick={() => setRoleFilter(r)} style={{ padding: '7px 16px', borderRadius: 99, border: '1px solid var(--border)', background: roleFilter === r ? 'var(--primary, #7c3aed)' : 'var(--surface)', color: roleFilter === r ? '#fff' : 'var(--muted)', fontWeight: 600, fontSize: 13, textTransform: 'capitalize', cursor: 'pointer' }}>{r} ({count})</button>
           );
@@ -415,15 +574,18 @@ export default function Users() {
                       {isAdmin && u.role === 'landlord' && u.is_approved && (
                         <>
                           <button onClick={() => handleReject(u)} style={{ padding: '4px 10px', borderRadius: 6, border: 'none', background: 'var(--amber, #d97706)', color: '#fff', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>Suspend</button>
-                          <select
-                            value={u.agent_id || ''}
-                            onChange={e => handleAgentChange(u, e.target.value)}
-                            title="Assign or change this landlord's agent"
-                            style={{ padding: '4px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--surface2)', fontSize: 12, color: 'var(--text)', cursor: 'pointer' }}
-                          >
-                            <option value="">— Self-managed —</option>
-                            {agents.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
-                          </select>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                            <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--muted)', whiteSpace: 'nowrap' }}>Agent:</span>
+                            <select
+                              value={u.agent_id || ''}
+                              onChange={e => handleAgentChange(u, e.target.value)}
+                              title="Assign or change this landlord's agent"
+                              style={{ padding: '4px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--surface2)', fontSize: 12, color: 'var(--text)', cursor: 'pointer' }}
+                            >
+                              <option value="">— Self-managed —</option>
+                              {agents.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+                            </select>
+                          </div>
                         </>
                       )}
                       {isAdmin && u.role === 'agent' && u.is_approved && (
@@ -434,6 +596,12 @@ export default function Users() {
                       )}
                       {isAdmin && (
                         <button onClick={() => handleResetPassword(u)} style={{ padding: '4px 10px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--surface)', fontSize: 12, fontWeight: 600, color: 'var(--muted)', cursor: 'pointer' }}>Reset PW</button>
+                      )}
+                      {isAdmin && OVERRIDABLE_ROLES.includes(u.role) && (
+                        <button onClick={() => openPermissions(u)} title="Grant or revoke a specific permission for this user, globally or for one property"
+                          style={{ padding: '4px 10px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--surface)', fontSize: 12, fontWeight: 600, color: 'var(--primary, #7c3aed)', cursor: 'pointer' }}>
+                          🔑 Permissions
+                        </button>
                       )}
                     </div>
                   </td>
@@ -623,6 +791,150 @@ export default function Users() {
 
             <div style={{ marginTop: 24, textAlign: 'right' }}>
               <button onClick={() => setModal(null)} style={{ padding: '10px 20px', borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface)', fontWeight: 600, fontSize: 14, cursor: 'pointer' }}>Done</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Permission Overrides Modal (admin only) — grant/revoke one
+          permission for this user, either for every property they can
+          already see (plot_id = null) or for one specific property. This
+          is the UI for the backend's user_permission_overrides table. */}
+      {modal === 'permissions' && selected && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, padding: 20 }}>
+          <div style={{ background: 'var(--surface)', borderRadius: 16, padding: 28, width: '100%', maxWidth: 560, boxShadow: 'var(--shadow-lg)', maxHeight: '85vh', overflowY: 'auto' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+              <h2 style={{ fontFamily: 'Space Grotesk', fontWeight: 700, fontSize: 18 }}>🔑 Permissions — {selected.name}</h2>
+              <button onClick={() => { setModal(null); setPermData(null); }} style={{ width: 30, height: 30, borderRadius: '50%', border: 'none', background: 'var(--surface2)', cursor: 'pointer', fontSize: 16, color: 'var(--muted)' }}>×</button>
+            </div>
+            <p style={{ color: 'var(--muted)', fontSize: 13, marginBottom: 18 }}>
+              Role: <strong style={{ textTransform: 'capitalize' }}>{selected.role}</strong>{permData?.profile ? ` (${permData.profile.replace(/_/g, ' ')})` : ''}.
+              Overrides below add to or take away from this role's normal permissions — for every property this user can see, or just one.
+            </p>
+
+            {error && <div style={{ background: 'var(--red-light, #fee2e2)', color: 'var(--red, #dc2626)', padding: '9px 14px', borderRadius: 8, marginBottom: 14, fontSize: 13 }}>{error}</div>}
+
+            {permLoading ? (
+              <div style={{ color: 'var(--muted)', fontSize: 13, padding: '20px 0', textAlign: 'center' }}>Loading...</div>
+            ) : (
+              <>
+                {/* Role defaults — read-only, for context */}
+                <div style={{ marginBottom: 20 }}>
+                  <label style={labelStyle}>Role Defaults ({permData?.defaults?.length || 0})</label>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                    {(permData?.defaults || []).length === 0 ? (
+                      <span style={{ color: 'var(--muted)', fontSize: 13 }}>None.</span>
+                    ) : permData.defaults.map(p => (
+                      <span key={p} style={{ background: 'var(--surface2)', color: 'var(--muted)', padding: '3px 9px', borderRadius: 6, fontSize: 12 }}>{p}</span>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Active overrides */}
+                <div style={{ marginBottom: 20 }}>
+                  <label style={labelStyle}>Active Overrides ({permData?.overrides?.length || 0})</label>
+                  {(permData?.overrides || []).length === 0 ? (
+                    <div style={{ color: 'var(--muted)', fontSize: 13, padding: '10px 0' }}>No overrides set — this user just has their role's defaults everywhere.</div>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                      {permData.overrides.map(o => (
+                        <div key={o.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'var(--surface2)', border: '1px solid var(--border)', borderRadius: 8, padding: '10px 14px', gap: 10 }}>
+                          <div style={{ minWidth: 0 }}>
+                            <div style={{ fontWeight: 600, fontSize: 13 }}>{o.permission}</div>
+                            <div style={{ fontSize: 12, color: 'var(--muted)' }}>
+                              {o.plot_id ? `📍 ${o.plot_name || `Property #${o.plot_id}`}` : 'All properties'}
+                            </div>
+                            {o.reason && (
+                              <div style={{ fontSize: 12, color: 'var(--muted)', fontStyle: 'italic', marginTop: 3 }}>
+                                “{o.reason}”
+                              </div>
+                            )}
+                          </div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+                            <span style={{
+                              background: o.effect === 'grant' ? 'var(--green-light, #dcfce7)' : 'var(--red-light, #fee2e2)',
+                              color: o.effect === 'grant' ? 'var(--green, #16a34a)' : 'var(--red, #dc2626)',
+                              padding: '3px 10px', borderRadius: 99, fontSize: 12, fontWeight: 600, textTransform: 'uppercase',
+                            }}>
+                              {o.effect}
+                            </span>
+                            <button onClick={() => handleRemoveOverride(o.id)} style={{ padding: '4px 10px', borderRadius: 6, border: 'none', background: 'var(--red-light, #fee2e2)', color: 'var(--red, #dc2626)', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>Remove</button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Add a new override */}
+                <div>
+                  <label style={labelStyle}>Add Override</label>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                    <select value={newOverride.permission} onChange={e => setNewOverride(f => ({ ...f, permission: e.target.value }))} style={inputStyle}>
+                      <option value="">— Select permission —</option>
+                      {groupedPermissions.map(g => (
+                        <optgroup key={g.categoryLabel} label={g.categoryLabel}>
+                          {g.permissions.map(p => <option key={p.value} value={p.value} title={p.value}>{p.actionLabel}</option>)}
+                        </optgroup>
+                      ))}
+                    </select>
+                    <div style={{ color: 'var(--muted)', fontSize: 12, marginTop: -4 }}>
+                      Grouped by area, e.g. Reports → Unpaid rent, Payments → Record manual. Hover an option to see its exact permission key.
+                    </div>
+
+                    {/* Surfaces exactly what's already set for the permission
+                        just picked above — before you save a new one on top
+                        of it. This is what would have caught granting
+                        payments.view in one place while it was already
+                        revoked in another: both are valid overrides on
+                        their own, so nothing stops you from adding a
+                        second one that conflicts with the first unless you
+                        can see the first one right here, tied to your
+                        current selection. */}
+                    {matchingOverrides.length > 0 && (
+                      <div style={{ background: 'var(--amber-light, #fef3c7)', border: '1px solid var(--amber, #d97706)', borderRadius: 8, padding: '10px 14px' }}>
+                        <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--amber, #92400e)', marginBottom: 6 }}>
+                          ⚠️ {newOverride.permission} already has {matchingOverrides.length} override{matchingOverrides.length !== 1 ? 's' : ''} for this user:
+                        </div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                          {matchingOverrides.map(o => (
+                            <div key={o.id} style={{ fontSize: 12.5, color: 'var(--text)' }}>
+                              • <strong style={{ textTransform: 'uppercase' }}>{o.effect}</strong> on {o.plot_id ? (o.plot_name || `Property #${o.plot_id}`) : 'all properties'}
+                              {o.reason ? ` — “${o.reason}”` : ''}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    <div style={{ display: 'flex', gap: 10 }}>
+                      <select value={newOverride.plot_id} onChange={e => setNewOverride(f => ({ ...f, plot_id: e.target.value }))} style={{ ...inputStyle, flex: 1 }}>
+                        <option value="">— All properties —</option>
+                        {plots.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                      </select>
+                      <select value={newOverride.effect} onChange={e => setNewOverride(f => ({ ...f, effect: e.target.value }))} style={{ ...inputStyle, flex: 1 }}>
+                        <option value="grant">Grant</option>
+                        <option value="revoke">Revoke</option>
+                      </select>
+                    </div>
+                    <textarea
+                      value={newOverride.reason}
+                      onChange={e => setNewOverride(f => ({ ...f, reason: e.target.value }))}
+                      placeholder="Reason (optional) — e.g. 'Temporary cover while landlord is on leave'"
+                      rows={2}
+                      style={{ ...inputStyle, resize: 'vertical', fontFamily: 'inherit' }}
+                    />
+                    <button onClick={handleAddOverride} disabled={!newOverride.permission || saving}
+                      style={{ padding: '10px 16px', borderRadius: 8, border: 'none', background: 'var(--primary, #7c3aed)', color: '#fff', fontWeight: 600, fontSize: 14, cursor: 'pointer' }}>
+                      {saving ? 'Saving...' : '+ Add Override'}
+                    </button>
+                  </div>
+                </div>
+              </>
+            )}
+
+            <div style={{ marginTop: 24, textAlign: 'right' }}>
+              <button onClick={() => { setModal(null); setPermData(null); }} style={{ padding: '10px 20px', borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface)', fontWeight: 600, fontSize: 14, cursor: 'pointer' }}>Done</button>
             </div>
           </div>
         </div>
