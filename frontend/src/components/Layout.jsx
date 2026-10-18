@@ -271,7 +271,15 @@ export default function Layout() {
     { to: '/',            icon: '⊞', label: 'Dashboard',  roles: ['admin','super_admin','agent','landlord','caretaker'] },
     { to: '/properties',  icon: '🏢', label: 'Properties', roles: ['admin','super_admin','agent','landlord','caretaker'] },
     { to: '/tenants',     icon: '👥', label: 'Tenants',    roles: ['admin','super_admin','agent','landlord','caretaker'] },
-    { to: '/payments',    icon: '💳', label: 'Payments',   roles: ['admin','super_admin','agent','landlord'] },
+    /* Was ['admin','super_admin','agent','landlord'] — no 'caretaker',
+       so the Payments LINK never appeared for them, even after we fixed
+       both the backend permission check and the frontend route guard.
+       Same root cause as both of those: a role-only allow-list that
+       doesn't know about a per-property grant. Matched to Tenants,
+       Maintenance and Expenses above/below, which already include
+       'caretaker' and let the real permission (backend-enforced) decide
+       what's actually visible once the page opens. */
+    { to: '/payments',    icon: '💳', label: 'Payments',   roles: ['admin','super_admin','agent','landlord','caretaker'] },
     { to: '/maintenance', icon: '🔧', label: 'Maintenance',roles: ['admin','super_admin','agent','landlord','caretaker'] },
     { to: '/reports',     icon: '📊', label: 'Reports',    roles: ['admin','super_admin','agent','landlord'] },
     { to: '/expenses',    icon: '🧾', label: 'Expenses',   roles: ['admin','super_admin','agent','landlord','caretaker'] },
