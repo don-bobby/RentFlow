@@ -1061,26 +1061,50 @@ export default function Dashboard() {
             </div>
           ) : (
             <>
-              {/* Summary bar */}
-              <div style={{ display:'flex', borderBottom: isDark?'1px solid rgba(255,255,255,0.07)':'1px solid #e2e8f0', background: isDark?'rgba(255,255,255,0.06)':'#f8fafc' }}>
-                {[
-                  { label:'Caretakers',       value: caretakers.length,                                                                         color:'#34d399' },
-                  { label:'Plots Covered',    value: new Set(caretakers.filter(c => c.plot_id).map(c => c.plot_id)).size,                       color:'#60a5fa' },
-                  { label:'Unassigned',       value: caretakers.filter(c => !c.plot_id).length,                                                 color:'#f87171' },
-                  { label:'Total Pending MR', value: pendingRequests.length,                                                                    color:'#fbbf24' },
-                ].map((s,i) => (
-                  <div key={s.label} style={{ flex:1, padding:'13px 16px', borderRight: i<3?(isDark?'1px solid rgba(255,255,255,0.07)':'1px solid #e2e8f0'):'none' }}>
-                    <div style={{ fontSize:10, fontWeight:700, letterSpacing:'0.08em', textTransform:'uppercase', color: isDark?'rgba(255,255,255,0.38)':'#94a3b8', marginBottom:3 }}>{s.label}</div>
-                    <div style={{ fontFamily:'Space Grotesk', fontWeight:800, fontSize:17, color:s.color }}>{s.value}</div>
-                  </div>
-                ))}
-              </div>
+              {(() => {
+                // A caretaker can be assigned via the legacy single plot_id
+                // column, or via the multi-plot caretaker_plots table (shown
+                // here as a comma-separated c.caretaker_plots name string).
+                // Resolve both to a list of plot ids so the summary bar and
+                // the per-caretaker cards below don't mislabel a multi-plot
+                // caretaker as "Unassigned".
+                var getPlotIds = function (c) {
+                  var ids = [];
+                  if (c.plot_id) ids.push(c.plot_id);
+                  (c.caretaker_plots || '').split(',').map(function (s) { return s.trim(); }).filter(Boolean).forEach(function (name) {
+                    var match = plots.find(function (p) { return p.name === name; });
+                    if (match && ids.indexOf(match.id) === -1) ids.push(match.id);
+                  });
+                  return ids;
+                };
+                var caretakersWithPlots = caretakers.map(function (c) { return Object.assign({}, c, { _plotIds: getPlotIds(c) }); });
+                var allPlotIds = new Set();
+                caretakersWithPlots.forEach(function (c) { c._plotIds.forEach(function (id) { allPlotIds.add(id); }); });
+                var unassignedCount = caretakersWithPlots.filter(function (c) { return c._plotIds.length === 0; }).length;
+                return (
+                  <>
+                    {/* Summary bar */}
+                    <div style={{ display:'flex', borderBottom: isDark?'1px solid rgba(255,255,255,0.07)':'1px solid #e2e8f0', background: isDark?'rgba(255,255,255,0.06)':'#f8fafc' }}>
+                      {[
+                        { label:'Caretakers',       value: caretakers.length,     color:'#34d399' },
+                        { label:'Plots Covered',    value: allPlotIds.size,       color:'#60a5fa' },
+                        { label:'Unassigned',       value: unassignedCount,       color:'#f87171' },
+                        { label:'Total Pending MR', value: pendingRequests.length, color:'#fbbf24' },
+                      ].map((s,i) => (
+                        <div key={s.label} style={{ flex:1, padding:'13px 16px', borderRight: i<3?(isDark?'1px solid rgba(255,255,255,0.07)':'1px solid #e2e8f0'):'none' }}>
+                          <div style={{ fontSize:10, fontWeight:700, letterSpacing:'0.08em', textTransform:'uppercase', color: isDark?'rgba(255,255,255,0.38)':'#94a3b8', marginBottom:3 }}>{s.label}</div>
+                          <div style={{ fontFamily:'Space Grotesk', fontWeight:800, fontSize:17, color:s.color }}>{s.value}</div>
+                        </div>
+                      ))}
+                    </div>
 
-              {/* One card per caretaker */}
-              <div style={{ display:'flex', flexDirection:'column', gap:0 }}>
-                {caretakers.map((c, i) => {
-                  // All data scoped to this caretaker's assigned plot
-                  const plotHouses  = houses.filter(h => h.plot_id === c.plot_id);
+                    {/* One card per caretaker */}
+                    <div style={{ display:'flex', flexDirection:'column', gap:0 }}>
+                      {caretakersWithPlots.map((c, i) => {
+                  // All data scoped to this caretaker's assigned plot(s) —
+                  // legacy single plot_id or multi-plot caretaker_plots
+                  var plotIds = c._plotIds;
+                  const plotHouses  = houses.filter(h => plotIds.includes(h.plot_id));
                   const plotTenants = activeTenants.filter(t => plotHouses.some(h => h.id === t.house_id));
                   const plotOccupied = plotHouses.filter(h => h.status === 'occupied').length;
                   const plotVacant   = plotHouses.filter(h => h.status === 'vacant').length;
@@ -1088,7 +1112,8 @@ export default function Dashboard() {
                   const plotArrears  = plotTenants.reduce((s,t) => s + parseFloat(t.balance||0), 0);
                   const plotMRHigh   = plotMR.filter(r => r.priority === 'high').length;
                   const initials     = c.name?.split(' ').map(n => n[0]).join('').slice(0,2).toUpperCase() || '?';
-                  const hasPlot      = !!c.plot_id;
+                  const hasPlot      = plotIds.length > 0;
+                  const plotBadgeText = c.plot_name || c.caretaker_plots || (plotIds[0] ? `Plot #${plotIds[0]}` : '');
                   const rowBg        = isDark ? (i%2===0 ? 'transparent' : 'rgba(255,255,255,0.02)') : (i%2===0 ? '#fff' : '#f8fafc');
 
                   return (
@@ -1110,7 +1135,7 @@ export default function Dashboard() {
                         {/* Plot assignment badge */}
                         {hasPlot ? (
                           <span style={{ display:'inline-flex', alignItems:'center', gap:5, padding:'4px 12px', borderRadius:99, fontSize:11, fontWeight:700, background: isDark?'rgba(52,211,153,0.15)':'#dcfce7', color: isDark?'#34d399':'#16a34a', border: isDark?'1px solid rgba(52,211,153,0.3)':'1px solid #86efac' }}>
-                            🏢 {c.plot_name || `Plot #${c.plot_id}`}
+                            🏢 {plotBadgeText}
                           </span>
                         ) : (
                           <span style={{ display:'inline-flex', alignItems:'center', gap:5, padding:'4px 12px', borderRadius:99, fontSize:11, fontWeight:700, background: isDark?'rgba(248,113,113,0.15)':'#fee2e2', color: isDark?'#f87171':'#dc2626', border: isDark?'1px solid rgba(248,113,113,0.3)':'1px solid #fca5a5' }}>
@@ -1149,8 +1174,11 @@ export default function Dashboard() {
                       )}
                     </div>
                   );
-                })}
-              </div>
+                      })}
+                    </div>
+                  </>
+                );
+              })()}
             </>
           )}
           <SeeMoreFooter onClick={() => navigate('/users')} />

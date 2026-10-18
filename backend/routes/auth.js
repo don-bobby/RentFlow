@@ -322,7 +322,14 @@ router.get('/users', authMiddleware, async (req, res) => {
            FROM caretaker_plots cp JOIN plots p ON cp.plot_id = p.id
            GROUP BY cp.caretaker_id
          ) ctp ON ctp.user_id = u.id AND u.role = 'caretaker'
-         WHERE u.id = $1 OR (u.role = 'caretaker' AND u.plot_id IN (SELECT id FROM plots WHERE user_id = $1))
+         WHERE u.id = $1 OR (u.role = 'caretaker' AND (
+                 u.plot_id IN (SELECT id FROM plots WHERE user_id = $1)
+                 OR u.id IN (
+                   SELECT cp.caretaker_id FROM caretaker_plots cp
+                   JOIN plots p ON p.id = cp.plot_id
+                   WHERE p.user_id = $1
+                 )
+               ))
          ORDER BY u.created_at DESC`,
         [req.user.id]
       );
