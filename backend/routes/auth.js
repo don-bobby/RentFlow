@@ -1173,6 +1173,86 @@ router.get('/permission-overrides', authMiddleware, requireAdmin, async (req, re
 
 // GET /api/auth/users/:id/permission-overrides — this user's role defaults
 // plus every override currently set for them (global and per-property).
+// GET /api/auth/users/:id/overview — role-aware summary for the Users-page
+// management panel: properties, a money/maintenance snapshot, and nothing
+// else (permission overrides and audit history are fetched separately by
+// the frontend, reusing the endpoints that already exist for them). Admin
+// only, same as the rest of this file's /users/:id/* management routes.
+// Landlords get properties + this month's collected rent + outstanding
+// tenant balances; caretakers get their assigned properties + a count of
+// maintenance requests still open on them. Any other role gets an empty
+// overview — this panel isn't built for them yet.
+router.get('/users/:id/overview', authMiddleware, requireAdmin, async (req, res) => {
+  try {
+    const userRes = await pool.query('SELECT id, name, role FROM users WHERE id = $1', [req.params.id]);
+    const user = userRes.rows[0];
+    if (!user) return res.status(404).json({ error: 'User not found.' });
+
+    const data = { role: user.role, properties: [] };
+
+    if (user.role === 'landlord') {
+      const plots = await pool.query(
+        `SELECT p.id, p.name,
+                COUNT(h.id)::int AS unit_count,
+                COUNT(h.id) FILTER (WHERE h.status = 'occupied')::int AS occupied_count
+         FROM plots p
+         LEFT JOIN houses h ON h.plot_id = p.id
+         WHERE p.user_id = $1
+         GROUP BY p.id, p.name
+         ORDER BY p.name`,
+        [user.id]
+      );
+      const money = await pool.query(
+        `SELECT
+           COALESCE((
+             SELECT SUM(pay.amount) FROM payments pay
+             JOIN houses h ON pay.house_id = h.id
+             JOIN plots p ON h.plot_id = p.id
+             WHERE p.user_id = $1 AND pay.status != 'pending'
+               AND pay.payment_date >= date_trunc('month', NOW())
+           ), 0) AS collected_month,
+           COALESCE((
+             SELECT SUM(t.balance) FROM tenants t
+             JOIN houses h ON t.house_id = h.id
+             JOIN plots p ON h.plot_id = p.id
+             WHERE p.user_id = $1 AND t.is_active = true
+           ), 0) AS outstanding`,
+        [user.id]
+      );
+      data.properties = plots.rows;
+      data.collected_month = Number(money.rows[0].collected_month);
+      data.outstanding = Number(money.rows[0].outstanding);
+    } else if (user.role === 'caretaker') {
+      const plots = await pool.query(
+        `SELECT p.id, p.name,
+                COUNT(h.id)::int AS unit_count,
+                COUNT(h.id) FILTER (WHERE h.status = 'occupied')::int AS occupied_count
+         FROM caretaker_plots cp
+         JOIN plots p ON cp.plot_id = p.id
+         LEFT JOIN houses h ON h.plot_id = p.id
+         WHERE cp.caretaker_id = $1
+         GROUP BY p.id, p.name
+         ORDER BY p.name`,
+        [user.id]
+      );
+      const maint = await pool.query(
+        `SELECT COUNT(*)::int AS open_count
+         FROM maintenance_requests mr
+         JOIN houses h ON mr.house_id = h.id
+         JOIN caretaker_plots cp ON cp.plot_id = h.plot_id
+         WHERE cp.caretaker_id = $1 AND mr.status != 'completed'`,
+        [user.id]
+      );
+      data.properties = plots.rows;
+      data.open_maintenance = maint.rows[0].open_count;
+    }
+
+    res.json({ success: true, data });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.get('/users/:id/permission-overrides', authMiddleware, requireAdmin, async (req, res) => {
   try {
     const userRes = await pool.query('SELECT id, name, role, agent_id FROM users WHERE id = $1', [req.params.id]);

@@ -89,6 +89,18 @@ export default function Users() {
   // recomputed only when the available permission set actually changes.
   const groupedPermissions = useMemo(() => groupPermissions(allPermissions), [allPermissions]);
 
+  // Overview panel (landlord & caretaker rows only — declutters their row
+  // down to one button instead of a row of inline Suspend/Agent/Reset/
+  // Permissions controls). `modal === 'overview'` reuses `selected`.
+  // `overview` = { role, properties, collected_month?, outstanding?,
+  // open_maintenance? } from GET /users/:id/overview; `overviewOverrides` =
+  // that same user's permission overrides, fetched alongside it so the
+  // panel can show a one-line summary without duplicating the full
+  // Permissions modal's logic.
+  const [overview,          setOverview]          = useState(null);
+  const [overviewOverrides, setOverviewOverrides]  = useState([]);
+  const [overviewLoading,   setOverviewLoading]    = useState(false);
+
   const { user: me, can } = useAuth();
   const isAdmin = me?.role === 'admin' || me?.role === 'super_admin';
   const isAgent = me?.role === 'agent';
@@ -140,6 +152,27 @@ export default function Users() {
       setPermData(null);
     } finally {
       setPermLoading(false);
+    }
+  }
+
+  async function openOverview(user) {
+    setSelected(user);
+    setError('');
+    setModal('overview');
+    setOverviewLoading(true);
+    try {
+      const [ov, ovr] = await Promise.all([
+        API.get(`/auth/users/${user.id}/overview`),
+        API.get(`/auth/users/${user.id}/permission-overrides`),
+      ]);
+      setOverview(ov.data.data);
+      setOverviewOverrides(ovr.data.data?.overrides || []);
+    } catch (e) {
+      setError(e.response?.data?.error || 'Failed to load overview.');
+      setOverview(null);
+      setOverviewOverrides([]);
+    } finally {
+      setOverviewLoading(false);
     }
   }
 
@@ -342,14 +375,10 @@ export default function Users() {
     return matchRole && matchSearch && matchPending;
   });
 
-  // The whole point of this: before an admin adds a new override, show them
-  // whether this exact permission is ALREADY set for this user somewhere
-  // else — a global grant, or a different property's revoke, etc. Without
-  // this, "Active Overrides" above is just a flat list with no connection
-  // to whatever permission you're about to pick, so it's easy to grant a
-  // permission that's already revoked elsewhere (or vice versa) and only
-  // find out later that the two don't agree. Only populated once a
-  // permission is actually selected in the form below.
+  // Existing overrides (for ANY user) that already touch the permission
+  // currently picked in the Add Override form — shown as a warning so an
+  // admin granting a permission can see it was already revoked somewhere
+  // (or vice versa) before they save a conflicting one.
   const matchingOverrides = newOverride.permission
     ? (permData?.overrides || []).filter(o => o.permission === newOverride.permission)
     : [];
@@ -572,21 +601,16 @@ export default function Users() {
                         <button onClick={() => openApprove(u)} style={{ padding: '4px 10px', borderRadius: 6, border: 'none', background: 'var(--green, #16a34a)', color: '#fff', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>Approve</button>
                       )}
                       {isAdmin && u.role === 'landlord' && u.is_approved && (
-                        <>
-                          <button onClick={() => handleReject(u)} style={{ padding: '4px 10px', borderRadius: 6, border: 'none', background: 'var(--amber, #d97706)', color: '#fff', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>Suspend</button>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                            <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--muted)', whiteSpace: 'nowrap' }}>Agent:</span>
-                            <select
-                              value={u.agent_id || ''}
-                              onChange={e => handleAgentChange(u, e.target.value)}
-                              title="Assign or change this landlord's agent"
-                              style={{ padding: '4px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--surface2)', fontSize: 12, color: 'var(--text)', cursor: 'pointer' }}
-                            >
-                              <option value="">— Self-managed —</option>
-                              {agents.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
-                            </select>
-                          </div>
-                        </>
+                        <button onClick={() => openOverview(u)} title="Properties, revenue, overrides — and suspend, reassign agent, reset password or manage permissions"
+                          style={{ padding: '4px 10px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--surface)', fontSize: 12, fontWeight: 600, color: 'var(--blue, #2563eb)', cursor: 'pointer' }}>
+                          🗂 Overview
+                        </button>
+                      )}
+                      {isAdmin && u.role === 'caretaker' && (
+                        <button onClick={() => openOverview(u)} title="Assigned properties, open maintenance, overrides — and reset password or manage permissions"
+                          style={{ padding: '4px 10px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--surface)', fontSize: 12, fontWeight: 600, color: 'var(--green, #16a34a)', cursor: 'pointer' }}>
+                          🗂 Overview
+                        </button>
                       )}
                       {isAdmin && u.role === 'agent' && u.is_approved && (
                         <button onClick={() => handleReject(u)} style={{ padding: '4px 10px', borderRadius: 6, border: 'none', background: 'var(--amber, #d97706)', color: '#fff', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>Suspend</button>
@@ -594,10 +618,10 @@ export default function Users() {
                       {isAdmin && u.role === 'agent' && !u.is_approved && (
                         <button onClick={() => handleReactivate(u)} style={{ padding: '4px 10px', borderRadius: 6, border: 'none', background: 'var(--green, #16a34a)', color: '#fff', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>Reactivate</button>
                       )}
-                      {isAdmin && (
+                      {isAdmin && u.role === 'agent' && (
                         <button onClick={() => handleResetPassword(u)} style={{ padding: '4px 10px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--surface)', fontSize: 12, fontWeight: 600, color: 'var(--muted)', cursor: 'pointer' }}>Reset PW</button>
                       )}
-                      {isAdmin && OVERRIDABLE_ROLES.includes(u.role) && (
+                      {isAdmin && u.role === 'agent' && (
                         <button onClick={() => openPermissions(u)} title="Grant or revoke a specific permission for this user, globally or for one property"
                           style={{ padding: '4px 10px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--surface)', fontSize: 12, fontWeight: 600, color: 'var(--primary, #7c3aed)', cursor: 'pointer' }}>
                           🔑 Permissions
@@ -796,6 +820,118 @@ export default function Users() {
         </div>
       )}
 
+      {/* Overview panel (admin only, landlord & caretaker rows) — replaces
+          the row of inline Suspend/Agent/Reset/Permissions controls with
+          one button. Role-specific read-only summary from GET
+          /users/:id/overview, a one-line permission-overrides summary (full
+          management stays in the Permissions modal, reached from here), and
+          the same management actions those rows used to carry inline. */}
+      {modal === 'overview' && selected && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, padding: 20 }}>
+          <div style={{ background: 'var(--surface)', borderRadius: 16, padding: 28, width: '100%', maxWidth: 520, boxShadow: 'var(--shadow-lg)', maxHeight: '85vh', overflowY: 'auto' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+              <h2 style={{ fontFamily: 'Space Grotesk', fontWeight: 700, fontSize: 18 }}>🗂 {selected.name}</h2>
+              <button onClick={() => { setModal(null); setOverview(null); setOverviewOverrides([]); }} style={{ width: 30, height: 30, borderRadius: '50%', border: 'none', background: 'var(--surface2)', cursor: 'pointer', fontSize: 16, color: 'var(--muted)' }}>×</button>
+            </div>
+            <p style={{ color: 'var(--muted)', fontSize: 13, marginBottom: 18, textTransform: 'capitalize' }}>{selected.role} · {selected.email}</p>
+
+            {error && <div style={{ background: 'var(--red-light, #fee2e2)', color: 'var(--red, #dc2626)', padding: '9px 14px', borderRadius: 8, marginBottom: 14, fontSize: 13 }}>{error}</div>}
+
+            {overviewLoading ? (
+              <div style={{ color: 'var(--muted)', fontSize: 13, padding: '20px 0', textAlign: 'center' }}>Loading...</div>
+            ) : (
+              <>
+                {/* Money / workload snapshot — the numbers that tell you what
+                    suspending this person actually affects, before you do it. */}
+                {selected.role === 'landlord' && overview && (
+                  <div style={{ display: 'flex', gap: 8, marginBottom: 18 }}>
+                    <div style={{ flex: 1, background: 'var(--surface2)', borderRadius: 8, padding: '10px', textAlign: 'center' }}>
+                      <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--green, #16a34a)' }}>KSh {Number(overview.collected_month || 0).toLocaleString()}</div>
+                      <div style={{ fontSize: 10, color: 'var(--muted)', marginTop: 2 }}>Collected this month</div>
+                    </div>
+                    <div style={{ flex: 1, background: 'var(--surface2)', borderRadius: 8, padding: '10px', textAlign: 'center' }}>
+                      <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--red, #dc2626)' }}>KSh {Number(overview.outstanding || 0).toLocaleString()}</div>
+                      <div style={{ fontSize: 10, color: 'var(--muted)', marginTop: 2 }}>Outstanding</div>
+                    </div>
+                  </div>
+                )}
+                {selected.role === 'caretaker' && overview && (
+                  <div style={{ display: 'flex', gap: 8, marginBottom: 18 }}>
+                    <div style={{ flex: 1, background: 'var(--surface2)', borderRadius: 8, padding: '10px', textAlign: 'center' }}>
+                      <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--amber, #d97706)' }}>{overview.open_maintenance ?? 0}</div>
+                      <div style={{ fontSize: 10, color: 'var(--muted)', marginTop: 2 }}>Open maintenance requests</div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Properties */}
+                <div style={{ marginBottom: 18 }}>
+                  <label style={labelStyle}>Properties ({overview?.properties?.length || 0})</label>
+                  {(overview?.properties || []).length === 0 ? (
+                    <div style={{ color: 'var(--muted)', fontSize: 13, padding: '8px 0' }}>None assigned.</div>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      {overview.properties.map(p => (
+                        <div key={p.id} style={{ display: 'flex', justifyContent: 'space-between', background: 'var(--surface2)', borderRadius: 7, padding: '7px 12px', fontSize: 12.5 }}>
+                          <span style={{ fontWeight: 600 }}>{p.name}</span>
+                          <span style={{ color: 'var(--muted)' }}>{p.occupied_count}/{p.unit_count} units</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Permission overrides — one-line-per-override summary; full
+                    add/remove still happens in the Permissions modal. */}
+                <div style={{ marginBottom: 20 }}>
+                  <label style={labelStyle}>Permission overrides ({overviewOverrides.length})</label>
+                  {overviewOverrides.length === 0 ? (
+                    <div style={{ color: 'var(--muted)', fontSize: 13, padding: '8px 0' }}>None — using role defaults everywhere.</div>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      {overviewOverrides.map(o => (
+                        <div key={o.id} style={{ background: o.effect === 'grant' ? 'var(--green-light, #dcfce7)' : 'var(--red-light, #fee2e2)', borderRadius: 7, padding: '7px 12px', fontSize: 12 }}>
+                          <strong style={{ textTransform: 'uppercase', color: o.effect === 'grant' ? 'var(--green, #16a34a)' : 'var(--red, #dc2626)' }}>{o.effect}</strong> {o.permission} — {o.plot_id ? (o.plot_name || `Property #${o.plot_id}`) : 'all properties'}
+                          {o.reason && <div style={{ fontStyle: 'italic', color: 'var(--muted)', marginTop: 2 }}>"{o.reason}"</div>}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Management actions — what used to sit inline on the row */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8, borderTop: '1px solid var(--border)', paddingTop: 16 }}>
+                  {selected.role === 'landlord' && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--muted)', whiteSpace: 'nowrap' }}>Agent:</span>
+                      <select
+                        value={selected.agent_id || ''}
+                        onChange={e => { handleAgentChange(selected, e.target.value); setSelected(s => ({ ...s, agent_id: e.target.value ? parseInt(e.target.value) : null })); }}
+                        style={{ flex: 1, padding: '7px 10px', borderRadius: 7, border: '1px solid var(--border)', background: 'var(--surface2)', fontSize: 12.5, color: 'var(--text)' }}
+                      >
+                        <option value="">— Self-managed —</option>
+                        {agents.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+                      </select>
+                    </div>
+                  )}
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    {selected.role === 'landlord' && (
+                      <button onClick={() => { handleReject(selected); setModal(null); }} style={{ flex: 1, padding: '9px', borderRadius: 7, border: 'none', background: 'var(--amber, #d97706)', color: '#fff', fontWeight: 600, fontSize: 12.5, cursor: 'pointer' }}>⏸ Suspend</button>
+                    )}
+                    <button onClick={() => handleResetPassword(selected)} style={{ flex: 1, padding: '9px', borderRadius: 7, border: '1px solid var(--border)', background: 'var(--surface2)', color: 'var(--text)', fontWeight: 600, fontSize: 12.5, cursor: 'pointer' }}>🔁 Reset password</button>
+                    <button onClick={() => openPermissions(selected)} style={{ flex: 1, padding: '9px', borderRadius: 7, border: '1px solid var(--border)', background: 'var(--primary-light, #ede9fe)', color: 'var(--primary, #7c3aed)', fontWeight: 600, fontSize: 12.5, cursor: 'pointer' }}>🔑 Manage</button>
+                  </div>
+                </div>
+              </>
+            )}
+
+            <div style={{ marginTop: 20, textAlign: 'right' }}>
+              <button onClick={() => { setModal(null); setOverview(null); setOverviewOverrides([]); }} style={{ padding: '10px 20px', borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface)', fontWeight: 600, fontSize: 14, cursor: 'pointer' }}>Done</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Permission Overrides Modal (admin only) — grant/revoke one
           permission for this user, either for every property they can
           already see (plot_id = null) or for one specific property. This
@@ -845,8 +981,8 @@ export default function Users() {
                               {o.plot_id ? `📍 ${o.plot_name || `Property #${o.plot_id}`}` : 'All properties'}
                             </div>
                             {o.reason && (
-                              <div style={{ fontSize: 12, color: 'var(--muted)', fontStyle: 'italic', marginTop: 3 }}>
-                                “{o.reason}”
+                              <div style={{ fontSize: 11.5, color: 'var(--muted)', fontStyle: 'italic', marginTop: 2 }}>
+                                "{o.reason}"
                               </div>
                             )}
                           </div>
@@ -882,28 +1018,17 @@ export default function Users() {
                       Grouped by area, e.g. Reports → Unpaid rent, Payments → Record manual. Hover an option to see its exact permission key.
                     </div>
 
-                    {/* Surfaces exactly what's already set for the permission
-                        just picked above — before you save a new one on top
-                        of it. This is what would have caught granting
-                        payments.view in one place while it was already
-                        revoked in another: both are valid overrides on
-                        their own, so nothing stops you from adding a
-                        second one that conflicts with the first unless you
-                        can see the first one right here, tied to your
-                        current selection. */}
                     {matchingOverrides.length > 0 && (
-                      <div style={{ background: 'var(--amber-light, #fef3c7)', border: '1px solid var(--amber, #d97706)', borderRadius: 8, padding: '10px 14px' }}>
-                        <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--amber, #92400e)', marginBottom: 6 }}>
-                          ⚠️ {newOverride.permission} already has {matchingOverrides.length} override{matchingOverrides.length !== 1 ? 's' : ''} for this user:
-                        </div>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                      <div style={{ background: 'var(--amber-light, #fef3c7)', border: '1px solid var(--amber, #d97706)', borderRadius: 8, padding: '10px 14px', fontSize: 12.5, color: 'var(--amber, #92400e)' }}>
+                        <strong>Heads up:</strong> this user already has {matchingOverrides.length} override{matchingOverrides.length !== 1 ? 's' : ''} for <strong>{newOverride.permission}</strong>:
+                        <ul style={{ margin: '6px 0 0', paddingLeft: 18 }}>
                           {matchingOverrides.map(o => (
-                            <div key={o.id} style={{ fontSize: 12.5, color: 'var(--text)' }}>
-                              • <strong style={{ textTransform: 'uppercase' }}>{o.effect}</strong> on {o.plot_id ? (o.plot_name || `Property #${o.plot_id}`) : 'all properties'}
-                              {o.reason ? ` — “${o.reason}”` : ''}
-                            </div>
+                            <li key={o.id} style={{ marginBottom: 2 }}>
+                              <strong style={{ textTransform: 'uppercase' }}>{o.effect}</strong> — {o.plot_id ? (o.plot_name || `Property #${o.plot_id}`) : 'All properties'}
+                              {o.reason && <> ("{o.reason}")</>}
+                            </li>
                           ))}
-                        </div>
+                        </ul>
                       </div>
                     )}
 
@@ -920,7 +1045,7 @@ export default function Users() {
                     <textarea
                       value={newOverride.reason}
                       onChange={e => setNewOverride(f => ({ ...f, reason: e.target.value }))}
-                      placeholder="Reason (optional) — e.g. 'Temporary cover while landlord is on leave'"
+                      placeholder="Optional — why are you granting/revoking this? (for your own reference later)"
                       rows={2}
                       style={{ ...inputStyle, resize: 'vertical', fontFamily: 'inherit' }}
                     />
