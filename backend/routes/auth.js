@@ -4,6 +4,7 @@ const bcrypt  = require('bcryptjs');
 const jwt     = require('jsonwebtoken');
 const { logAudit } = require('../utils/audit');
 const { logTenantActivity } = require('../utils/tenantActivity');
+const { logStaffActivity } = require('../utils/staffActivity');
 
 // ── Middleware ────────────────────────────────────────────────────────────────
 
@@ -148,6 +149,7 @@ router.post('/login', async (req, res) => {
       { expiresIn: '7d' }
     );
 
+    await logStaffActivity({ userId: user.id, action: 'login' });
     res.json({ token, user: { id: user.id, name: user.name, role: user.role, is_approved: user.is_approved } });
   } catch (err) {
     res.status(500).json({ error: err.message });

@@ -28,7 +28,8 @@ app.use('/api/notices', require('./routes/notices'));
 app.use('/api/deposits', require('./routes/deposits'));
 app.use('/api/audit-log', require('./routes/auditlog'));
 app.use('/api/statements', require('./routes/statements'));
-app.use('/api/tenant-activity', require('./routes/tenantactivity'));
+app.use('/api/user-activity', require('./routes/useractivity'));
+app.use('/api/staff-activity', require('./routes/staffactivity'));
 
 // Health check — visit http://localhost:5000/api/health
 app.get('/api/health', (req, res) => {

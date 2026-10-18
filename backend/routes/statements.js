@@ -5,6 +5,7 @@ const PDFDocument = require('pdfkit');
 const archiver = require('archiver');
 const { authMiddleware: auth } = require('../middleware/auth');
 const { getVisiblePlotIds }    = require('../middleware/scope');
+const { logStaffActivity }     = require('../utils/staffActivity');
 
 // Previously this file used its own `auth()` helper, which only checked for
 // a valid JWT — never which role it belonged to — and GET /:tenantId had no
@@ -99,6 +100,8 @@ router.get('/:tenantId', auth, async (req, res) => {
       return res.status(403).json({ error: 'You do not have access to this tenant.' });
     }
 
+    await logStaffActivity({ userId: req.user.id, action: 'statement_viewed', detail: data.tenant.full_name });
+
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename="statement_${data.tenant.full_name.replace(/\s+/g, '_')}.pdf"`);
 
@@ -123,6 +126,8 @@ router.get('/bulk/all.zip', auth, async (req, res) => {
     const tenants = await pool.query(query, params);
 
     if (tenants.rows.length === 0) return res.status(404).json({ error: 'No active tenants found.' });
+
+    await logStaffActivity({ userId: req.user.id, action: 'bulk_statements_downloaded', detail: `${tenants.rows.length} tenants` });
 
     res.setHeader('Content-Type', 'application/zip');
     res.setHeader('Content-Disposition', `attachment; filename="tenant_statements_${new Date().toISOString().split('T')[0]}.zip"`);
