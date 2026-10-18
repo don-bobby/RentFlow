@@ -470,8 +470,11 @@ export default function Users() {
           style={{ marginLeft: 'auto', padding: '8px 14px', borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface2)', fontSize: 13, color: 'var(--text)', outline: 'none', width: 220 }} />
       </div>
 
-      {/* Table */}
-      <div style={{ background: 'var(--surface)', borderRadius: 14, border: '1px solid var(--border)', boxShadow: 'var(--shadow)', overflow: 'hidden' }}>
+      {/* Table + docked Overview panel, side by side. The panel only takes
+          space when a landlord/caretaker row is selected — the rest of the
+          time the table is the full width, same as before. */}
+      <div style={{ display: 'flex', gap: 14, alignItems: 'flex-start' }}>
+      <div style={{ flex: 1, minWidth: 0, background: 'var(--surface)', borderRadius: 14, border: '1px solid var(--border)', boxShadow: 'var(--shadow)', overflow: 'hidden' }}>
         {loading ? (
           <div style={{ padding: 20 }}>
             {[0, 1, 2, 3, 4].map(i => (
@@ -496,8 +499,21 @@ export default function Users() {
               </tr>
             </thead>
             <tbody>
-              {filtered.map((u, i) => (
-                <tr key={u.id} className="us-row" style={{ borderTop: '1px solid var(--border)', background: i % 2 === 0 ? 'var(--surface)' : 'var(--surface2)' }}>
+              {filtered.map((u, i) => {
+                // Landlord & caretaker rows open the docked Overview panel on
+                // click — the row itself is the entry point now, not a
+                // separate button (see openOverview). Agent rows are
+                // unchanged and keep their inline action buttons.
+                const opensOverview = u.role === 'landlord' || u.role === 'caretaker';
+                const isSelectedRow = opensOverview && modal === 'overview' && selected?.id === u.id;
+                return (
+                <tr key={u.id} className="us-row" onClick={() => { if (opensOverview) openOverview(u); }}
+                  style={{
+                    borderTop: '1px solid var(--border)',
+                    background: isSelectedRow ? 'var(--primary-light, #ede9fe)' : (i % 2 === 0 ? 'var(--surface)' : 'var(--surface2)'),
+                    cursor: opensOverview ? 'pointer' : 'default',
+                    boxShadow: isSelectedRow ? 'inset 3px 0 0 var(--primary, #7c3aed)' : 'none',
+                  }}>
                   <td style={{ padding: '12px 16px' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                       {(() => {
@@ -525,7 +541,7 @@ export default function Users() {
                             <>
                               <span style={{ background: 'var(--primary-light, #ede9fe)', color: 'var(--primary, #7c3aed)', padding: '2px 8px', borderRadius: 6, fontSize: 12, fontWeight: 600 }}>{first}</span>
                               {extra > 0 && (
-                                <button onClick={() => openPlots(u)}
+                                <button onClick={e => { e.stopPropagation(); openPlots(u); }}
                                   style={{ background: 'var(--surface2)', color: 'var(--muted)', border: '1px solid var(--border)', padding: '2px 8px', borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>
                                   +{extra} more
                                 </button>
@@ -536,7 +552,7 @@ export default function Users() {
                           <span style={{ color: 'var(--muted)', fontSize: 12 }}>No plot assigned</span>
                         )}
                         {(isAdmin || can('users.assign_caretaker')) && (
-                          <button onClick={() => openPlots(u)} style={{ padding: '2px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--surface2)', fontSize: 11, fontWeight: 600, color: 'var(--primary, #7c3aed)', cursor: 'pointer' }}>
+                          <button onClick={e => { e.stopPropagation(); openPlots(u); }} style={{ padding: '2px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--surface2)', fontSize: 11, fontWeight: 600, color: 'var(--primary, #7c3aed)', cursor: 'pointer' }}>
                             ⚙️ Manage
                           </button>
                         )}
@@ -551,7 +567,7 @@ export default function Users() {
                             <>
                               <span style={{ background: 'var(--blue-light, #dbeafe)', color: 'var(--blue, #2563eb)', padding: '2px 8px', borderRadius: 6, fontSize: 12, fontWeight: 600 }}>{first}</span>
                               {extra > 0 && (
-                                <button onClick={() => openPlots(u)}
+                                <button onClick={e => { e.stopPropagation(); openPlots(u); }}
                                   style={{ background: 'var(--surface2)', color: 'var(--muted)', border: '1px solid var(--border)', padding: '2px 8px', borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>
                                   +{extra} more
                                 </button>
@@ -562,7 +578,7 @@ export default function Users() {
                           <span style={{ color: 'var(--muted)', fontSize: 12 }}>No properties</span>
                         )}
                         {isAdmin && (
-                          <button onClick={() => openPlots(u)} style={{ padding: '2px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--surface2)', fontSize: 11, fontWeight: 600, color: 'var(--blue, #2563eb)', cursor: 'pointer' }}>
+                          <button onClick={e => { e.stopPropagation(); openPlots(u); }} style={{ padding: '2px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--surface2)', fontSize: 11, fontWeight: 600, color: 'var(--blue, #2563eb)', cursor: 'pointer' }}>
                             ⚙️ Manage
                           </button>
                         )}
@@ -577,7 +593,7 @@ export default function Users() {
                             <>
                               <span style={{ background: 'var(--pink-light, #fce7f3)', color: '#db2777', padding: '2px 8px', borderRadius: 6, fontSize: 12, fontWeight: 600 }}>{first}</span>
                               {extra > 0 && (
-                                <button onClick={() => openPlots(u)}
+                                <button onClick={e => { e.stopPropagation(); openPlots(u); }}
                                   style={{ background: 'var(--surface2)', color: 'var(--muted)', border: '1px solid var(--border)', padding: '2px 8px', borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>
                                   +{extra} more
                                 </button>
@@ -588,7 +604,7 @@ export default function Users() {
                           <span style={{ color: 'var(--muted)', fontSize: 12 }}>No properties managed</span>
                         )}
                         {isAdmin && (
-                          <button onClick={() => openPlots(u)} style={{ padding: '2px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--surface2)', fontSize: 11, fontWeight: 600, color: '#db2777', cursor: 'pointer' }}>
+                          <button onClick={e => { e.stopPropagation(); openPlots(u); }} style={{ padding: '2px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--surface2)', fontSize: 11, fontWeight: 600, color: '#db2777', cursor: 'pointer' }}>
                             ⚙️ Manage
                           </button>
                         )}
@@ -598,19 +614,10 @@ export default function Users() {
                   <td style={{ padding: '12px 16px' }}>
                     <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                       {isAdmin && u.role === 'landlord' && !u.is_approved && (
-                        <button onClick={() => openApprove(u)} style={{ padding: '4px 10px', borderRadius: 6, border: 'none', background: 'var(--green, #16a34a)', color: '#fff', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>Approve</button>
+                        <button onClick={e => { e.stopPropagation(); openApprove(u); }} style={{ padding: '4px 10px', borderRadius: 6, border: 'none', background: 'var(--green, #16a34a)', color: '#fff', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>Approve</button>
                       )}
-                      {isAdmin && u.role === 'landlord' && u.is_approved && (
-                        <button onClick={() => openOverview(u)} title="Properties, revenue, overrides — and suspend, reassign agent, reset password or manage permissions"
-                          style={{ padding: '4px 10px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--surface)', fontSize: 12, fontWeight: 600, color: 'var(--blue, #2563eb)', cursor: 'pointer' }}>
-                          🗂 Overview
-                        </button>
-                      )}
-                      {isAdmin && u.role === 'caretaker' && (
-                        <button onClick={() => openOverview(u)} title="Assigned properties, open maintenance, overrides — and reset password or manage permissions"
-                          style={{ padding: '4px 10px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--surface)', fontSize: 12, fontWeight: 600, color: 'var(--green, #16a34a)', cursor: 'pointer' }}>
-                          🗂 Overview
-                        </button>
+                      {isAdmin && (u.role === 'landlord' || u.role === 'caretaker') && (
+                        <span style={{ fontSize: 11.5, color: 'var(--muted)' }}>Click row for overview →</span>
                       )}
                       {isAdmin && u.role === 'agent' && u.is_approved && (
                         <button onClick={() => handleReject(u)} style={{ padding: '4px 10px', borderRadius: 6, border: 'none', background: 'var(--amber, #d97706)', color: '#fff', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>Suspend</button>
@@ -630,10 +637,119 @@ export default function Users() {
                     </div>
                   </td>
                 </tr>
-              ))}
+              );})}
             </tbody>
           </table>
         )}
+      </div>
+
+      {/* Overview panel (admin only, landlord & caretaker rows) — docked
+          beside the table, not an overlay: the table stays visible and the
+          selected row stays highlighted, so you can click through several
+          people without losing your place. Role-specific read-only summary
+          from GET /users/:id/overview, a one-line permission-overrides
+          summary (full add/remove still happens in the Permissions modal,
+          reached from here), and the same management actions that row used
+          to carry inline. */}
+      {modal === 'overview' && selected && (
+        <div style={{ width: 340, flexShrink: 0, background: 'var(--surface)', borderRadius: 14, border: '1px solid var(--primary, #7c3aed)', boxShadow: 'var(--shadow)', padding: 20, position: 'sticky', top: 16, maxHeight: '80vh', overflowY: 'auto' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+            <h2 style={{ fontFamily: 'Space Grotesk', fontWeight: 700, fontSize: 16 }}>🗂 {selected.name}</h2>
+            <button onClick={() => { setModal(null); setOverview(null); setOverviewOverrides([]); }} style={{ width: 28, height: 28, borderRadius: '50%', border: 'none', background: 'var(--surface2)', cursor: 'pointer', fontSize: 15, color: 'var(--muted)' }}>×</button>
+          </div>
+          <p style={{ color: 'var(--muted)', fontSize: 12.5, marginBottom: 16, textTransform: 'capitalize' }}>{selected.role} · {selected.email}</p>
+
+          {error && <div style={{ background: 'var(--red-light, #fee2e2)', color: 'var(--red, #dc2626)', padding: '9px 14px', borderRadius: 8, marginBottom: 14, fontSize: 13 }}>{error}</div>}
+
+          {overviewLoading ? (
+            <div style={{ color: 'var(--muted)', fontSize: 13, padding: '20px 0', textAlign: 'center' }}>Loading...</div>
+          ) : (
+            <>
+              {/* Money / workload snapshot — the numbers that tell you what
+                  suspending this person actually affects, before you do it. */}
+              {selected.role === 'landlord' && overview && (
+                <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
+                  <div style={{ flex: 1, background: 'var(--surface2)', borderRadius: 8, padding: '10px', textAlign: 'center' }}>
+                    <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--green, #16a34a)' }}>KSh {Number(overview.collected_month || 0).toLocaleString()}</div>
+                    <div style={{ fontSize: 10, color: 'var(--muted)', marginTop: 2 }}>Collected this month</div>
+                  </div>
+                  <div style={{ flex: 1, background: 'var(--surface2)', borderRadius: 8, padding: '10px', textAlign: 'center' }}>
+                    <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--red, #dc2626)' }}>KSh {Number(overview.outstanding || 0).toLocaleString()}</div>
+                    <div style={{ fontSize: 10, color: 'var(--muted)', marginTop: 2 }}>Outstanding</div>
+                  </div>
+                </div>
+              )}
+              {selected.role === 'caretaker' && overview && (
+                <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
+                  <div style={{ flex: 1, background: 'var(--surface2)', borderRadius: 8, padding: '10px', textAlign: 'center' }}>
+                    <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--amber, #d97706)' }}>{overview.open_maintenance ?? 0}</div>
+                    <div style={{ fontSize: 10, color: 'var(--muted)', marginTop: 2 }}>Open maintenance requests</div>
+                  </div>
+                </div>
+              )}
+
+              {/* Properties */}
+              <div style={{ marginBottom: 16 }}>
+                <label style={labelStyle}>Properties ({overview?.properties?.length || 0})</label>
+                {(overview?.properties || []).length === 0 ? (
+                  <div style={{ color: 'var(--muted)', fontSize: 13, padding: '8px 0' }}>None assigned.</div>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    {overview.properties.map(p => (
+                      <div key={p.id} style={{ display: 'flex', justifyContent: 'space-between', background: 'var(--surface2)', borderRadius: 7, padding: '7px 10px', fontSize: 12 }}>
+                        <span style={{ fontWeight: 600 }}>{p.name}</span>
+                        <span style={{ color: 'var(--muted)' }}>{p.occupied_count}/{p.unit_count} units</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Permission overrides — one-line-per-override summary; full
+                  add/remove still happens in the Permissions modal. */}
+              <div style={{ marginBottom: 18 }}>
+                <label style={labelStyle}>Permission overrides ({overviewOverrides.length})</label>
+                {overviewOverrides.length === 0 ? (
+                  <div style={{ color: 'var(--muted)', fontSize: 13, padding: '8px 0' }}>None — using role defaults everywhere.</div>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    {overviewOverrides.map(o => (
+                      <div key={o.id} style={{ background: o.effect === 'grant' ? 'var(--green-light, #dcfce7)' : 'var(--red-light, #fee2e2)', borderRadius: 7, padding: '7px 10px', fontSize: 11.5 }}>
+                        <strong style={{ textTransform: 'uppercase', color: o.effect === 'grant' ? 'var(--green, #16a34a)' : 'var(--red, #dc2626)' }}>{o.effect}</strong> {o.permission} — {o.plot_id ? (o.plot_name || `Property #${o.plot_id}`) : 'all properties'}
+                        {o.reason && <div style={{ fontStyle: 'italic', color: 'var(--muted)', marginTop: 2 }}>"{o.reason}"</div>}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Management actions — what used to sit inline on the row */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, borderTop: '1px solid var(--border)', paddingTop: 14 }}>
+                {selected.role === 'landlord' && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--muted)', whiteSpace: 'nowrap' }}>Agent:</span>
+                    <select
+                      value={selected.agent_id || ''}
+                      onChange={e => { handleAgentChange(selected, e.target.value); setSelected(s => ({ ...s, agent_id: e.target.value ? parseInt(e.target.value) : null })); }}
+                      style={{ flex: 1, padding: '6px 8px', borderRadius: 7, border: '1px solid var(--border)', background: 'var(--surface2)', fontSize: 12, color: 'var(--text)' }}
+                    >
+                      <option value="">— Self-managed —</option>
+                      {agents.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+                    </select>
+                  </div>
+                )}
+                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                  {selected.role === 'landlord' && (
+                    <button onClick={() => { handleReject(selected); setModal(null); }} style={{ flex: '1 1 auto', padding: '8px', borderRadius: 7, border: 'none', background: 'var(--amber, #d97706)', color: '#fff', fontWeight: 600, fontSize: 11.5, cursor: 'pointer' }}>⏸ Suspend</button>
+                  )}
+                  <button onClick={() => handleResetPassword(selected)} style={{ flex: '1 1 auto', padding: '8px', borderRadius: 7, border: '1px solid var(--border)', background: 'var(--surface2)', color: 'var(--text)', fontWeight: 600, fontSize: 11.5, cursor: 'pointer' }}>🔁 Reset</button>
+                  <button onClick={() => openPermissions(selected)} style={{ flex: '1 1 auto', padding: '8px', borderRadius: 7, border: '1px solid var(--border)', background: 'var(--primary-light, #ede9fe)', color: 'var(--primary, #7c3aed)', fontWeight: 600, fontSize: 11.5, cursor: 'pointer' }}>🔑 Manage</button>
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+      )}
       </div>
 
       {/* Create User Modal */}
@@ -815,118 +931,6 @@ export default function Users() {
 
             <div style={{ marginTop: 24, textAlign: 'right' }}>
               <button onClick={() => setModal(null)} style={{ padding: '10px 20px', borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface)', fontWeight: 600, fontSize: 14, cursor: 'pointer' }}>Done</button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Overview panel (admin only, landlord & caretaker rows) — replaces
-          the row of inline Suspend/Agent/Reset/Permissions controls with
-          one button. Role-specific read-only summary from GET
-          /users/:id/overview, a one-line permission-overrides summary (full
-          management stays in the Permissions modal, reached from here), and
-          the same management actions those rows used to carry inline. */}
-      {modal === 'overview' && selected && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, padding: 20 }}>
-          <div style={{ background: 'var(--surface)', borderRadius: 16, padding: 28, width: '100%', maxWidth: 520, boxShadow: 'var(--shadow-lg)', maxHeight: '85vh', overflowY: 'auto' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
-              <h2 style={{ fontFamily: 'Space Grotesk', fontWeight: 700, fontSize: 18 }}>🗂 {selected.name}</h2>
-              <button onClick={() => { setModal(null); setOverview(null); setOverviewOverrides([]); }} style={{ width: 30, height: 30, borderRadius: '50%', border: 'none', background: 'var(--surface2)', cursor: 'pointer', fontSize: 16, color: 'var(--muted)' }}>×</button>
-            </div>
-            <p style={{ color: 'var(--muted)', fontSize: 13, marginBottom: 18, textTransform: 'capitalize' }}>{selected.role} · {selected.email}</p>
-
-            {error && <div style={{ background: 'var(--red-light, #fee2e2)', color: 'var(--red, #dc2626)', padding: '9px 14px', borderRadius: 8, marginBottom: 14, fontSize: 13 }}>{error}</div>}
-
-            {overviewLoading ? (
-              <div style={{ color: 'var(--muted)', fontSize: 13, padding: '20px 0', textAlign: 'center' }}>Loading...</div>
-            ) : (
-              <>
-                {/* Money / workload snapshot — the numbers that tell you what
-                    suspending this person actually affects, before you do it. */}
-                {selected.role === 'landlord' && overview && (
-                  <div style={{ display: 'flex', gap: 8, marginBottom: 18 }}>
-                    <div style={{ flex: 1, background: 'var(--surface2)', borderRadius: 8, padding: '10px', textAlign: 'center' }}>
-                      <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--green, #16a34a)' }}>KSh {Number(overview.collected_month || 0).toLocaleString()}</div>
-                      <div style={{ fontSize: 10, color: 'var(--muted)', marginTop: 2 }}>Collected this month</div>
-                    </div>
-                    <div style={{ flex: 1, background: 'var(--surface2)', borderRadius: 8, padding: '10px', textAlign: 'center' }}>
-                      <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--red, #dc2626)' }}>KSh {Number(overview.outstanding || 0).toLocaleString()}</div>
-                      <div style={{ fontSize: 10, color: 'var(--muted)', marginTop: 2 }}>Outstanding</div>
-                    </div>
-                  </div>
-                )}
-                {selected.role === 'caretaker' && overview && (
-                  <div style={{ display: 'flex', gap: 8, marginBottom: 18 }}>
-                    <div style={{ flex: 1, background: 'var(--surface2)', borderRadius: 8, padding: '10px', textAlign: 'center' }}>
-                      <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--amber, #d97706)' }}>{overview.open_maintenance ?? 0}</div>
-                      <div style={{ fontSize: 10, color: 'var(--muted)', marginTop: 2 }}>Open maintenance requests</div>
-                    </div>
-                  </div>
-                )}
-
-                {/* Properties */}
-                <div style={{ marginBottom: 18 }}>
-                  <label style={labelStyle}>Properties ({overview?.properties?.length || 0})</label>
-                  {(overview?.properties || []).length === 0 ? (
-                    <div style={{ color: 'var(--muted)', fontSize: 13, padding: '8px 0' }}>None assigned.</div>
-                  ) : (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                      {overview.properties.map(p => (
-                        <div key={p.id} style={{ display: 'flex', justifyContent: 'space-between', background: 'var(--surface2)', borderRadius: 7, padding: '7px 12px', fontSize: 12.5 }}>
-                          <span style={{ fontWeight: 600 }}>{p.name}</span>
-                          <span style={{ color: 'var(--muted)' }}>{p.occupied_count}/{p.unit_count} units</span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-
-                {/* Permission overrides — one-line-per-override summary; full
-                    add/remove still happens in the Permissions modal. */}
-                <div style={{ marginBottom: 20 }}>
-                  <label style={labelStyle}>Permission overrides ({overviewOverrides.length})</label>
-                  {overviewOverrides.length === 0 ? (
-                    <div style={{ color: 'var(--muted)', fontSize: 13, padding: '8px 0' }}>None — using role defaults everywhere.</div>
-                  ) : (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                      {overviewOverrides.map(o => (
-                        <div key={o.id} style={{ background: o.effect === 'grant' ? 'var(--green-light, #dcfce7)' : 'var(--red-light, #fee2e2)', borderRadius: 7, padding: '7px 12px', fontSize: 12 }}>
-                          <strong style={{ textTransform: 'uppercase', color: o.effect === 'grant' ? 'var(--green, #16a34a)' : 'var(--red, #dc2626)' }}>{o.effect}</strong> {o.permission} — {o.plot_id ? (o.plot_name || `Property #${o.plot_id}`) : 'all properties'}
-                          {o.reason && <div style={{ fontStyle: 'italic', color: 'var(--muted)', marginTop: 2 }}>"{o.reason}"</div>}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-
-                {/* Management actions — what used to sit inline on the row */}
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 8, borderTop: '1px solid var(--border)', paddingTop: 16 }}>
-                  {selected.role === 'landlord' && (
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--muted)', whiteSpace: 'nowrap' }}>Agent:</span>
-                      <select
-                        value={selected.agent_id || ''}
-                        onChange={e => { handleAgentChange(selected, e.target.value); setSelected(s => ({ ...s, agent_id: e.target.value ? parseInt(e.target.value) : null })); }}
-                        style={{ flex: 1, padding: '7px 10px', borderRadius: 7, border: '1px solid var(--border)', background: 'var(--surface2)', fontSize: 12.5, color: 'var(--text)' }}
-                      >
-                        <option value="">— Self-managed —</option>
-                        {agents.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
-                      </select>
-                    </div>
-                  )}
-                  <div style={{ display: 'flex', gap: 8 }}>
-                    {selected.role === 'landlord' && (
-                      <button onClick={() => { handleReject(selected); setModal(null); }} style={{ flex: 1, padding: '9px', borderRadius: 7, border: 'none', background: 'var(--amber, #d97706)', color: '#fff', fontWeight: 600, fontSize: 12.5, cursor: 'pointer' }}>⏸ Suspend</button>
-                    )}
-                    <button onClick={() => handleResetPassword(selected)} style={{ flex: 1, padding: '9px', borderRadius: 7, border: '1px solid var(--border)', background: 'var(--surface2)', color: 'var(--text)', fontWeight: 600, fontSize: 12.5, cursor: 'pointer' }}>🔁 Reset password</button>
-                    <button onClick={() => openPermissions(selected)} style={{ flex: 1, padding: '9px', borderRadius: 7, border: '1px solid var(--border)', background: 'var(--primary-light, #ede9fe)', color: 'var(--primary, #7c3aed)', fontWeight: 600, fontSize: 12.5, cursor: 'pointer' }}>🔑 Manage</button>
-                  </div>
-                </div>
-              </>
-            )}
-
-            <div style={{ marginTop: 20, textAlign: 'right' }}>
-              <button onClick={() => { setModal(null); setOverview(null); setOverviewOverrides([]); }} style={{ padding: '10px 20px', borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface)', fontWeight: 600, fontSize: 14, cursor: 'pointer' }}>Done</button>
             </div>
           </div>
         </div>
