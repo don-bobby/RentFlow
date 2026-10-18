@@ -493,18 +493,22 @@ export default function Users() {
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
               <tr style={{ background: 'var(--surface2)' }}>
-                {['Name', 'Email', 'Phone', 'Role', 'Assigned Plot(s)', 'Actions'].map(h => (
+                {['Name', 'Email', 'Phone', 'Role'].map(h => (
                   <th key={h} style={{ padding: '10px 16px', textAlign: 'left', fontSize: 11, fontWeight: 600, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {filtered.map((u, i) => {
-                // Landlord & caretaker rows open the docked Overview panel on
-                // click — the row itself is the entry point now, not a
-                // separate button (see openOverview). Agent rows are
-                // unchanged and keep their inline action buttons.
-                const opensOverview = u.role === 'landlord' || u.role === 'caretaker';
+                // Every row opens the docked Overview panel on click — that's
+                // where properties, status and management actions now live
+                // (see openOverview), instead of a crowded Plot/Actions pair
+                // of columns. Caretaker rows stay open to the same viewers
+                // who could previously manage their plot assignment inline;
+                // landlord/agent rows need full admin.
+                const opensOverview = u.role === 'caretaker'
+                  ? (isAdmin || can('users.assign_caretaker'))
+                  : (u.role === 'landlord' || u.role === 'agent') && isAdmin;
                 const isSelectedRow = opensOverview && modal === 'overview' && selected?.id === u.id;
                 return (
                 <tr key={u.id} className="us-row" onClick={() => { if (opensOverview) openOverview(u); }}
@@ -530,112 +534,6 @@ export default function Users() {
                   <td style={{ padding: '12px 16px', color: 'var(--muted)', fontSize: 13 }}>{u.email}</td>
                   <td style={{ padding: '12px 16px', color: 'var(--muted)', fontSize: 13 }}>{u.phone || '—'}</td>
                   <td style={{ padding: '12px 16px' }}>{roleBadge(u.role, u.is_approved)}</td>
-                  <td style={{ padding: '12px 16px', fontSize: 13 }}>
-                    {u.role === 'caretaker' ? (
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                        {u.caretaker_plots ? (() => {
-                          const allPlots = u.caretaker_plots.split(', ');
-                          const first    = allPlots[0];
-                          const extra    = allPlots.length - 1;
-                          return (
-                            <>
-                              <span style={{ background: 'var(--primary-light, #ede9fe)', color: 'var(--primary, #7c3aed)', padding: '2px 8px', borderRadius: 6, fontSize: 12, fontWeight: 600 }}>{first}</span>
-                              {extra > 0 && (
-                                <button onClick={e => { e.stopPropagation(); openPlots(u); }}
-                                  style={{ background: 'var(--surface2)', color: 'var(--muted)', border: '1px solid var(--border)', padding: '2px 8px', borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>
-                                  +{extra} more
-                                </button>
-                              )}
-                            </>
-                          );
-                        })() : (
-                          <span style={{ color: 'var(--muted)', fontSize: 12 }}>No plot assigned</span>
-                        )}
-                        {(isAdmin || can('users.assign_caretaker')) && (
-                          <button onClick={e => { e.stopPropagation(); openPlots(u); }} style={{ padding: '2px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--surface2)', fontSize: 11, fontWeight: 600, color: 'var(--primary, #7c3aed)', cursor: 'pointer' }}>
-                            ⚙️ Manage
-                          </button>
-                        )}
-                      </div>
-                    ) : u.role === 'landlord' ? (
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                        {u.landlord_plots ? (() => {
-                          const allPlots = u.landlord_plots.split(', ');
-                          const first    = allPlots[0];
-                          const extra    = allPlots.length - 1;
-                          return (
-                            <>
-                              <span style={{ background: 'var(--blue-light, #dbeafe)', color: 'var(--blue, #2563eb)', padding: '2px 8px', borderRadius: 6, fontSize: 12, fontWeight: 600 }}>{first}</span>
-                              {extra > 0 && (
-                                <button onClick={e => { e.stopPropagation(); openPlots(u); }}
-                                  style={{ background: 'var(--surface2)', color: 'var(--muted)', border: '1px solid var(--border)', padding: '2px 8px', borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>
-                                  +{extra} more
-                                </button>
-                              )}
-                            </>
-                          );
-                        })() : (
-                          <span style={{ color: 'var(--muted)', fontSize: 12 }}>No properties</span>
-                        )}
-                        {isAdmin && (
-                          <button onClick={e => { e.stopPropagation(); openPlots(u); }} style={{ padding: '2px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--surface2)', fontSize: 11, fontWeight: 600, color: 'var(--blue, #2563eb)', cursor: 'pointer' }}>
-                            ⚙️ Manage
-                          </button>
-                        )}
-                      </div>
-                    ) : u.role === 'agent' ? (
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                        {u.agent_plots ? (() => {
-                          const allPlots = u.agent_plots.split(', ');
-                          const first    = allPlots[0];
-                          const extra    = allPlots.length - 1;
-                          return (
-                            <>
-                              <span style={{ background: 'var(--pink-light, #fce7f3)', color: '#db2777', padding: '2px 8px', borderRadius: 6, fontSize: 12, fontWeight: 600 }}>{first}</span>
-                              {extra > 0 && (
-                                <button onClick={e => { e.stopPropagation(); openPlots(u); }}
-                                  style={{ background: 'var(--surface2)', color: 'var(--muted)', border: '1px solid var(--border)', padding: '2px 8px', borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>
-                                  +{extra} more
-                                </button>
-                              )}
-                            </>
-                          );
-                        })() : (
-                          <span style={{ color: 'var(--muted)', fontSize: 12 }}>No properties managed</span>
-                        )}
-                        {isAdmin && (
-                          <button onClick={e => { e.stopPropagation(); openPlots(u); }} style={{ padding: '2px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--surface2)', fontSize: 11, fontWeight: 600, color: '#db2777', cursor: 'pointer' }}>
-                            ⚙️ Manage
-                          </button>
-                        )}
-                      </div>
-                    ) : '—'}
-                  </td>
-                  <td style={{ padding: '12px 16px' }}>
-                    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                      {isAdmin && u.role === 'landlord' && !u.is_approved && (
-                        <button onClick={e => { e.stopPropagation(); openApprove(u); }} style={{ padding: '4px 10px', borderRadius: 6, border: 'none', background: 'var(--green, #16a34a)', color: '#fff', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>Approve</button>
-                      )}
-                      {isAdmin && (u.role === 'landlord' || u.role === 'caretaker') && (
-                        <span style={{ fontSize: 11.5, color: 'var(--muted)' }}>Click row for overview →</span>
-                      )}
-                      {isAdmin && u.role === 'agent' && u.is_approved && (
-                        <button onClick={() => handleReject(u)} style={{ padding: '4px 10px', borderRadius: 6, border: 'none', background: 'var(--amber, #d97706)', color: '#fff', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>Suspend</button>
-                      )}
-                      {isAdmin && u.role === 'agent' && !u.is_approved && (
-                        <button onClick={() => handleReactivate(u)} style={{ padding: '4px 10px', borderRadius: 6, border: 'none', background: 'var(--green, #16a34a)', color: '#fff', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>Reactivate</button>
-                      )}
-                      {isAdmin && u.role === 'agent' && (
-                        <button onClick={() => handleResetPassword(u)} style={{ padding: '4px 10px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--surface)', fontSize: 12, fontWeight: 600, color: 'var(--muted)', cursor: 'pointer' }}>Reset PW</button>
-                      )}
-                      {isAdmin && u.role === 'agent' && (
-                        <button onClick={() => openPermissions(u)} title="Grant or revoke a specific permission for this user, globally or for one property"
-                          style={{ padding: '4px 10px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--surface)', fontSize: 12, fontWeight: 600, color: 'var(--primary, #7c3aed)', cursor: 'pointer' }}>
-                          🔑 Permissions
-                        </button>
-                      )}
-                    </div>
-                  </td>
                 </tr>
               );})}
             </tbody>
@@ -688,10 +586,31 @@ export default function Users() {
                 </div>
               )}
 
-              {/* Properties */}
+              {/* Properties — landlord/caretaker get a rich list with
+                  occupancy from GET /users/:id/overview; agents don't have
+                  that aggregation yet, so fall back to the plain comma list
+                  the row used to show. "Manage" opens the same assign/remove
+                  modal the old inline button did. */}
               <div style={{ marginBottom: 16 }}>
-                <label style={labelStyle}>Properties ({overview?.properties?.length || 0})</label>
-                {(overview?.properties || []).length === 0 ? (
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                  <label style={{ ...labelStyle, marginBottom: 0 }}>
+                    Properties {selected.role !== 'agent' && `(${overview?.properties?.length || 0})`}
+                  </label>
+                  <button onClick={() => openPlots(selected)} style={{ padding: '2px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--surface2)', fontSize: 11, fontWeight: 600, color: 'var(--primary, #7c3aed)', cursor: 'pointer' }}>
+                    ⚙️ Manage
+                  </button>
+                </div>
+                {selected.role === 'agent' ? (
+                  selected.agent_plots ? (
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                      {selected.agent_plots.split(', ').map(name => (
+                        <span key={name} style={{ background: 'var(--pink-light, #fce7f3)', color: '#db2777', padding: '3px 9px', borderRadius: 6, fontSize: 12, fontWeight: 600 }}>{name}</span>
+                      ))}
+                    </div>
+                  ) : (
+                    <div style={{ color: 'var(--muted)', fontSize: 13, padding: '8px 0' }}>No properties managed.</div>
+                  )
+                ) : (overview?.properties || []).length === 0 ? (
                   <div style={{ color: 'var(--muted)', fontSize: 13, padding: '8px 0' }}>None assigned.</div>
                 ) : (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
@@ -723,29 +642,41 @@ export default function Users() {
                 )}
               </div>
 
-              {/* Management actions — what used to sit inline on the row */}
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, borderTop: '1px solid var(--border)', paddingTop: 14 }}>
-                {selected.role === 'landlord' && (
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <span style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--muted)', whiteSpace: 'nowrap' }}>Agent:</span>
-                    <select
-                      value={selected.agent_id || ''}
-                      onChange={e => { handleAgentChange(selected, e.target.value); setSelected(s => ({ ...s, agent_id: e.target.value ? parseInt(e.target.value) : null })); }}
-                      style={{ flex: 1, padding: '6px 8px', borderRadius: 7, border: '1px solid var(--border)', background: 'var(--surface2)', fontSize: 12, color: 'var(--text)' }}
-                    >
-                      <option value="">— Self-managed —</option>
-                      {agents.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
-                    </select>
-                  </div>
-                )}
-                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                  {selected.role === 'landlord' && (
-                    <button onClick={() => { handleReject(selected); setModal(null); }} style={{ flex: '1 1 auto', padding: '8px', borderRadius: 7, border: 'none', background: 'var(--amber, #d97706)', color: '#fff', fontWeight: 600, fontSize: 11.5, cursor: 'pointer' }}>⏸ Suspend</button>
+              {/* Management actions — everything that used to sit inline on
+                  the row, all admin-only like it always was. */}
+              {isAdmin && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8, borderTop: '1px solid var(--border)', paddingTop: 14 }}>
+                  {selected.role === 'landlord' && !selected.is_approved && (
+                    <button onClick={() => { openApprove(selected); setModal(null); }} style={{ padding: '9px', borderRadius: 7, border: 'none', background: 'var(--green, #16a34a)', color: '#fff', fontWeight: 600, fontSize: 12.5, cursor: 'pointer' }}>✓ Approve landlord</button>
                   )}
-                  <button onClick={() => handleResetPassword(selected)} style={{ flex: '1 1 auto', padding: '8px', borderRadius: 7, border: '1px solid var(--border)', background: 'var(--surface2)', color: 'var(--text)', fontWeight: 600, fontSize: 11.5, cursor: 'pointer' }}>🔁 Reset</button>
-                  <button onClick={() => openPermissions(selected)} style={{ flex: '1 1 auto', padding: '8px', borderRadius: 7, border: '1px solid var(--border)', background: 'var(--primary-light, #ede9fe)', color: 'var(--primary, #7c3aed)', fontWeight: 600, fontSize: 11.5, cursor: 'pointer' }}>🔑 Manage</button>
+                  {selected.role === 'landlord' && selected.is_approved && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--muted)', whiteSpace: 'nowrap' }}>Agent:</span>
+                      <select
+                        value={selected.agent_id || ''}
+                        onChange={e => { handleAgentChange(selected, e.target.value); setSelected(s => ({ ...s, agent_id: e.target.value ? parseInt(e.target.value) : null })); }}
+                        style={{ flex: 1, padding: '6px 8px', borderRadius: 7, border: '1px solid var(--border)', background: 'var(--surface2)', fontSize: 12, color: 'var(--text)' }}
+                      >
+                        <option value="">— Self-managed —</option>
+                        {agents.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+                      </select>
+                    </div>
+                  )}
+                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                    {selected.role === 'landlord' && selected.is_approved && (
+                      <button onClick={() => { handleReject(selected); setModal(null); }} style={{ flex: '1 1 auto', padding: '8px', borderRadius: 7, border: 'none', background: 'var(--amber, #d97706)', color: '#fff', fontWeight: 600, fontSize: 11.5, cursor: 'pointer' }}>⏸ Suspend</button>
+                    )}
+                    {selected.role === 'agent' && selected.is_approved && (
+                      <button onClick={() => { handleReject(selected); setModal(null); }} style={{ flex: '1 1 auto', padding: '8px', borderRadius: 7, border: 'none', background: 'var(--amber, #d97706)', color: '#fff', fontWeight: 600, fontSize: 11.5, cursor: 'pointer' }}>⏸ Suspend</button>
+                    )}
+                    {selected.role === 'agent' && !selected.is_approved && (
+                      <button onClick={() => { handleReactivate(selected); setModal(null); }} style={{ flex: '1 1 auto', padding: '8px', borderRadius: 7, border: 'none', background: 'var(--green, #16a34a)', color: '#fff', fontWeight: 600, fontSize: 11.5, cursor: 'pointer' }}>Reactivate</button>
+                    )}
+                    <button onClick={() => handleResetPassword(selected)} style={{ flex: '1 1 auto', padding: '8px', borderRadius: 7, border: '1px solid var(--border)', background: 'var(--surface2)', color: 'var(--text)', fontWeight: 600, fontSize: 11.5, cursor: 'pointer' }}>🔁 Reset</button>
+                    <button onClick={() => openPermissions(selected)} style={{ flex: '1 1 auto', padding: '8px', borderRadius: 7, border: '1px solid var(--border)', background: 'var(--primary-light, #ede9fe)', color: 'var(--primary, #7c3aed)', fontWeight: 600, fontSize: 11.5, cursor: 'pointer' }}>🔑 Manage</button>
+                  </div>
                 </div>
-              </div>
+              )}
             </>
           )}
         </div>
