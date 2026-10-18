@@ -1,20 +1,25 @@
 const express  = require('express');
 const router   = express.Router();
 const pool     = require('../database/db');
-const jwt      = require('jsonwebtoken');
 const PDFDocument = require('pdfkit');
 const archiver = require('archiver');
+const { authMiddleware: auth } = require('../middleware/auth');
+const { getVisiblePlotIds }    = require('../middleware/scope');
 
-function auth(req, res, next) {
-  const token = req.headers.authorization?.split(' ')[1];
-  if (!token) return res.status(401).json({ error: 'No token provided' });
-  try { req.user = jwt.verify(token, process.env.JWT_SECRET); next(); }
-  catch { res.status(401).json({ error: 'Invalid token' }); }
-}
+// Previously this file used its own `auth()` helper, which only checked for
+// a valid JWT — never which role it belonged to — and GET /:tenantId had no
+// ownership/scope check at all. That meant any valid staff token, or a
+// TENANT'S OWN LOGIN, could pull any other tenant's full financial
+// statement (balance, full payment history, phone, unit) just by changing
+// the id in the URL — a severe IDOR, trivially exploitable via sequential
+// tenant ids. Switched to the shared authMiddleware (rejects tenant tokens
+// outright, same as every other staff-only route in this project) and
+// added the getVisiblePlotIds scope check below, same pattern used
+// throughout payments.js/tenants.js/etc.
 
 async function loadStatementData(tenantId) {
   const tenantRes = await pool.query(
-    `SELECT t.*, h.unit_number, h.rent_amount, p.name AS plot_name, p.location AS plot_location
+    `SELECT t.*, h.unit_number, h.rent_amount, h.plot_id, p.name AS plot_name, p.location AS plot_location
      FROM tenants t
      LEFT JOIN houses h ON t.house_id = h.id
      LEFT JOIN plots  p ON h.plot_id  = p.id
@@ -83,6 +88,16 @@ router.get('/:tenantId', auth, async (req, res) => {
   try {
     const data = await loadStatementData(req.params.tenantId);
     if (!data) return res.status(404).json({ error: 'Tenant not found' });
+
+    // Ownership check — a tenant with no house/plot (data.tenant.plot_id is
+    // null) has nothing to scope against, so only admins can reach them
+    // this way; everyone else must have this tenant's plot in their visible
+    // set.
+    const visible = await getVisiblePlotIds(req.user);
+    const isAdmin = visible === 'ALL';
+    if (!isAdmin && !(data.tenant.plot_id && visible.includes(data.tenant.plot_id))) {
+      return res.status(403).json({ error: 'You do not have access to this tenant.' });
+    }
 
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename="statement_${data.tenant.full_name.replace(/\s+/g, '_')}.pdf"`);
