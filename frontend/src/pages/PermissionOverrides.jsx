@@ -68,7 +68,7 @@ export default function PermissionOverrides() {
 
   const filtered = rows.filter(r => {
     const q = search.trim().toLowerCase();
-    const matchSearch = !q || r.permission.toLowerCase().includes(q) || r.user_name.toLowerCase().includes(q) || (r.plot_name || '').toLowerCase().includes(q);
+    const matchSearch = !q || r.permission.toLowerCase().includes(q) || r.user_name.toLowerCase().includes(q) || (r.plot_name || '').toLowerCase().includes(q) || (r.reason || '').toLowerCase().includes(q);
     const matchUser   = userFilter === 'all' || String(r.user_id) === userFilter;
     const matchPlot   = plotFilter === 'all' || (plotFilter === 'global' ? r.plot_id == null : String(r.plot_id) === plotFilter);
     const matchEffect = effectFilter === 'all' || r.effect === effectFilter;
@@ -76,7 +76,7 @@ export default function PermissionOverrides() {
   });
 
   async function handleRemove(o) {
-    if (!window.confirm(`Remove this override?\n\n${o.user_name} — ${o.effect} ${o.permission}${o.plot_id ? ` (${o.plot_name})` : ' (all properties)'}`)) return;
+    if (!window.confirm(`Remove this override?\n\n${o.user_name} — ${o.effect} ${o.permission}${o.plot_id ? ` (${o.plot_name})` : ' (all properties)'}${o.reason ? `\nReason on file: "${o.reason}"` : ''}`)) return;
     setRemoving(o.id);
     try {
       await API.delete(`/auth/users/${o.user_id}/permission-overrides/${o.id}`);
@@ -166,7 +166,14 @@ export default function PermissionOverrides() {
                   <tr key={o.id} className="po-row" style={{ borderTop: '1px solid var(--border)' }}>
                     <td style={{ padding: '10px 14px', fontWeight: 600, color: 'var(--text)' }}>{o.user_name}</td>
                     <td style={{ padding: '10px 14px', color: 'var(--muted)', textTransform: 'capitalize' }}>{o.user_role}</td>
-                    <td style={{ padding: '10px 14px', color: 'var(--text)' }}>{o.permission}</td>
+                    <td style={{ padding: '10px 14px', color: 'var(--text)' }}>
+                      {o.permission}
+                      {o.reason && (
+                        <div style={{ fontSize: 11.5, color: 'var(--muted)', fontStyle: 'italic', marginTop: 2 }}>
+                          “{o.reason}”
+                        </div>
+                      )}
+                    </td>
                     <td style={{ padding: '10px 14px', color: 'var(--muted)' }}>{o.plot_id ? `📍 ${o.plot_name || `Property #${o.plot_id}`}` : 'All properties'}</td>
                     <td style={{ padding: '10px 14px' }}>
                       <span style={{
