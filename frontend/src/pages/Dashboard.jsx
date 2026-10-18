@@ -547,15 +547,32 @@ export default function Dashboard() {
 
   return (
     <div style={{ marginTop: -24 }}>
-      <div style={{ marginBottom: 28 }}>
-        <h1 style={{
-          fontFamily: 'Space Grotesk', fontSize: 26, fontWeight: 800, marginBottom: 6,
-          color: 'var(--primary, #7c3aed)', display: 'inline-flex', alignItems: 'center', gap: 10,
-        }}>
-          Dashboard
-          <span style={{ display: 'inline-block', width: 34, height: 5, borderRadius: 99, background: 'linear-gradient(90deg, var(--primary, #7c3aed), var(--blue, #2563eb))' }} />
-        </h1>
-        <p style={{ color: 'var(--muted)', fontSize: 14 }}>Welcome back. Here's what's happening today.</p>
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16, marginBottom: 28 }}>
+        <div>
+          <h1 style={{
+            fontFamily: 'Space Grotesk', fontSize: 26, fontWeight: 800, marginBottom: 6,
+            color: 'var(--primary, #7c3aed)', display: 'inline-flex', alignItems: 'center', gap: 10,
+          }}>
+            Dashboard
+            <span style={{ display: 'inline-block', width: 34, height: 5, borderRadius: 99, background: 'linear-gradient(90deg, var(--primary, #7c3aed), var(--blue, #2563eb))' }} />
+          </h1>
+          <p style={{ color: 'var(--muted)', fontSize: 14 }}>Welcome back. Here's what's happening today.</p>
+        </div>
+
+        {/* Caretaker badge — a quick-glance, always-visible shortcut to the
+            same details the Caretaker Workload tile below opens, for anyone
+            who manages caretakers and wants it without scanning the grid. */}
+        {caretakers.length > 0 && (
+          <button onClick={() => setModal('caretakers')} style={{
+            display: 'flex', alignItems: 'center', gap: 8, padding: '10px 18px', borderRadius: 12,
+            border: '1px solid var(--green, #16a34a)', background: isDark ? 'rgba(52,211,153,0.12)' : 'var(--green-light, #dcfce7)',
+            color: isDark ? '#34d399' : 'var(--green, #16a34a)', fontWeight: 700, fontSize: 13, cursor: 'pointer',
+            boxShadow: 'var(--shadow)', whiteSpace: 'nowrap', flexShrink: 0,
+          }}>
+            🧑‍🔧 {caretakers.length} Caretaker{caretakers.length !== 1 ? 's' : ''}
+            <span style={{ fontSize: 11, fontWeight: 600, opacity: 0.8 }}>· view</span>
+          </button>
+        )}
       </div>
 
 
