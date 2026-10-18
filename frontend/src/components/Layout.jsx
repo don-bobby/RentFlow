@@ -34,7 +34,7 @@ export default function Layout() {
   const dropdownRef  = useRef(null); // wraps the avatar BUTTON only (used to measure position + outside-click)
   const dropdownPanelRef = useRef(null); // the portaled panel itself (lives in document.body, not here)
   const [dropdownPos, setDropdownPos] = useState({ top: 0, right: 0 });
-  const { user, can } = useAuth(); // live DB row (role, agent_id, profile, permissions) via /api/auth/me
+  const { user, can, canAnywhere } = useAuth(); // live DB row (role, agent_id, profile, permissions) via /api/auth/me
   const [displayName, setDisplayName]  = useState(null);
   const role         = user?.role;
   const canApprove   = role === 'admin' || role === 'super_admin';
@@ -270,19 +270,23 @@ export default function Layout() {
   const nav = [
     { to: '/',            icon: '⊞', label: 'Dashboard',  roles: ['admin','super_admin','agent','landlord','caretaker'] },
     { to: '/properties',  icon: '🏢', label: 'Properties', roles: ['admin','super_admin','agent','landlord','caretaker'] },
-    { to: '/tenants',     icon: '👥', label: 'Tenants',    roles: ['admin','super_admin','agent','landlord','caretaker'] },
-    /* Was ['admin','super_admin','agent','landlord'] — no 'caretaker',
-       so the Payments LINK never appeared for them, even after we fixed
-       both the backend permission check and the frontend route guard.
-       Same root cause as both of those: a role-only allow-list that
-       doesn't know about a per-property grant. Matched to Tenants,
-       Maintenance and Expenses above/below, which already include
-       'caretaker' and let the real permission (backend-enforced) decide
-       what's actually visible once the page opens. */
-    { to: '/payments',    icon: '💳', label: 'Payments',   roles: ['admin','super_admin','agent','landlord','caretaker'] },
-    { to: '/maintenance', icon: '🔧', label: 'Maintenance',roles: ['admin','super_admin','agent','landlord','caretaker'] },
+    /* These four pages (Tenants/Payments/Maintenance/Expenses) are the
+       ones an admin can grant or revoke per-property, for agent, landlord
+       or caretaker accounts (see Permission Overrides). A static `roles`
+       list can only ever go stale here: it's what let a granted override
+       show nothing new (the link was already visible to the whole role)
+       and, just as broken the other way, let a REVOKED override leave the
+       link sitting there with nothing behind it. `permission` + the
+       canAnywhere() check below asks the real, current question instead:
+       "does this specific user have this permission for at least one
+       property they can see, right now" — which is exactly what changes
+       the moment an admin grants or revokes an override. Admin/super_admin
+       always pass (they carry the '*' wildcard), so they're unaffected. */
+    { to: '/tenants',     icon: '👥', label: 'Tenants',    permission: 'tenants.view',     roles: ['admin','super_admin'] },
+    { to: '/payments',    icon: '💳', label: 'Payments',   permission: 'payments.view',    roles: ['admin','super_admin'] },
+    { to: '/maintenance', icon: '🔧', label: 'Maintenance',permission: 'maintenance.view', roles: ['admin','super_admin'] },
+    { to: '/expenses',    icon: '🧾', label: 'Expenses',   permission: 'expenses.view',    roles: ['admin','super_admin'] },
     { to: '/reports',     icon: '📊', label: 'Reports',    roles: ['admin','super_admin','agent','landlord'] },
-    { to: '/expenses',    icon: '🧾', label: 'Expenses',   roles: ['admin','super_admin','agent','landlord','caretaker'] },
     { to: '/users',       icon: '👤', label: 'Users',      roles: ['admin','super_admin','agent','landlord'] },
     { to: '/roles',       icon: '🛡️', label: 'Roles & Permissions', roles: ['admin','super_admin'] },
     { to: '/permission-overrides', icon: '🔑', label: 'Permission Overrides', roles: ['admin','super_admin'] },
@@ -293,7 +297,7 @@ export default function Layout() {
     // (direct messages to tenants/landlords, plus the arrears-reminder
     // blast) is no longer something landlord or caretaker accounts see.
     { to: '/sms',         icon: '📱', label: 'SMS',        roles: ['admin','super_admin','agent'] },
-  ].filter(i => i.roles.includes(role));
+  ].filter(i => i.permission ? (i.roles.includes(role) || canAnywhere(i.permission)) : i.roles.includes(role));
 
   // Messages lives in the topbar (next to the profile dropdown) instead of
   // the sidebar. Notices was removed from the topbar per feedback — it can
