@@ -100,6 +100,11 @@ export default function Users() {
   const [overview,          setOverview]          = useState(null);
   const [overviewOverrides, setOverviewOverrides]  = useState([]);
   const [overviewLoading,   setOverviewLoading]    = useState(false);
+  // Editing the person's own name/email/phone from inside the panel — the
+  // backend already had PATCH /users/:id/profile for this (admins can edit
+  // anyone), it just wasn't wired into the Users page UI before.
+  const [editingProfile, setEditingProfile] = useState(false);
+  const [editForm,       setEditForm]       = useState({ name: '', email: '', phone: '' });
 
   const { user: me, can } = useAuth();
   const isAdmin = me?.role === 'admin' || me?.role === 'super_admin';
@@ -159,6 +164,8 @@ export default function Users() {
     setSelected(user);
     setError('');
     setModal('overview');
+    setEditingProfile(false);
+    setEditForm({ name: user.name || '', email: user.email || '', phone: user.phone || '' });
     setOverviewLoading(true);
     try {
       const [ov, ovr] = await Promise.all([
@@ -306,6 +313,26 @@ export default function Users() {
       setMsg(`Password reset for ${user.name}.`);
       setTimeout(() => setMsg(''), 3000);
     } catch (e) { alert(e.response?.data?.error || 'Failed to reset password.'); }
+  }
+
+  async function handleSaveProfile() {
+    if (!selected) return;
+    if (!editForm.name.trim() || !editForm.email.trim()) { setError('Name and email are required.'); return; }
+    setSaving(true); setError('');
+    try {
+      const res = await API.patch(`/auth/users/${selected.id}/profile`, {
+        name: editForm.name.trim(),
+        email: editForm.email.trim(),
+        phone: editForm.phone.trim(),
+      });
+      const updated = res.data.user;
+      setUsers(us => us.map(u => u.id === updated.id ? { ...u, ...updated } : u));
+      setSelected(s => ({ ...s, ...updated }));
+      setEditingProfile(false);
+      setMsg('Profile updated.');
+      setTimeout(() => setMsg(''), 3000);
+    } catch (e) { setError(e.response?.data?.error || 'Failed to update profile.'); }
+    finally { setSaving(false); }
   }
 
   async function openPlots(user) {
@@ -553,9 +580,35 @@ export default function Users() {
         <div style={{ width: 340, flexShrink: 0, background: 'var(--surface)', borderRadius: 14, border: '1px solid var(--primary, #7c3aed)', boxShadow: 'var(--shadow)', padding: 20, position: 'sticky', top: 16, maxHeight: '80vh', overflowY: 'auto' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
             <h2 style={{ fontFamily: 'Space Grotesk', fontWeight: 700, fontSize: 16 }}>🗂 {selected.name}</h2>
-            <button onClick={() => { setModal(null); setOverview(null); setOverviewOverrides([]); }} style={{ width: 28, height: 28, borderRadius: '50%', border: 'none', background: 'var(--surface2)', cursor: 'pointer', fontSize: 15, color: 'var(--muted)' }}>×</button>
+            <div style={{ display: 'flex', gap: 4 }}>
+              {isAdmin && !editingProfile && (
+                <button onClick={() => setEditingProfile(true)} title="Edit name, email, phone" style={{ width: 28, height: 28, borderRadius: '50%', border: 'none', background: 'var(--surface2)', cursor: 'pointer', fontSize: 13 }}>✏️</button>
+              )}
+              <button onClick={() => { setModal(null); setOverview(null); setOverviewOverrides([]); setEditingProfile(false); }} style={{ width: 28, height: 28, borderRadius: '50%', border: 'none', background: 'var(--surface2)', cursor: 'pointer', fontSize: 15, color: 'var(--muted)' }}>×</button>
+            </div>
           </div>
-          <p style={{ color: 'var(--muted)', fontSize: 12.5, marginBottom: 16, textTransform: 'capitalize' }}>{selected.role} · {selected.email}</p>
+
+          {editingProfile ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 16 }}>
+              <input value={editForm.name} onChange={e => setEditForm(f => ({ ...f, name: e.target.value }))} placeholder="Full name"
+                style={{ padding: '8px 10px', borderRadius: 7, border: '1px solid var(--border)', background: 'var(--surface2)', fontSize: 13, color: 'var(--text)' }} />
+              <input value={editForm.email} onChange={e => setEditForm(f => ({ ...f, email: e.target.value }))} placeholder="Email" type="email"
+                style={{ padding: '8px 10px', borderRadius: 7, border: '1px solid var(--border)', background: 'var(--surface2)', fontSize: 13, color: 'var(--text)' }} />
+              <input value={editForm.phone} onChange={e => setEditForm(f => ({ ...f, phone: e.target.value }))} placeholder="Phone"
+                style={{ padding: '8px 10px', borderRadius: 7, border: '1px solid var(--border)', background: 'var(--surface2)', fontSize: 13, color: 'var(--text)' }} />
+              <div style={{ display: 'flex', gap: 6 }}>
+                <button onClick={handleSaveProfile} disabled={saving} style={{ flex: 1, padding: '7px', borderRadius: 7, border: 'none', background: 'var(--primary, #7c3aed)', color: '#fff', fontWeight: 600, fontSize: 12, cursor: 'pointer' }}>
+                  {saving ? 'Saving...' : 'Save'}
+                </button>
+                <button onClick={() => { setEditingProfile(false); setEditForm({ name: selected.name || '', email: selected.email || '', phone: selected.phone || '' }); setError(''); }}
+                  style={{ flex: 1, padding: '7px', borderRadius: 7, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontWeight: 600, fontSize: 12, cursor: 'pointer' }}>
+                  Cancel
+                </button>
+              </div>
+            </div>
+          ) : (
+            <p style={{ color: 'var(--muted)', fontSize: 12.5, marginBottom: 16, textTransform: 'capitalize' }}>{selected.role} · {selected.email}{selected.phone ? ` · ${selected.phone}` : ''}</p>
+          )}
 
           {error && <div style={{ background: 'var(--red-light, #fee2e2)', color: 'var(--red, #dc2626)', padding: '9px 14px', borderRadius: 8, marginBottom: 14, fontSize: 13 }}>{error}</div>}
 
