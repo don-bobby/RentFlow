@@ -586,6 +586,29 @@ export default function Dashboard() {
 
 
 
+      {/* Quick Actions */}
+      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 28 }}>
+        {/* Previously just navigated to the (often empty) tenants list,
+            leaving the user to find + click "Add Tenant" again themselves.
+            Passes a flag in router state, same convention Properties.jsx
+            already uses (highlightPlotId/highlightHouseId) for "land here
+            and immediately do X" navigation — Tenants.jsx needs a small
+            effect reading `location.state?.openAddModal` to open its own
+            add-tenant modal on mount (see note sent with this fix). */}
+        <button onClick={() => navigate('/tenants', { state: { openAddModal: true } })} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '11px 18px', borderRadius: 10, border: 'none', background: 'var(--primary, #7c3aed)', color: '#fff', fontWeight: 600, fontSize: 13, cursor: 'pointer' }}>
+          + Add Tenant
+        </button>
+        <button onClick={() => navigate('/payments')} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '11px 18px', borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontWeight: 600, fontSize: 13, cursor: 'pointer' }}>
+          💳 Record Payment
+        </button>
+        <button onClick={() => navigate('/users')} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '11px 18px', borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontWeight: 600, fontSize: 13, cursor: 'pointer' }}>
+          🧑‍🔧 Assign Caretaker
+        </button>
+        <button onClick={() => navigate('/reports')} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '11px 18px', borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontWeight: 600, fontSize: 13, cursor: 'pointer' }}>
+          📄 Export Report
+        </button>
+      </div>
+
       {/* Stats Grid + Property Map */}
       <div style={{ display: 'flex', gap: 16, marginBottom: 28, alignItems: 'stretch', flexWrap: 'wrap' }}>
         <div style={{ flex: '1 1 600px', display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 14 }}>
@@ -760,29 +783,6 @@ export default function Dashboard() {
             </div>
           )}
         </div>
-      </div>
-
-      {/* Quick Actions */}
-      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-        {/* Previously just navigated to the (often empty) tenants list,
-            leaving the user to find + click "Add Tenant" again themselves.
-            Passes a flag in router state, same convention Properties.jsx
-            already uses (highlightPlotId/highlightHouseId) for "land here
-            and immediately do X" navigation — Tenants.jsx needs a small
-            effect reading `location.state?.openAddModal` to open its own
-            add-tenant modal on mount (see note sent with this fix). */}
-        <button onClick={() => navigate('/tenants', { state: { openAddModal: true } })} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '11px 18px', borderRadius: 10, border: 'none', background: 'var(--primary, #7c3aed)', color: '#fff', fontWeight: 600, fontSize: 13, cursor: 'pointer' }}>
-          + Add Tenant
-        </button>
-        <button onClick={() => navigate('/payments')} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '11px 18px', borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontWeight: 600, fontSize: 13, cursor: 'pointer' }}>
-          💳 Record Payment
-        </button>
-        <button onClick={() => navigate('/users')} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '11px 18px', borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontWeight: 600, fontSize: 13, cursor: 'pointer' }}>
-          🧑‍🔧 Assign Caretaker
-        </button>
-        <button onClick={() => navigate('/reports')} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '11px 18px', borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontWeight: 600, fontSize: 13, cursor: 'pointer' }}>
-          📄 Export Report
-        </button>
       </div>
 
       {/* ── Modals ── */}
