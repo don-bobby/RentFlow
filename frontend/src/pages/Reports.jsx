@@ -35,6 +35,7 @@ const REPORTS = [
   { id: 'vacancyloss',   icon: '🕳️', label: 'Vacancy Loss',           desc: 'Rent lost to empty units',               color: 'var(--red)'     },
   { id: 'dataquality',   icon: '🧹', label: 'Data Quality Exceptions', desc: 'Missing or conflicting records to fix', color: 'var(--amber)'   },
   { id: 'audittrail',     icon: '🕵️', label: 'Audit Trail',           desc: 'Who changed what, and when (admin only)', color: '#8b5cf6',      light: '#ede9fe'              },
+  { id: 'tenantactivity', icon: '📱', label: 'Tenant Activity',       desc: 'Tenant logins and portal activity (admin only)', color: 'var(--primary)', light: 'var(--primary-light)' },
 ];
 
 function getThisYear()  { return new Date().getFullYear(); }
@@ -43,7 +44,7 @@ function getThisMonth() { return new Date().getMonth() + 1; }
 // Reports that don't use the period/month selectors at all — they're either
 // current-state snapshots (rentroll, performance, tenure) or have their own
 // dedicated month/year controls (comparison).
-const NO_PERIOD_FILTER = ['properties', 'occupancy', 'expiring', 'revenue', 'rentroll', 'performance', 'tenure', 'comparison', 'depositledger', 'audittrail', 'collection', 'agentscore', 'vacancyloss', 'dataquality', 'paymenthistory', 'assignments'];
+const NO_PERIOD_FILTER = ['properties', 'occupancy', 'expiring', 'revenue', 'rentroll', 'performance', 'tenure', 'comparison', 'depositledger', 'audittrail', 'tenantactivity', 'collection', 'agentscore', 'vacancyloss', 'dataquality', 'paymenthistory', 'assignments'];
 
 function daysBetween(a, b) { return Math.floor((a - b) / (1000 * 60 * 60 * 24)); }
 
@@ -584,10 +585,16 @@ export default function Reports() {
         auditLog = arr(ar.data);
       } catch (e) { auditLog = []; auditDenied = e?.response?.status === 403; } // 403 for non-admins — expected, not an error
 
+      let tenantActivity = [], tenantActivityDenied = false;
+      try {
+        const tar = await API.get('/tenant-activity');
+        tenantActivity = arr(tar.data);
+      } catch (e) { tenantActivity = []; tenantActivityDenied = e?.response?.status === 403; } // 403 for non-admins — expected, not an error
+
       setData({
         tenants: arr(tr.data), payments: arr(pr.data), houses: arr(hr.data),
         requests: arr(mr.data), plots: arr(plr.data), expenses: arr(er.data), users, deposits, auditLog, auditDenied, caretakerPlots,
-        plotPermissions,
+        plotPermissions, tenantActivity, tenantActivityDenied,
       });
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
@@ -673,7 +680,7 @@ export default function Reports() {
   let auditOptions = { actions: [], entities: [], users: [] };
 
   if (data.payments) {
-    const { tenants, payments, houses, requests, plots, expenses, users, deposits, auditLog, caretakerPlots, plotPermissions } = data;
+    const { tenants, payments, houses, requests, plots, expenses, users, deposits, auditLog, caretakerPlots, plotPermissions, tenantActivity } = data;
 
     // Shared lookups for the analytical reports below
     const houseById = Object.fromEntries(houses.map(h => [h.id, h]));
@@ -1507,6 +1514,46 @@ export default function Reports() {
       note = 'Newest first. PINs, passwords and similar sensitive values are always masked.';
     }
 
+    if (active === 'tenantactivity') {
+      // One row per login "session": the login time plus a count of what
+      // that tenant did afterwards. Deliberately not an estimated session
+      // duration — there's no logout tracking in this stateless-JWT
+      // system, so a duration would just be a guess; a timestamp plus an
+      // activity count is the honest version of this report.
+      const sessions = (tenantActivity || [])
+        .map((x, i) => ({ ...x, _d: x.login_at ? new Date(x.login_at) : null, _id: i }))
+        .sort((a, b) => (b._d || 0) - (a._d || 0));
+
+      columns = ['Tenant', 'Unit', 'Login Time', 'Activity Count', 'Breakdown'];
+      rows = sessions.map(s => ({
+        Tenant: s.tenant_name,
+        Unit: s.unit_number ? `Unit ${s.unit_number}` : '—',
+        'Login Time': s._d ? s._d.toLocaleString('en-KE') : 'Before tracking began',
+        'Activity Count': s.activity_count,
+        Breakdown: [
+          s.maintenance_count ? `${s.maintenance_count} maintenance` : null,
+          s.message_count ? `${s.message_count} message${s.message_count !== 1 ? 's' : ''}` : null,
+          s.notice_read_count ? `${s.notice_read_count} notice${s.notice_read_count !== 1 ? 's' : ''} read` : null,
+        ].filter(Boolean).join(', ') || '—',
+      }));
+
+      const totalLogins = sessions.filter(s => s._d).length;
+      const totalActivity = sessions.reduce((sum, s) => sum + s.activity_count, 0);
+      const activeTenants = new Set(sessions.map(s => s.tenant_name)).size;
+      const byTenant = {};
+      sessions.forEach(s => { byTenant[s.tenant_name] = (byTenant[s.tenant_name] || 0) + s.activity_count; });
+      const topTenant = Object.entries(byTenant).sort((a, b) => b[1] - a[1])[0];
+
+      summary = [
+        { label: 'Total Logins', value: totalLogins, color: 'var(--primary)' },
+        { label: 'Tenants With Activity', value: activeTenants, color: 'var(--blue)' },
+        { label: 'Total Activity Events', value: totalActivity, color: 'var(--green)' },
+        { label: 'Most Active Tenant', value: topTenant ? `${topTenant[0]} (${topTenant[1]})` : '—', color: 'var(--amber)' },
+      ];
+      title = 'Tenant Activity';
+      note = 'Newest login first. Shows login time plus a count of maintenance requests, messages and notice reads since that login — not an estimated session duration.';
+    }
+
     if (active === 'comparison') {
       const periodTotal = (year, month, arrData, dateField) => arrData.filter(x => {
         if (!x[dateField]) return false;
@@ -1832,10 +1879,12 @@ export default function Reports() {
               <div className="rp-state">
                 {active === 'audittrail' && data.auditDenied ? (
                   <><strong>Audit trail is admin-only</strong>Your account does not have permission to view it.</>
+                ) : active === 'tenantactivity' && data.tenantActivityDenied ? (
+                  <><strong>Tenant activity is admin-only</strong>Your account does not have permission to view it.</>
                 ) : (
                   <>
-                    <strong>{tableSearch ? 'No matches' : active === 'audittrail' ? 'No activity found' : active === 'paymenthistory' ? 'No tenant selected' : active === 'assignments' && !isAdminOrAgent ? 'Not available' : 'No data for these filters'}</strong>
-                    {tableSearch ? 'Try a different search term.' : active === 'audittrail' ? 'Try a longer date range or clear a filter.' : active === 'paymenthistory' ? 'Pick a tenant above to see their payment and deposit history.' : active === 'assignments' && !isAdminOrAgent ? 'This report is only available to admin and agent accounts.' : 'Change the period or filters above to see results.'}
+                    <strong>{tableSearch ? 'No matches' : active === 'audittrail' ? 'No activity found' : active === 'tenantactivity' ? 'No tenant activity found' : active === 'paymenthistory' ? 'No tenant selected' : active === 'assignments' && !isAdminOrAgent ? 'Not available' : 'No data for these filters'}</strong>
+                    {tableSearch ? 'Try a different search term.' : active === 'audittrail' ? 'Try a longer date range or clear a filter.' : active === 'tenantactivity' ? 'No tenant has logged in to the portal yet.' : active === 'paymenthistory' ? 'Pick a tenant above to see their payment and deposit history.' : active === 'assignments' && !isAdminOrAgent ? 'This report is only available to admin and agent accounts.' : 'Change the period or filters above to see results.'}
                   </>
                 )}
               </div>

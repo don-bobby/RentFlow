@@ -2,6 +2,7 @@ const express = require('express');
 const router  = express.Router();
 const pool    = require('../database/db');
 const jwt     = require('jsonwebtoken');
+const { logTenantActivity } = require('../utils/tenantActivity');
 
 // This never re-checked the database — it just trusted the role sitting
 // inside the token. The same class of bug that backend/middleware/auth.js
@@ -143,6 +144,7 @@ router.post('/maintenance', tenantAuth, async (req, res) => {
        VALUES ($1, $2, $3, $4) RETURNING *`,
       [req.tenant.id, tenantRes.rows[0]?.house_id, issue, priority || 'medium']
     );
+    await logTenantActivity({ tenantId: req.tenant.id, action: 'maintenance_request', detail: issue.slice(0, 200) });
     res.status(201).json({ success: true, data: result.rows[0] });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });

@@ -17,6 +17,7 @@ const jwt     = require('jsonwebtoken');
 //      expires — which is exactly what every other route already does.
 //   2. A deleted user's token stops working here too, not just elsewhere.
 const { authMiddleware: auth } = require('../middleware/auth');
+const { logTenantActivity } = require('../utils/tenantActivity');
 
 // This only ever checked the JWT's own signature/role, never the database —
 // unlike tenantportal.js's tenantAuth, which was already fixed to re-check.
@@ -589,6 +590,7 @@ router.post('/conversations/:id/messages/tenant', tenantAuth, async (req, res) =
       [req.params.id, req.tenant.id, body.trim()]
     );
     await pool.query(`UPDATE conversations SET updated_at=NOW() WHERE id=$1`, [req.params.id]);
+    await logTenantActivity({ tenantId: req.tenant.id, action: 'message_sent' });
     res.json({ success: true, data: { ...result.rows[0], sender_name: tenantRes.rows[0]?.full_name } });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });

@@ -3,6 +3,7 @@ const pool    = require('../database/db');
 const bcrypt  = require('bcryptjs');
 const jwt     = require('jsonwebtoken');
 const { logAudit } = require('../utils/audit');
+const { logTenantActivity } = require('../utils/tenantActivity');
 
 // ── Middleware ────────────────────────────────────────────────────────────────
 
@@ -875,6 +876,7 @@ router.post('/tenant-reset-pin', async (req, res) => {
       process.env.JWT_SECRET,
       { expiresIn: '7d' }
     );
+    await logTenantActivity({ tenantId: tenant.id, action: 'login', detail: 'via PIN reset' });
     res.json({
       success: true,
       token,
@@ -924,6 +926,7 @@ router.post('/tenant-login', async (req, res) => {
       process.env.JWT_SECRET,
       { expiresIn: '7d' }
     );
+    await logTenantActivity({ tenantId: tenant.id, action: 'login' });
     res.json({ token, tenant: {
       id: tenant.id, full_name: tenant.full_name, phone: tenant.phone,
       unit_number: tenant.unit_number, plot_name: tenant.plot_name,
