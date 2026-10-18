@@ -52,11 +52,20 @@ function AppRoutes() {
         <Route index             element={<Dashboard />} />
         <Route path="properties" element={<Properties />} />
         <Route path="tenants"    element={<Tenants />} />
-        <Route path="payments"   element={
-          <ProtectedRoute allowedRoles={['admin', 'super_admin', 'agent', 'landlord']}>
-            <Payments />
-          </ProtectedRoute>
-        } />
+        {/* Was gated here by allowedRoles={['admin','super_admin','agent',
+            'landlord']} — a role-only guest list checked BEFORE the page
+            even tried to load data, same mistake as the old backend
+            requirePermission('payments.view') middleware we already removed.
+            An admin can grant payments.view to ANY role for a single
+            property (we proved this works for caretaker on the backend),
+            but this list had no way to know that — it only ever checked
+            the requester's role, so a caretaker with a valid per-property
+            grant was bounced back to the Dashboard before the backend ever
+            got a chance to apply it. Removed, to match how Maintenance and
+            Tenants already work: load the page for anyone logged in, and
+            let the backend's per-row permission filter (already fixed)
+            decide what they actually see. */}
+        <Route path="payments"   element={<Payments />} />
         <Route path="maintenance" element={<Maintenance />} />
         <Route path="reports"     element={
           <ProtectedRoute allowedRoles={['admin', 'super_admin', 'agent', 'landlord']}>
