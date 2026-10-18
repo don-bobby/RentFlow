@@ -255,6 +255,20 @@ router.post('/users', authMiddleware, async (req, res) => {
 });
 
 // ── GET /api/auth/users (admin sees all, landlord sees own caretakers) ────────
+//
+// HIDDEN_FOUNDER_ADMIN_EMAIL: this one specific admin account is the owner's
+// personal account. He should never show up in the "admin sees everyone"
+// list below -- not to himself, and not to any other admin who might be
+// added later -- the same way the app already keeps a logged-in non-admin
+// from seeing their own row (further down, in the caretaker/agent/landlord
+// branches, "u.id = $1" is what lets someone see themselves; this does the
+// opposite, unconditionally, for this one account only).
+//
+// This ONLY touches the admin branch. Caretakers, agents and landlords who
+// already see admins in their branch (e.g. caretakers, to message them)
+// still see this account exactly as before -- nothing changes for them.
+const HIDDEN_FOUNDER_ADMIN_EMAIL = 'cfcbobby@tutamail.com';
+
 router.get('/users', authMiddleware, async (req, res) => {
   try {
     let result;
@@ -285,7 +299,11 @@ router.get('/users', authMiddleware, async (req, res) => {
            SELECT agent_id AS user_id, STRING_AGG(name, ', ' ORDER BY name) AS plot_names
            FROM plots WHERE agent_id IS NOT NULL GROUP BY agent_id
          ) ap ON ap.user_id = u.id AND u.role = 'agent'
-         ORDER BY u.created_at DESC`
+         -- Hide the founder admin account from this admin-facing list, for
+         -- every admin viewer (including himself).
+         WHERE u.email != $1
+         ORDER BY u.created_at DESC`,
+        [HIDDEN_FOUNDER_ADMIN_EMAIL]
       );
     } else if (req.user.role === 'landlord') {
       result = await pool.query(
