@@ -67,11 +67,17 @@ function AppRoutes() {
             decide what they actually see. */}
         <Route path="payments"   element={<Payments />} />
         <Route path="maintenance" element={<Maintenance />} />
-        <Route path="reports"     element={
-          <ProtectedRoute allowedRoles={['admin', 'super_admin', 'agent', 'landlord']}>
-            <Reports />
-          </ProtectedRoute>
-        } />
+        {/* Same bug as Payments had, same fix: this was gated by
+            allowedRoles={['admin','super_admin','agent','landlord']} — no
+            'caretaker' — checked purely by role, before the page ever got
+            a chance to load. A caretaker with a per-property report
+            permission granted via an override was bounced back to the
+            Dashboard regardless. Removed, to match Payments/Tenants/
+            Maintenance: load the page for anyone logged in, and let the
+            backend (GET /auth/my-plot-permissions, already proven correct
+            by test-reports-plot-permissions.js) decide what data they
+            actually see inside it. */}
+        <Route path="reports"     element={<Reports />} />
         <Route path="expenses" element={
           <ProtectedRoute allowedRoles={['admin', 'super_admin', 'agent', 'landlord', 'caretaker']}>
             <Expenses />
