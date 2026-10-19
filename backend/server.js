@@ -19,6 +19,7 @@ app.use('/api/houses',      require('./routes/houses'));
 app.use('/api/tenants',     require('./routes/tenants'));
 app.use('/api/payments',    require('./routes/payments'));
 app.use('/api/expenses',    require('./routes/expenses'));
+app.use('/api/recurring-expenses', require('./routes/recurringexpenses'));
 app.use('/api/maintenance', require('./routes/maintenance'));
 app.use('/api/mpesa',       require('./routes/mpesa'));
 app.use('/api/sms',         require('./routes/sms').router);
@@ -40,3 +41,4 @@ const PORT = process.env.PORT || 5000;
 app.listen(PORT, '0.0.0.0', () => console.log(`🚀 Server running on port ${PORT}`));
 
 require('./jobs/balanceUpdater');
+require('./jobs/recurringExpenseGenerator');

@@ -15,10 +15,13 @@ import { useState, useEffect, useRef } from 'react';
 import API from '../services/api';
 import { useAuth } from '../context/AuthContext';
 
-const CATEGORIES = ['Repairs', 'Utilities', 'Cleaning', 'Security', 'Salaries', 'Insurance', 'Rates', 'Other'];
+const CATEGORIES = ['Repairs', 'Water', 'Electricity', 'Garbage Collection', 'Utilities', 'Cleaning', 'Security', 'Salaries', 'Insurance', 'Rates', 'Other'];
 
 const CATEGORY_STYLE = {
   Repairs:   { icon: '🔧', color: 'var(--amber, #d97706)',   bg: 'var(--amber-light, #fef3c7)' },
+  Water:      { icon: '💧', color: '#0891b2',                 bg: 'rgba(8,145,178,0.12)'        },
+  Electricity:{ icon: '⚡', color: 'var(--amber, #d97706)',   bg: 'var(--amber-light, #fef3c7)' },
+  'Garbage Collection': { icon: '🗑️', color: 'var(--green, #16a34a)', bg: 'var(--green-light, #dcfce7)' },
   Utilities: { icon: '💡', color: 'var(--blue, #2563eb)',    bg: 'var(--blue-light, #dbeafe)'  },
   Cleaning:  { icon: '🧹', color: 'var(--green, #16a34a)',   bg: 'var(--green-light, #dcfce7)' },
   Security:  { icon: '🛡️', color: 'var(--red, #dc2626)',     bg: 'var(--red-light, #fee2e2)'   },
@@ -94,14 +97,28 @@ export default function Expenses() {
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState(null);
 
+  // Recurring expense templates (garbage collection, water, electricity,
+  // etc.) — a daily backend job turns each active one into a real expense
+  // row once a month. This is just template CRUD; the generated expenses
+  // themselves show up in the regular table above with a 🔁 badge.
+  const [recurring, setRecurring]           = useState([]);
+  const [showRecurring, setShowRecurring]   = useState(false);
+  const [showRecForm, setShowRecForm]       = useState(false);
+  const [editingRec, setEditingRec]         = useState(null);
+  const blankRecForm = { plot_id: '', house_id: '', category: CATEGORIES[0], description: '', amount: '', day_of_month: 1 };
+  const [recForm, setRecForm]               = useState(blankRecForm);
+  const [recSaving, setRecSaving]           = useState(false);
+  const [recError, setRecError]             = useState(null);
+
   useEffect(() => {
     (async () => {
       try {
         const canEditSomething = can('expenses.add') || can('expenses.edit');
-        const requests = [API.get('/expenses')];
+        const requests = [API.get('/expenses'), API.get('/recurring-expenses')];
         if (canEditSomething) { requests.push(API.get('/plots')); requests.push(API.get('/houses')); }
-        const [er, pr, hr] = await Promise.all(requests);
+        const [er, rr, pr, hr] = await Promise.all(requests);
         setExpenses(er.data.data || []);
+        setRecurring(rr.data.data || []);
         setPlots(pr ? (Array.isArray(pr.data) ? pr.data : pr.data.data || []) : []);
         setHouses(hr ? (Array.isArray(hr.data) ? hr.data : hr.data.data || []) : []);
       } catch (e) {
@@ -189,6 +206,76 @@ export default function Expenses() {
     }
   }
 
+  function openAddRecurring() {
+    setEditingRec(null);
+    setRecForm(blankRecForm);
+    setRecError(null);
+    setShowRecForm(true);
+  }
+
+  function openEditRecurring(tmpl) {
+    setEditingRec(tmpl);
+    setRecForm({
+      plot_id: tmpl.plot_id || '',
+      house_id: tmpl.house_id || '',
+      category: tmpl.category || CATEGORIES[0],
+      description: tmpl.description || '',
+      amount: tmpl.amount ?? '',
+      day_of_month: tmpl.day_of_month || 1,
+    });
+    setRecError(null);
+    setShowRecForm(true);
+  }
+
+  async function handleSaveRecurring(e) {
+    e.preventDefault();
+    if (!recForm.plot_id || !recForm.amount) {
+      setRecError('Property and amount are required.');
+      return;
+    }
+    setRecSaving(true);
+    setRecError(null);
+    const payload = {
+      ...recForm,
+      house_id: recForm.house_id === '' ? null : recForm.house_id,
+      amount: parseFloat(recForm.amount),
+      day_of_month: parseInt(recForm.day_of_month, 10) || 1,
+    };
+    try {
+      if (editingRec) {
+        const res = await API.put(`/recurring-expenses/${editingRec.id}`, payload);
+        setRecurring(list => list.map(x => x.id === editingRec.id ? res.data.data : x));
+      } else {
+        const res = await API.post('/recurring-expenses', payload);
+        setRecurring(list => [res.data.data, ...list]);
+      }
+      setShowRecForm(false);
+    } catch (e) {
+      setRecError(e.response?.data?.error || 'Failed to save recurring expense.');
+    } finally {
+      setRecSaving(false);
+    }
+  }
+
+  async function handleToggleRecurring(tmpl) {
+    try {
+      const res = await API.patch(`/recurring-expenses/${tmpl.id}/toggle`);
+      setRecurring(list => list.map(x => x.id === tmpl.id ? res.data.data : x));
+    } catch (e) {
+      alert(e.response?.data?.error || 'Failed to update recurring expense.');
+    }
+  }
+
+  async function handleDeleteRecurring(tmpl) {
+    if (!window.confirm(`Stop the recurring ${tmpl.category} of KES ${Number(tmpl.amount).toLocaleString()}/month? Expenses it already generated are kept.`)) return;
+    try {
+      await API.delete(`/recurring-expenses/${tmpl.id}`);
+      setRecurring(list => list.filter(x => x.id !== tmpl.id));
+    } catch (e) {
+      alert(e.response?.data?.error || 'Failed to delete recurring expense.');
+    }
+  }
+
   const total = expenses.reduce((sum, e) => sum + parseFloat(e.amount || 0), 0);
   const filtered = categoryFilter === 'all' ? expenses : expenses.filter(e => e.category === categoryFilter);
   const filteredTotal = filtered.reduce((sum, e) => sum + parseFloat(e.amount || 0), 0);
@@ -212,11 +299,18 @@ export default function Expenses() {
             {expenses.length} record{expenses.length !== 1 ? 's' : ''} · KES {total.toLocaleString()} total
           </p>
         </div>
-        {can('expenses.add') && (
-          <button onClick={openAdd} style={{ padding: '10px 18px', borderRadius: 10, border: 'none', background: 'var(--primary)', color: '#fff', fontWeight: 700, fontSize: 13, cursor: 'pointer' }}>
-            + Add Expense
-          </button>
-        )}
+        <div style={{ display: 'flex', gap: 10 }}>
+          {(can('expenses.add') || can('expenses.edit')) && (
+            <button onClick={() => setShowRecurring(true)} style={{ padding: '10px 18px', borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontWeight: 700, fontSize: 13, cursor: 'pointer' }}>
+              🔁 Recurring{recurring.filter(r => r.is_active).length > 0 ? ` (${recurring.filter(r => r.is_active).length})` : ''}
+            </button>
+          )}
+          {can('expenses.add') && (
+            <button onClick={openAdd} style={{ padding: '10px 18px', borderRadius: 10, border: 'none', background: 'var(--primary)', color: '#fff', fontWeight: 700, fontSize: 13, cursor: 'pointer' }}>
+              + Add Expense
+            </button>
+          )}
+        </div>
       </div>
 
       {!loading && categoriesPresent.length > 1 && (
@@ -280,7 +374,12 @@ export default function Expenses() {
                       </span>
                     ) : '—'}
                   </td>
-                  <td style={{ padding: '10px 14px', color: 'var(--muted)' }}>{exp.description || '—'}</td>
+                  <td style={{ padding: '10px 14px', color: 'var(--muted)' }}>
+                    {exp.description || '—'}
+                    {exp.recurring_expense_id && (
+                      <span title="Generated from a recurring template" style={{ marginLeft: 6, fontSize: 11, color: 'var(--primary, #7c3aed)' }}>🔁</span>
+                    )}
+                  </td>
                   <td style={{ padding: '10px 14px', textAlign: 'right', fontWeight: 700, color: 'var(--text)' }}>KES {Number(exp.amount).toLocaleString()}</td>
                   <td style={{ padding: '10px 14px' }}>
                     {exp.status === 'pending' ? (
@@ -364,6 +463,138 @@ export default function Expenses() {
               <button type="button" onClick={() => setShowForm(false)} style={{ padding: '9px 18px', borderRadius: 8, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text)', fontWeight: 600, cursor: 'pointer' }}>Cancel</button>
               <button type="submit" disabled={saving} style={{ padding: '9px 18px', borderRadius: 8, border: 'none', background: 'var(--primary)', color: '#fff', fontWeight: 700, cursor: saving ? 'default' : 'pointer', opacity: saving ? 0.7 : 1 }}>
                 {saving ? 'Saving…' : 'Save'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {/* Recurring Expenses panel — lists every template (active + paused) */}
+      {showRecurring && (
+        <div onClick={() => setShowRecurring(false)} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 400 }}>
+          <div onClick={e => e.stopPropagation()} style={{ background: 'var(--surface)', borderRadius: 14, padding: 24, width: 640, maxWidth: '92vw', maxHeight: '82vh', display: 'flex', flexDirection: 'column' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+              <h3 style={{ margin: 0 }}>Recurring Expenses</h3>
+              {can('expenses.add') && (
+                <button onClick={openAddRecurring} style={{ padding: '8px 14px', borderRadius: 8, border: 'none', background: 'var(--primary)', color: '#fff', fontWeight: 700, fontSize: 12, cursor: 'pointer' }}>
+                  + Add Recurring
+                </button>
+              )}
+            </div>
+            <p style={{ color: 'var(--muted)', fontSize: 12, margin: '0 0 14px' }}>
+              Bills like garbage collection, water, or electricity that repeat every month — a background job creates each month's expense automatically on its due day.
+            </p>
+
+            <div style={{ overflowY: 'auto', flex: 1 }}>
+              {recurring.length === 0 ? (
+                <div style={{ padding: 30, textAlign: 'center', color: 'var(--muted)', border: '1px dashed var(--border)', borderRadius: 10 }}>
+                  No recurring expenses set up yet.
+                </div>
+              ) : (
+                <div style={{ border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden' }}>
+                  {recurring.map((tmpl, i) => {
+                    const cat = CATEGORY_STYLE[tmpl.category] || CATEGORY_STYLE.Other;
+                    return (
+                      <div key={tmpl.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 14px', borderTop: i === 0 ? 'none' : '1px solid var(--border)', opacity: tmpl.is_active ? 1 : 0.55 }}>
+                        <span style={{ fontSize: 18 }}>{cat.icon}</span>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontWeight: 700, fontSize: 13, color: 'var(--text)' }}>
+                            {tmpl.category} — KES {Number(tmpl.amount).toLocaleString()}/mo
+                          </div>
+                          <div style={{ fontSize: 12, color: 'var(--muted)' }}>
+                            {tmpl.plot_name || 'General'}{tmpl.unit_number ? ` · Unit ${tmpl.unit_number}` : ' · Whole property'} · Day {tmpl.day_of_month} of each month
+                          </div>
+                        </div>
+                        <span style={{
+                          fontSize: 11, fontWeight: 700, padding: '3px 9px', borderRadius: 99,
+                          background: tmpl.is_active ? 'var(--green-light, #dcfce7)' : 'var(--surface2)',
+                          color: tmpl.is_active ? 'var(--green, #16a34a)' : 'var(--muted)',
+                        }}>
+                          {tmpl.is_active ? 'Active' : 'Paused'}
+                        </span>
+                        {can('expenses.edit') && (
+                          <>
+                            <button onClick={() => handleToggleRecurring(tmpl)} style={{ padding: '5px 10px', borderRadius: 7, border: '1px solid var(--border)', background: 'var(--surface)', fontSize: 11, fontWeight: 600, color: 'var(--text)', cursor: 'pointer' }}>
+                              {tmpl.is_active ? 'Pause' : 'Resume'}
+                            </button>
+                            <button onClick={() => openEditRecurring(tmpl)} style={{ padding: '5px 10px', borderRadius: 7, border: '1px solid var(--border)', background: 'var(--surface)', fontSize: 11, fontWeight: 600, color: 'var(--primary, #7c3aed)', cursor: 'pointer' }}>
+                              Edit
+                            </button>
+                          </>
+                        )}
+                        {can('expenses.delete') && (
+                          <button onClick={() => handleDeleteRecurring(tmpl)} style={{ padding: '5px 10px', borderRadius: 7, border: '1px solid var(--border)', background: 'var(--surface)', fontSize: 11, fontWeight: 700, color: 'var(--red, #dc2626)', cursor: 'pointer' }}>
+                            Delete
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 16 }}>
+              <button onClick={() => setShowRecurring(false)} style={{ padding: '9px 18px', borderRadius: 8, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text)', fontWeight: 600, cursor: 'pointer' }}>Close</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Add / Edit Recurring Expense form */}
+      {showRecForm && (
+        <div onClick={() => setShowRecForm(false)} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 450 }}>
+          <form onClick={e => e.stopPropagation()} onSubmit={handleSaveRecurring} style={{ background: 'var(--surface)', borderRadius: 14, padding: 28, width: 420, maxWidth: '90vw' }}>
+            <h3 style={{ marginTop: 0 }}>{editingRec ? 'Edit Recurring Expense' : 'Add Recurring Expense'}</h3>
+            {recError && <div style={{ padding: '8px 12px', borderRadius: 8, background: 'var(--red-light, #fee2e2)', color: 'var(--red, #dc2626)', fontSize: 13, marginBottom: 14 }}>{recError}</div>}
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginBottom: 14 }}>
+              <div>
+                <label style={labelStyle}>Property</label>
+                <select value={recForm.plot_id} onChange={e => setRecForm(f => ({ ...f, plot_id: e.target.value, house_id: '' }))} style={inputStyle}>
+                  <option value="">— Select property —</option>
+                  {plots.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                </select>
+              </div>
+              <div>
+                <label style={labelStyle}>Unit <span style={{ textTransform: 'none', fontWeight: 400 }}>— optional</span></label>
+                <select value={recForm.house_id} onChange={e => setRecForm(f => ({ ...f, house_id: e.target.value }))} style={inputStyle} disabled={!recForm.plot_id}>
+                  <option value="">— Whole property —</option>
+                  {houses.filter(h => String(h.plot_id) === String(recForm.plot_id)).map(h => (
+                    <option key={h.id} value={h.id}>Unit {h.unit_number}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginBottom: 14 }}>
+              <div>
+                <label style={labelStyle}>Category</label>
+                <select value={recForm.category} onChange={e => setRecForm(f => ({ ...f, category: e.target.value }))} style={inputStyle}>
+                  {CATEGORIES.map(c => <option key={c}>{c}</option>)}
+                </select>
+              </div>
+              <div>
+                <label style={labelStyle}>Amount (KES/month)</label>
+                <input type="number" min="0" step="0.01" value={recForm.amount} onChange={e => setRecForm(f => ({ ...f, amount: e.target.value }))} style={inputStyle} />
+              </div>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginBottom: 14 }}>
+              <div>
+                <label style={labelStyle}>Description <span style={{ textTransform: 'none', fontWeight: 400 }}>— optional</span></label>
+                <input value={recForm.description} onChange={e => setRecForm(f => ({ ...f, description: e.target.value }))} style={inputStyle} placeholder="e.g. County garbage levy" />
+              </div>
+              <div>
+                <label style={labelStyle}>Day of month</label>
+                <input type="number" min="1" max="28" value={recForm.day_of_month} onChange={e => setRecForm(f => ({ ...f, day_of_month: e.target.value }))} style={inputStyle} />
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
+              <button type="button" onClick={() => setShowRecForm(false)} style={{ padding: '9px 18px', borderRadius: 8, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text)', fontWeight: 600, cursor: 'pointer' }}>Cancel</button>
+              <button type="submit" disabled={recSaving} style={{ padding: '9px 18px', borderRadius: 8, border: 'none', background: 'var(--primary)', color: '#fff', fontWeight: 700, cursor: recSaving ? 'default' : 'pointer', opacity: recSaving ? 0.7 : 1 }}>
+                {recSaving ? 'Saving…' : 'Save'}
               </button>
             </div>
           </form>
