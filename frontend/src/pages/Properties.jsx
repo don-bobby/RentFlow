@@ -79,6 +79,8 @@ export default function Properties() {
   const [plots,     setPlots]     = useState([]);
   const [houses,    setHouses]    = useState([]);
   const [tenants,   setTenants]   = useState([]); // for showing occupant name/phone/balance on occupied unit cards
+  const [payments,  setPayments]  = useState([]); // for each property's "This Month" revenue stat
+  const [maintenanceRequests, setMaintenanceRequests] = useState([]); // for "Maintenance pending" + caretaker workload
   const [landlords, setLandlords] = useState([]);
   const [caretakers, setCaretakers] = useState([]);
   const [agents,     setAgents]     = useState([]);
@@ -172,6 +174,20 @@ export default function Properties() {
       const tr = await API.get('/tenants');
       setTenants(Array.isArray(tr.data) ? tr.data : (tr.data.data || []));
     } catch (e) { setTenants([]); }
+
+    // Payments and maintenance requests — same reasoning, each gated by its
+    // own permission (payments.view / maintenance.view) that a caretaker or
+    // a narrowly-scoped agent might not have; missing either just means the
+    // corresponding header stat doesn't show for that property, not a page
+    // failure.
+    try {
+      const prr = await API.get('/payments');
+      setPayments(Array.isArray(prr.data) ? prr.data : (prr.data.data || []));
+    } catch (e) { setPayments([]); }
+    try {
+      const mrr = await API.get('/maintenance');
+      setMaintenanceRequests(Array.isArray(mrr.data) ? mrr.data : (mrr.data.data || []));
+    } catch (e) { setMaintenanceRequests([]); }
   }
 
   // Intentionally run once on mount only — `load` is a plain function
@@ -353,6 +369,61 @@ export default function Properties() {
     if (plot.agent_id == null) return undefined;
     return agents.find(a => String(a.id) === String(plot.agent_id))
         || (plot.agent_name ? { id: plot.agent_id, name: plot.agent_name } : undefined);
+  };
+
+  // Unpaid rent total for a property — sum of every active tenant's balance
+  // across its units, same `tenant.balance` figure already shown per-unit
+  // (clamped at 0 so a credit/overpaid tenant doesn't net against someone
+  // else's arrears and understate the total).
+  const plotUnpaidRent = (plotId) => {
+    const houseIds = new Set(allPlotHouses(plotId).map(h => h.id));
+    return tenants
+      .filter(t => houseIds.has(t.house_id) && t.is_active !== false)
+      .reduce((sum, t) => sum + Math.max(0, parseFloat(t.balance || 0)), 0);
+  };
+
+  // This month's collected revenue for a property — same "valid payment"
+  // definition (excludes failed/pending) and same-month filter Dashboard.jsx
+  // uses for its own Revenue (Month) tile, just scoped to one plot_id
+  // (payments already carries plot_id directly from GET /payments' join).
+  const plotMonthRevenue = (plotId) => {
+    const now = new Date();
+    return payments
+      .filter(p => String(p.plot_id) === String(plotId))
+      .filter(p => p.status !== 'failed' && p.status !== 'pending')
+      .filter(p => {
+        const d = new Date(p.payment_date);
+        return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
+      })
+      .reduce((sum, p) => sum + parseFloat(p.amount || 0), 0);
+  };
+
+  // Maintenance requests currently pending on this property specifically —
+  // same 'pending' status Dashboard.jsx's own pendingRequests stat counts.
+  const plotPendingMaintenance = (plotId) =>
+    maintenanceRequests.filter(m => String(m.plot_id) === String(plotId) && m.status === 'pending').length;
+
+  // Caretaker workload — not this property's own count, but how many open
+  // requests (pending + in_progress) this property's caretaker(s) are
+  // carrying across EVERY property they're assigned to, so you can tell
+  // "lightly loaded" from "already stretched thin" before handing them one
+  // more thing. Caretakers can be matched by id or, for the plot.caretaker_name
+  // fallback case, by name only — plotCaretakers() already resolves that
+  // per-plot, this just reuses it against every OTHER plot too.
+  const caretakerWorkload = (plot) => {
+    const cts = plotCaretakers(plot);
+    if (cts.length === 0) return null;
+    const theirPlotIds = new Set();
+    for (const other of plots) {
+      const otherCts = plotCaretakers(other);
+      const overlaps = otherCts.some(oc => cts.some(c =>
+        (c.id != null && String(c.id) === String(oc.id)) || (c.id == null && oc.id == null && c.name === oc.name)
+      ));
+      if (overlaps) theirPlotIds.add(other.id);
+    }
+    return maintenanceRequests.filter(m =>
+      theirPlotIds.has(m.plot_id) && (m.status === 'pending' || m.status === 'in_progress')
+    ).length;
   };
 
   // Owners that actually have plots (works for any role, since each plot
@@ -623,6 +694,39 @@ export default function Properties() {
                   })()}
                 </div>
               </div>
+
+              {/* Secondary stat strip — unpaid rent, this month's collected
+                  revenue, open maintenance requests, and (inline on the
+                  caretaker's own row above) their total workload. Each pill
+                  only renders once its underlying data actually loaded
+                  (payments/maintenanceRequests can be empty for a role
+                  that lacks that permission), so a gap in access just
+                  means one fewer pill, not a broken-looking "KES 0". */}
+              {(() => {
+                const unpaid = plotUnpaidRent(plot.id);
+                const monthRev = plotMonthRevenue(plot.id);
+                const pendingM = plotPendingMaintenance(plot.id);
+                const workload = caretakerWorkload(plot);
+                const pill = (label, value, tone) => (
+                  <span style={{
+                    display: 'inline-flex', alignItems: 'center', gap: 6, padding: '5px 12px', borderRadius: 99,
+                    fontSize: 12, fontWeight: 600,
+                    background: tone === 'red' ? 'var(--red-light, #fee2e2)' : tone === 'green' ? 'var(--green-light, #dcfce7)' : tone === 'amber' ? 'var(--amber-light, #fef3c7)' : 'var(--blue-light, #dbeafe)',
+                    color: tone === 'red' ? 'var(--red, #dc2626)' : tone === 'green' ? 'var(--green, #16a34a)' : tone === 'amber' ? 'var(--amber, #d97706)' : 'var(--blue, #2563eb)',
+                  }}>
+                    <span style={{ opacity: 0.75, fontWeight: 700, textTransform: 'uppercase', fontSize: 10, letterSpacing: '0.4px' }}>{label}</span>
+                    {value}
+                  </span>
+                );
+                return (
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, padding: '12px 24px', background: 'var(--surface2, #f1f5f9)', borderBottom: '1px solid var(--border, #cbd5e1)' }}>
+                    {payments.length > 0 && pill('Unpaid Rent', `KES ${unpaid.toLocaleString()}`, unpaid > 0 ? 'red' : 'green')}
+                    {payments.length > 0 && pill('This Month', `KES ${monthRev.toLocaleString()}`, 'blue')}
+                    {maintenanceRequests.length > 0 && pill('Maintenance', pendingM > 0 ? `${pendingM} pending` : 'none pending', pendingM > 0 ? 'amber' : 'green')}
+                    {workload != null && maintenanceRequests.length > 0 && pill('Caretaker Load', `${workload} open`, workload > 5 ? 'amber' : 'green')}
+                  </div>
+                );
+              })()}
 
               {/* Units grid — collapsed by default; clicking the chevron
                   toggles this per property, independent of every other one. */}
