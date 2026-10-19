@@ -233,6 +233,24 @@ export default function Tenants() {
     ? allHouses.filter(h => h.status === 'vacant' || h.id === editing?.house_id)
     : addableHouses;
 
+  // Grouped by plot so the dropdown reads as "Wa Chege Building > Unit B1"
+  // instead of a flat, unlabeled list of units from every property mixed
+  // together — the only way to tell which property a unit belongs to
+  // before this was to already know the unit numbering scheme by heart.
+  const unitOptionsByPlot = (() => {
+    const groups = {};
+    for (const h of unitOptions) {
+      const plotName = h.plot_name || 'No Property';
+      (groups[plotName] ||= []).push(h);
+    }
+    return Object.entries(groups)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([plotName, list]) => [
+        plotName,
+        [...list].sort((a, b) => (a.unit_number || '').localeCompare(b.unit_number || '', undefined, { numeric: true })),
+      ]);
+  })();
+
   // Required deposit for whichever unit is currently selected in the form —
   // shown as a hint next to "Deposit Paid" so a short deposit is caught at
   // entry time, instead of silently disappearing into a field with no
@@ -489,10 +507,14 @@ export default function Tenants() {
                 <label style={labelStyle}>Assign Unit</label>
                 <select value={form.house_id} onChange={e => setForm(f=>({...f,house_id:e.target.value}))} style={inputStyle}>
                   <option value="">— Select unit —</option>
-                  {unitOptions.map(h => (
-                    <option key={h.id} value={h.id}>
-                      Unit {h.unit_number} — KES {parseFloat(h.rent_amount).toLocaleString()} {h.id === editing?.house_id ? '(current)' : ''}
-                    </option>
+                  {unitOptionsByPlot.map(([plotName, list]) => (
+                    <optgroup key={plotName} label={plotName}>
+                      {list.map(h => (
+                        <option key={h.id} value={h.id}>
+                          Unit {h.unit_number} — KES {parseFloat(h.rent_amount).toLocaleString()} {h.id === editing?.house_id ? '(current)' : ''}
+                        </option>
+                      ))}
+                    </optgroup>
                   ))}
                 </select>
               </div>
