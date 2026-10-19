@@ -152,6 +152,16 @@ export default function Maintenance() {
   const [filter,   setFilter]   = useState('all');
   const [form,     setForm]     = useState({ tenant_id: '', issue: '', priority: 'medium' });
 
+  // Cost-entry modal shown when closing out a request for someone who can
+  // actually attach a cost (expenses.add) — this is what turns "mark done"
+  // into a linked expense instead of just a status change. `costModal`
+  // holds the request being closed, or null when the modal is shut.
+  const [costModal, setCostModal] = useState(null);
+  const [costForm, setCostForm] = useState({ amount: '', category: 'Repairs', description: '' });
+  const [costSaving, setCostSaving] = useState(false);
+  const [costError, setCostError] = useState('');
+  const COST_CATEGORIES = ['Repairs', 'Cleaning', 'Security', 'Other'];
+
   // Previously this page fetched GET /auth/me itself and built its own
   // can() from the flat permissions list — which meant it never saw
   // per-property overrides at all, not even global ones (AuthContext,
@@ -219,6 +229,47 @@ export default function Maintenance() {
       console.error(e);
       setActionError(e.response?.data?.error || e.response?.data?.message || e.message || 'Could not update the request.');
     } finally { setBusyId(null); }
+  }
+
+  // Opens the cost modal for someone who can attach a cost; everyone else
+  // just completes the request the old way, with no cost step at all.
+  function startComplete(r) {
+    if (can('expenses.add', r.plot_id)) {
+      setCostForm({ amount: '', category: 'Repairs', description: '' });
+      setCostError('');
+      setCostModal(r);
+    } else {
+      updateStatus(r.id, 'completed');
+    }
+  }
+
+  // Marks the request done AND attaches the entered cost in the same
+  // request — backend creates the linked expense (pending if a caretaker
+  // did this, confirmed immediately otherwise) and returns it alongside
+  // the updated request.
+  async function completeWithCost(skipCost) {
+    const r = costModal;
+    if (!skipCost && !costForm.amount) {
+      setCostError('Enter an amount, or choose "Skip — just mark done".');
+      return;
+    }
+    setCostSaving(true); setCostError('');
+    try {
+      const payload = { status: 'completed' };
+      if (!skipCost) {
+        payload.cost = {
+          amount: parseFloat(costForm.amount),
+          category: costForm.category,
+          description: costForm.description || undefined,
+        };
+      }
+      const res = await API.patch(`/maintenance/${r.id}`, payload);
+      const updated = res.data?.data;
+      setRequests(rs => rs.map(x => x.id === r.id ? { ...x, ...(updated || { status: 'completed' }) } : x));
+      setCostModal(null);
+    } catch (e) {
+      setCostError(e.response?.data?.error || e.response?.data?.message || e.message || 'Could not complete the request.');
+    } finally { setCostSaving(false); }
   }
 
   const count = (s) => requests.filter(r => r.status === s).length;
@@ -314,7 +365,7 @@ export default function Maintenance() {
                         <span aria-hidden="true">▶</span> Start work
                       </button>
                     )}
-                    <button type="button" className="mt-act mt-act-done" disabled={busy} onClick={() => updateStatus(r.id, 'completed')}>
+                    <button type="button" className="mt-act mt-act-done" disabled={busy} onClick={() => startComplete(r)}>
                       <span aria-hidden="true">✓</span> Mark done
                     </button>
                   </div>
@@ -361,6 +412,56 @@ export default function Maintenance() {
               <button type="button" className="mt-btn" onClick={() => setModal(false)}>Cancel</button>
               <button type="button" className="mt-btn mt-btn-primary" onClick={handleSave} disabled={saving}>
                 {saving ? 'Submitting…' : 'Submit request'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Cost-entry modal, shown on "Mark done" only for someone who can
+          attach a cost (expenses.add for this request's property). Marking
+          complete without a cost is always one click away via "Skip", so
+          this never blocks closing out a request — it's purely optional. */}
+      {costModal && (
+        <div className="mt-overlay" onClick={() => !costSaving && setCostModal(null)}>
+          <div className="mt-modal" role="dialog" aria-modal="true" aria-labelledby="mt-cost-title" onClick={e => e.stopPropagation()}>
+            <h2 id="mt-cost-title">Mark as done</h2>
+            <p style={{ margin: '-4px 0 14px', color: 'var(--mt-muted)', fontSize: 13 }}>
+              Attach what this repair cost — it'll be logged as an expense{' '}
+              {costModal.tenant_name || costModal.unit_number ? 'for ' : ''}
+              {costModal.unit_number ? `Unit ${costModal.unit_number}` : ''}.
+            </p>
+            {costError && <div className="mt-error">{costError}</div>}
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+                <div>
+                  <label className="mt-label" htmlFor="mt-cost-amount">Cost (KES)</label>
+                  <input id="mt-cost-amount" className="mt-input" type="number" min="0" step="0.01"
+                    value={costForm.amount} onChange={e => setCostForm(f => ({ ...f, amount: e.target.value }))}
+                    placeholder="e.g. 2500" />
+                </div>
+                <div>
+                  <label className="mt-label" htmlFor="mt-cost-category">Category</label>
+                  <select id="mt-cost-category" className="mt-input" value={costForm.category} onChange={e => setCostForm(f => ({ ...f, category: e.target.value }))}>
+                    {COST_CATEGORIES.map(c => <option key={c}>{c}</option>)}
+                  </select>
+                </div>
+              </div>
+              <div>
+                <label className="mt-label" htmlFor="mt-cost-desc">Note <span style={{ fontWeight: 400, textTransform: 'none' }}>— optional</span></label>
+                <input id="mt-cost-desc" className="mt-input" value={costForm.description}
+                  onChange={e => setCostForm(f => ({ ...f, description: e.target.value }))}
+                  placeholder={costModal.issue ? `Default: "Maintenance: ${costModal.issue}"` : ''} />
+              </div>
+            </div>
+
+            <div className="mt-modal-actions">
+              <button type="button" className="mt-btn" disabled={costSaving} onClick={() => completeWithCost(true)}>
+                Skip — just mark done
+              </button>
+              <button type="button" className="mt-btn mt-btn-primary" disabled={costSaving} onClick={() => completeWithCost(false)}>
+                {costSaving ? 'Saving…' : 'Mark done + log cost'}
               </button>
             </div>
           </div>

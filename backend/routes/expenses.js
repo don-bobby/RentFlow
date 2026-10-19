@@ -4,6 +4,7 @@ const pool    = require('../database/db');
 const { getVisiblePlotIds } = require('../middleware/scope');
 const { authMiddleware: staffAuth } = require('../middleware/auth');
 const { requirePermission, getPermissions, filterRowsByPermission } = require('../middleware/permissions');
+const { logAudit } = require('../utils/audit');
 
 
 // GET all expenses — admin/super_admin see all, agent sees their landlords',
@@ -24,9 +25,15 @@ router.get('/', staffAuth, async (req, res) => {
     if (visible !== 'ALL' && visible.length === 0) return res.json({ success: true, data: [] });
 
     const query = `
-      SELECT e.*, p.name AS plot_name
+      SELECT e.*, p.name AS plot_name, h.unit_number,
+             creator.name AS created_by_name, confirmer.name AS confirmed_by_name,
+             m.issue AS maintenance_issue
       FROM expenses e
-      LEFT JOIN plots p ON e.plot_id = p.id
+      LEFT JOIN plots   p ON e.plot_id = p.id
+      LEFT JOIN houses  h ON e.house_id = h.id
+      LEFT JOIN users   creator   ON e.created_by  = creator.id
+      LEFT JOIN users   confirmer ON e.confirmed_by = confirmer.id
+      LEFT JOIN maintenance_requests m ON e.maintenance_request_id = m.id
       ${visible === 'ALL' ? '' : 'WHERE e.plot_id = ANY($1)'}
       ORDER BY e.expense_date DESC
     `;
@@ -73,13 +80,22 @@ router.get('/:id', staffAuth, async (req, res) => {
 // crashed the request instead of returning a clean 500 — folded into the
 // same try/catch as everything else.
 router.post('/', staffAuth, async (req, res) => {
-  const { plot_id, category, description, amount, expense_date, receipt_url } = req.body;
+  let { plot_id, house_id, category, description, amount, expense_date, receipt_url, maintenance_request_id } = req.body;
 
   if (!amount || !expense_date) {
     return res.status(400).json({ error: 'amount and expense_date are required.' });
   }
 
   try {
+    // A caller that knows the unit (house_id) but not the property — the
+    // maintenance-closeout flow in maintenance.js is the main case — can
+    // leave plot_id out and have it resolved from the house instead of
+    // having to look it up itself first.
+    if (!plot_id && house_id) {
+      const h = await pool.query('SELECT plot_id FROM houses WHERE id = $1', [house_id]);
+      plot_id = h.rows[0]?.plot_id ?? null;
+    }
+
     const plotIdNum = plot_id != null ? Number(plot_id) : null;
     const { permissions } = await getPermissions(req.user, plotIdNum);
     if (!permissions.includes('*') && !permissions.includes('expenses.add')) {
@@ -94,10 +110,19 @@ router.post('/', staffAuth, async (req, res) => {
       }
     }
 
+    // Caretaker-entered costs land as 'pending' until a landlord, admin or
+    // agent confirms them (expenses.edit) — everyone else's entries are
+    // trusted immediately, same as before this column existed. This is the
+    // one place status is decided on create; nothing else sets it.
+    const isCaretaker = req.user.role === 'caretaker';
+    const status = isCaretaker ? 'pending' : 'confirmed';
+    const confirmedBy = isCaretaker ? null : req.user.id;
+    const confirmedAt = isCaretaker ? null : new Date();
+
     const result = await pool.query(
-      `INSERT INTO expenses (plot_id, category, description, amount, expense_date, receipt_url)
-       VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
-      [plot_id || null, category || null, description || null, amount, expense_date, receipt_url || null]
+      `INSERT INTO expenses (plot_id, house_id, category, description, amount, expense_date, receipt_url, maintenance_request_id, status, created_by, confirmed_by, confirmed_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING *`,
+      [plot_id || null, house_id || null, category || null, description || null, amount, expense_date, receipt_url || null, maintenance_request_id || null, status, req.user.id, confirmedBy, confirmedAt]
     );
     res.status(201).json({ success: true, data: result.rows[0] });
   } catch (err) { res.status(500).json({ error: err.message }); }
@@ -114,7 +139,7 @@ router.post('/', staffAuth, async (req, res) => {
 // check had no plot to check against for an admin request — now fetched
 // unconditionally so the permission check always has it.
 router.put('/:id', staffAuth, async (req, res) => {
-  const { plot_id, category, description, amount, expense_date, receipt_url } = req.body;
+  const { plot_id, house_id, category, description, amount, expense_date, receipt_url } = req.body;
   try {
     const existing = await pool.query('SELECT plot_id FROM expenses WHERE id = $1', [req.params.id]);
     if (existing.rows.length === 0) return res.status(404).json({ error: 'Expense not found' });
@@ -144,11 +169,59 @@ router.put('/:id', staffAuth, async (req, res) => {
     }
 
     const result = await pool.query(
-      `UPDATE expenses SET plot_id=$1, category=$2, description=$3, amount=$4, expense_date=$5, receipt_url=$6
-       WHERE id=$7 RETURNING *`,
-      [plot_id || null, category || null, description || null, amount, expense_date, receipt_url || null, req.params.id]
+      `UPDATE expenses SET plot_id=$1, house_id=$2, category=$3, description=$4, amount=$5, expense_date=$6, receipt_url=$7
+       WHERE id=$8 RETURNING *`,
+      [plot_id || null, house_id || null, category || null, description || null, amount, expense_date, receipt_url || null, req.params.id]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'Expense not found' });
+    res.json({ success: true, data: result.rows[0] });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// PATCH /api/expenses/:id/confirm — moves a 'pending' (caretaker-entered)
+// expense to 'confirmed'. Gated on expenses.edit, same permission and
+// scope check as PUT above — this IS an edit, just a specific one — so an
+// agent can confirm costs for the landlords assigned to them, a
+// self-managed landlord can confirm their own, and admin can confirm
+// anything, with no new permission to seed or toggle. Also accepts the
+// same editable fields as PUT, so the confirmer can correct a caretaker's
+// entry (wrong amount/category) in the same action instead of editing
+// first and confirming second.
+router.patch('/:id/confirm', staffAuth, async (req, res) => {
+  const { amount, category, description, expense_date } = req.body;
+  try {
+    const existing = await pool.query('SELECT * FROM expenses WHERE id = $1', [req.params.id]);
+    if (existing.rows.length === 0) return res.status(404).json({ error: 'Expense not found' });
+    const expense = existing.rows[0];
+
+    if (expense.status === 'confirmed') {
+      return res.status(400).json({ error: 'This expense is already confirmed.' });
+    }
+
+    const { permissions } = await getPermissions(req.user, expense.plot_id);
+    if (!permissions.includes('*') && !permissions.includes('expenses.edit')) {
+      return res.status(403).json({ error: 'Missing permission: expenses.edit' });
+    }
+
+    if (!['admin', 'super_admin'].includes(req.user.role)) {
+      const visible = await getVisiblePlotIds(req.user);
+      if (!(visible === 'ALL' || (expense.plot_id != null && visible.includes(expense.plot_id)))) {
+        return res.status(403).json({ error: 'Access denied' });
+      }
+    }
+
+    const result = await pool.query(
+      `UPDATE expenses
+       SET status = 'confirmed', confirmed_by = $1, confirmed_at = NOW(),
+           amount = COALESCE($2, amount), category = COALESCE($3, category),
+           description = COALESCE($4, description), expense_date = COALESCE($5, expense_date)
+       WHERE id = $6 RETURNING *`,
+      [req.user.id, amount ?? null, category ?? null, description ?? null, expense_date ?? null, req.params.id]
+    );
+    await logAudit({
+      user: req.user, action: 'expense.confirm', entityType: 'expense', entityId: req.params.id,
+      changes: { status: { from: 'pending', to: 'confirmed' } },
+    });
     res.json({ success: true, data: result.rows[0] });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });

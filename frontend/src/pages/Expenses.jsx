@@ -81,6 +81,7 @@ export default function Expenses() {
 
   const [expenses, setExpenses] = useState([]);
   const [plots, setPlots]       = useState([]);
+  const [houses, setHouses]     = useState([]);
   const [loading, setLoading]   = useState(true);
   const [error, setError]       = useState(null);
   const [openMenu, setOpenMenu] = useState(null);
@@ -88,7 +89,7 @@ export default function Expenses() {
 
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing]   = useState(null); // expense being edited, or null for "add"
-  const blankForm = { plot_id: '', category: CATEGORIES[0], description: '', amount: '', expense_date: '', receipt_url: '' };
+  const blankForm = { plot_id: '', house_id: '', category: CATEGORIES[0], description: '', amount: '', expense_date: '', receipt_url: '' };
   const [form, setForm] = useState(blankForm);
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState(null);
@@ -96,11 +97,13 @@ export default function Expenses() {
   useEffect(() => {
     (async () => {
       try {
+        const canEditSomething = can('expenses.add') || can('expenses.edit');
         const requests = [API.get('/expenses')];
-        if (can('expenses.add') || can('expenses.edit')) requests.push(API.get('/plots'));
-        const [er, pr] = await Promise.all(requests);
+        if (canEditSomething) { requests.push(API.get('/plots')); requests.push(API.get('/houses')); }
+        const [er, pr, hr] = await Promise.all(requests);
         setExpenses(er.data.data || []);
         setPlots(pr ? (Array.isArray(pr.data) ? pr.data : pr.data.data || []) : []);
+        setHouses(hr ? (Array.isArray(hr.data) ? hr.data : hr.data.data || []) : []);
       } catch (e) {
         setError(e.response?.data?.error || 'Failed to load expenses.');
       } finally {
@@ -126,6 +129,7 @@ export default function Expenses() {
     setEditing(exp);
     setForm({
       plot_id: exp.plot_id || '',
+      house_id: exp.house_id || '',
       category: exp.category || CATEGORIES[0],
       description: exp.description || '',
       amount: exp.amount ?? '',
@@ -147,6 +151,7 @@ export default function Expenses() {
     const payload = {
       ...form,
       plot_id: form.plot_id === '' ? null : form.plot_id,
+      house_id: form.house_id === '' ? null : form.house_id,
       amount: parseFloat(form.amount),
     };
     try {
@@ -162,6 +167,15 @@ export default function Expenses() {
       setFormError(e.response?.data?.error || 'Failed to save expense.');
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function handleConfirm(exp) {
+    try {
+      const res = await API.patch(`/expenses/${exp.id}/confirm`);
+      setExpenses(list => list.map(x => x.id === exp.id ? res.data.data : x));
+    } catch (e) {
+      alert(e.response?.data?.error || 'Failed to confirm expense.');
     }
   }
 
@@ -245,6 +259,7 @@ export default function Expenses() {
                 <th style={{ textAlign: 'left', padding: '10px 14px' }}>Category</th>
                 <th style={{ textAlign: 'left', padding: '10px 14px' }}>Description</th>
                 <th style={{ textAlign: 'right', padding: '10px 14px' }}>Amount</th>
+                <th style={{ textAlign: 'left', padding: '10px 14px' }}>Status</th>
                 <th style={{ padding: '10px 14px' }}></th>
               </tr>
             </thead>
@@ -254,7 +269,10 @@ export default function Expenses() {
                 return (
                 <tr key={exp.id} className="ex-row" style={{ borderTop: '1px solid var(--border)' }}>
                   <td style={{ padding: '10px 14px', color: 'var(--text)' }}>{exp.expense_date ? new Date(exp.expense_date).toLocaleDateString('en-KE') : '—'}</td>
-                  <td style={{ padding: '10px 14px', color: 'var(--text)' }}>{exp.plot_name || <span style={{ color: 'var(--muted)' }}>General</span>}</td>
+                  <td style={{ padding: '10px 14px', color: 'var(--text)' }}>
+                    {exp.plot_name || <span style={{ color: 'var(--muted)' }}>General</span>}
+                    {exp.unit_number && <span style={{ color: 'var(--muted)', fontSize: 12 }}> · Unit {exp.unit_number}</span>}
+                  </td>
                   <td style={{ padding: '10px 14px' }}>
                     {exp.category ? (
                       <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, background: cat.bg, color: cat.color, padding: '3px 10px', borderRadius: 99, fontSize: 12, fontWeight: 600 }}>
@@ -264,10 +282,22 @@ export default function Expenses() {
                   </td>
                   <td style={{ padding: '10px 14px', color: 'var(--muted)' }}>{exp.description || '—'}</td>
                   <td style={{ padding: '10px 14px', textAlign: 'right', fontWeight: 700, color: 'var(--text)' }}>KES {Number(exp.amount).toLocaleString()}</td>
+                  <td style={{ padding: '10px 14px' }}>
+                    {exp.status === 'pending' ? (
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, background: 'var(--amber-light, #fef3c7)', color: 'var(--amber, #d97706)', padding: '3px 10px', borderRadius: 99, fontSize: 12, fontWeight: 700 }}>
+                        ⏳ Pending{exp.created_by_name ? ` · ${exp.created_by_name}` : ''}
+                      </span>
+                    ) : (
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, background: 'var(--green-light, #dcfce7)', color: 'var(--green, #16a34a)', padding: '3px 10px', borderRadius: 99, fontSize: 12, fontWeight: 700 }}>
+                        ✓ Confirmed
+                      </span>
+                    )}
+                  </td>
                   <td style={{ padding: '10px 14px', textAlign: 'right' }}>
                     <ActionMenu id={exp.id} openMenu={openMenu} setOpenMenu={setOpenMenu} items={[
+                      ...(exp.status === 'pending' && can('expenses.edit') ? [{ label: 'Confirm', onClick: () => handleConfirm(exp) }] : []),
                       ...(can('expenses.edit')   ? [{ label: 'Edit',   onClick: () => openEdit(exp) }] : []),
-                      ...(can('expenses.delete') ? [{ label: 'Delete', onClick: () => handleDelete(exp), danger: true }] : []),
+                      ...(can('expenses.delete') ? [{ label: exp.status === 'pending' ? 'Reject (delete)' : 'Delete', onClick: () => handleDelete(exp), danger: true }] : []),
                     ]} />
                   </td>
                 </tr>
@@ -283,12 +313,23 @@ export default function Expenses() {
             <h3 style={{ marginTop: 0 }}>{editing ? 'Edit Expense' : 'Add Expense'}</h3>
             {formError && <div style={{ padding: '8px 12px', borderRadius: 8, background: 'var(--red-light, #fee2e2)', color: 'var(--red, #dc2626)', fontSize: 13, marginBottom: 14 }}>{formError}</div>}
 
-            <div style={{ marginBottom: 14 }}>
-              <label style={labelStyle}>Property</label>
-              <select value={form.plot_id} onChange={e => setForm(f => ({ ...f, plot_id: e.target.value }))} style={inputStyle}>
-                <option value="">— General (not tied to a property) —</option>
-                {plots.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-              </select>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginBottom: 14 }}>
+              <div>
+                <label style={labelStyle}>Property</label>
+                <select value={form.plot_id} onChange={e => setForm(f => ({ ...f, plot_id: e.target.value, house_id: '' }))} style={inputStyle}>
+                  <option value="">— General (not tied to a property) —</option>
+                  {plots.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                </select>
+              </div>
+              <div>
+                <label style={labelStyle}>Unit <span style={{ textTransform: 'none', fontWeight: 400 }}>— optional</span></label>
+                <select value={form.house_id} onChange={e => setForm(f => ({ ...f, house_id: e.target.value }))} style={inputStyle} disabled={!form.plot_id}>
+                  <option value="">— Whole property —</option>
+                  {houses.filter(h => String(h.plot_id) === String(form.plot_id)).map(h => (
+                    <option key={h.id} value={h.id}>Unit {h.unit_number}</option>
+                  ))}
+                </select>
+              </div>
             </div>
 
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginBottom: 14 }}>

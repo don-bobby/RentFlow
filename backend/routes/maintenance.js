@@ -122,12 +122,15 @@ router.post('/', flexAuth, async (req, res) => {
 // Was gated by requirePermission('maintenance.update') as middleware, before
 // the request's property was known — same fix as GET /:id above.
 router.patch('/:id', staffAuth, async (req, res) => {
-  const { status } = req.body;
+  const { status, cost } = req.body;
   const validStatuses = ['pending', 'in_progress', 'completed'];
   if (!validStatuses.includes(status)) return res.status(400).json({ error: `Status must be one of: ${validStatuses.join(', ')}` });
+  if (cost != null && (typeof cost !== 'object' || !cost.amount)) {
+    return res.status(400).json({ error: 'cost, if provided, must be an object with at least an amount.' });
+  }
   try {
     const existing = await pool.query(
-      `SELECT m.id, m.status, m.issue, h.plot_id FROM maintenance_requests m
+      `SELECT m.id, m.status, m.issue, m.house_id, h.plot_id FROM maintenance_requests m
        LEFT JOIN houses h ON m.house_id = h.id
        WHERE m.id = $1`,
       [req.params.id]
@@ -144,6 +147,20 @@ router.patch('/:id', staffAuth, async (req, res) => {
       const visible = await getVisiblePlotIds(req.user);
       const allowed = visible === 'ALL' || (plotId != null && visible.includes(plotId));
       if (!allowed) return res.status(403).json({ error: 'Access denied' });
+    }
+
+    // Closing out a request can optionally attach a cost, which becomes a
+    // linked expense — this is the one place that connects Maintenance to
+    // Expenses, so it gets its OWN permission check (expenses.add) on top
+    // of the maintenance.update check above. A caretaker whose expenses.add
+    // was revoked can still mark the request done; they just can't attach
+    // a cost to it — this is where that revoke actually bites, not a
+    // silent drop of the amount they typed.
+    if (cost != null) {
+      const { permissions: expensePerms } = await getPermissions(req.user, plotId);
+      if (!expensePerms.includes('*') && !expensePerms.includes('expenses.add')) {
+        return res.status(403).json({ error: 'Missing permission: expenses.add — you cannot record a cost for this request.' });
+      }
     }
 
     const oldStatus = existing.rows[0].status;
@@ -175,7 +192,35 @@ router.patch('/:id', staffAuth, async (req, res) => {
       });
     }
 
-    res.json({ success: true, data: result.rows[0] });
+    // Create the linked expense now the status update succeeded. Caretaker
+    // entries land as 'pending' (same rule POST /expenses applies) —
+    // everyone else's are trusted immediately. plot_id/house_id come from
+    // THIS request, not the caller, so there's no way to point the cost at
+    // a different property than the one it was actually incurred on.
+    let expense = null;
+    if (cost != null) {
+      const isCaretaker = req.user.role === 'caretaker';
+      const expStatus = isCaretaker ? 'pending' : 'confirmed';
+      const confirmedBy = isCaretaker ? null : req.user.id;
+      const confirmedAt = isCaretaker ? null : new Date();
+      const expenseResult = await pool.query(
+        `INSERT INTO expenses (plot_id, house_id, category, description, amount, expense_date, maintenance_request_id, status, created_by, confirmed_by, confirmed_at)
+         VALUES ($1, $2, $3, $4, $5, CURRENT_DATE, $6, $7, $8, $9, $10) RETURNING *`,
+        [
+          plotId, existing.rows[0].house_id,
+          cost.category || 'Repairs',
+          cost.description || `Maintenance: ${existing.rows[0].issue}`.slice(0, 500),
+          cost.amount, req.params.id, expStatus, req.user.id, confirmedBy, confirmedAt,
+        ]
+      );
+      expense = expenseResult.rows[0];
+      await logAudit({
+        user: req.user, action: 'expense.create_from_maintenance', entityType: 'expense', entityId: expense.id,
+        changes: { amount: { to: cost.amount }, status: { to: expStatus } },
+      });
+    }
+
+    res.json({ success: true, data: result.rows[0], expense });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 

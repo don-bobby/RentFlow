@@ -376,7 +376,7 @@ export default function Dashboard() {
   const [rejectReason,  setRejectReason]  = useState('');
   const isDark = useIsDarkMode();
   const navigate = useNavigate();
-  const { user: me } = useAuth();
+  const { user: me, can } = useAuth();
   // The caretaker badge/tile is for the people who actually manage
   // caretakers day to day (landlords, and agents acting on their behalf) —
   // not admin, who oversees every landlord's caretakers at once and has
@@ -395,16 +395,17 @@ export default function Dashboard() {
         // one endpoint (e.g. payments.view not granted to a profile) should
         // still see everything else on the dashboard, not a total failure.
         // Same fix already applied to Notices.jsx for the same reason.
-        const [tr, pr, hr, mr, plr, ur] = await Promise.allSettled([
+        const [tr, pr, hr, mr, plr, ur, exr] = await Promise.allSettled([
           API.get('/tenants'),
           API.get('/payments'),
           API.get('/houses'),
           API.get('/maintenance'),
           API.get('/plots'),
           API.get('/auth/users'),
+          API.get('/expenses'),
         ]);
         const unwrap = (settled) => settled.status === 'fulfilled' ? settled.value : { data: { data: [] } };
-        const [trv, prv, hrv, mrv, plrv, urv] = [tr, pr, hr, mr, plr, ur].map(unwrap);
+        const [trv, prv, hrv, mrv, plrv, urv, exrv] = [tr, pr, hr, mr, plr, ur, exr].map(unwrap);
 
         const tenants  = Array.isArray(trv.data)  ? trv.data  : (trv.data.data  || []);
         const payments = Array.isArray(prv.data)  ? prv.data  : (prv.data.data  || []);
@@ -412,6 +413,7 @@ export default function Dashboard() {
         const requests = Array.isArray(mrv.data)  ? mrv.data  : (mrv.data.data  || []);
         const plots    = Array.isArray(plrv.data) ? plrv.data : (plrv.data.data || []);
         const users    = Array.isArray(urv.data)  ? urv.data  : (urv.data.data  || []);
+        const expenses = Array.isArray(exrv.data) ? exrv.data : (exrv.data.data || []);
 
         const now       = new Date();
         const thisMonth = payments.filter(p => {
@@ -429,7 +431,7 @@ export default function Dashboard() {
         const caretakers = users.filter(u => u.role === 'caretaker');
 
         setData({
-          tenants, payments, houses, requests, plots, users, caretakers,
+          tenants, payments, houses, requests, plots, users, caretakers, expenses,
           activeTenants:   tenants.filter(t => t.is_active),
           unpaidTenants:   tenants.filter(t => t.is_active && parseFloat(t.balance || 0) > 0),
           occupiedHouses:  houses.filter(h => h.status === 'occupied'),
@@ -461,10 +463,46 @@ export default function Dashboard() {
 
   const { payments, houses, plots, caretakers,
     activeTenants, unpaidTenants, occupiedHouses, vacantHouses,
-    pendingRequests, pendingUnits, expiringLeases, monthRevenue, totalRevenue, thisMonth } = data;
+    pendingRequests, pendingUnits, expiringLeases, monthRevenue, totalRevenue, thisMonth,
+    expenses } = data;
 
   const occupancyRate = houses.length > 0 ? Math.round((occupiedHouses.length / houses.length) * 100) : 0;
   const totalUnpaid   = unpaidTenants.reduce((s, t) => s + parseFloat(t.balance || 0), 0);
+
+  // Maintenance → Expenses link: only expenses that trace back to a
+  // maintenance request count here — a plumber invoice logged straight
+  // into Expenses isn't "maintenance spend" from a request, it's just a
+  // regular expense (still shows up in the Expenses page, just not here).
+  const maintenanceExpenses = (expenses || []).filter(e => e.maintenance_request_id);
+  const now = new Date();
+  const confirmedMaintenanceThisMonth = maintenanceExpenses.filter(e => {
+    if (e.status !== 'confirmed') return false;
+    const d = new Date(e.expense_date);
+    return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
+  });
+  const pendingMaintenanceExpenses = maintenanceExpenses.filter(e => e.status === 'pending');
+  const monthMaintenanceSpend = confirmedMaintenanceThisMonth.reduce((s, e) => s + parseFloat(e.amount || 0), 0);
+
+  // Confirm/reject act straight on the dashboard's own expenses list (no
+  // extra fetch) — everything derived above (the tile, the modal's two
+  // sections) recomputes from this on the next render.
+  async function confirmExpense(id) {
+    try {
+      const res = await API.patch(`/expenses/${id}/confirm`);
+      setData(d => ({ ...d, expenses: d.expenses.map(e => e.id === id ? res.data.data : e) }));
+    } catch (e) {
+      alert(e.response?.data?.error || 'Failed to confirm expense.');
+    }
+  }
+  async function rejectExpense(exp) {
+    if (!window.confirm(`Reject this KES ${Number(exp.amount).toLocaleString()} cost? It'll be deleted, not just hidden.`)) return;
+    try {
+      await API.delete(`/expenses/${exp.id}`);
+      setData(d => ({ ...d, expenses: d.expenses.filter(e => e.id !== exp.id) }));
+    } catch (e) {
+      alert(e.response?.data?.error || 'Failed to reject expense.');
+    }
+  }
 
   // ── Derived data for the charts/widgets below (all computed from data
   // already loaded — no extra API calls) ──
@@ -619,6 +657,10 @@ export default function Dashboard() {
           <StatCard label="Unpaid Rent"       value={`KES ${totalUnpaid.toLocaleString()}`}   icon="⚠️" colorKey="red"     onClick={() => setModal('unpaid')}  sub={`${unpaidTenants.length} tenant${unpaidTenants.length !== 1 ? 's' : ''}`} />
           <StatCard label="Total Revenue"     value={`KES ${totalRevenue.toLocaleString()}`}  icon="📈" colorKey="blue"    onClick={() => setModal('allrevenue')} />
           <StatCard label="Maintenance"       value={pendingRequests.length} icon="🔧" colorKey="primary" onClick={() => setModal('maintenance')} sub="pending requests" />
+          {maintenanceExpenses.length > 0 && (
+            <StatCard label="Maintenance Spend (Month)" value={`KES ${monthMaintenanceSpend.toLocaleString()}`} icon="🧾" colorKey="amber" onClick={() => setModal('maintenance_spend')}
+              sub={pendingMaintenanceExpenses.length > 0 ? `${pendingMaintenanceExpenses.length} awaiting confirmation` : 'confirmed this month'} />
+          )}
           {pendingUnits?.filter(h => !h.rejection_reason).length > 0 && (
             <StatCard label="Pending Units" value={pendingUnits.filter(h => !h.rejection_reason).length} icon="⏳" colorKey="red" onClick={() => setModal('pending_units')} sub="awaiting approval" />
           )}
@@ -1036,6 +1078,64 @@ export default function Dashboard() {
             ]} />
           ))} />
           <SeeMoreFooter onClick={() => navigate('/maintenance')} />
+        </Modal>
+      )}
+
+      {modal === 'maintenance_spend' && (
+        <Modal title={`Maintenance Spend — KES ${monthMaintenanceSpend.toLocaleString()} this month`} onClose={() => setModal(null)}>
+          {pendingMaintenanceExpenses.length > 0 && (
+            <div style={{ padding: '16px 24px', borderBottom: '1px solid var(--border)' }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--amber, #d97706)', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 10 }}>
+                ⏳ Awaiting confirmation ({pendingMaintenanceExpenses.length})
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                {pendingMaintenanceExpenses.map(e => (
+                  <div key={e.id} style={{
+                    display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12,
+                    padding: '10px 14px', borderRadius: 10, background: 'var(--surface2)',
+                  }}>
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ fontWeight: 700, fontSize: 13, color: 'var(--text)' }}>
+                        KES {Number(e.amount).toLocaleString()} — {e.category || 'Repairs'}
+                      </div>
+                      <div style={{ fontSize: 12, color: 'var(--muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        {e.unit_number ? `Unit ${e.unit_number} · ` : ''}{e.description || e.maintenance_issue || '—'}
+                        {e.created_by_name ? ` · logged by ${e.created_by_name}` : ''}
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+                      {can('expenses.edit', e.plot_id) && (
+                        <button type="button" onClick={() => confirmExpense(e.id)} style={{
+                          padding: '6px 12px', borderRadius: 8, border: 'none', background: 'var(--green, #16a34a)',
+                          color: '#fff', fontWeight: 700, fontSize: 12, cursor: 'pointer',
+                        }}>Confirm</button>
+                      )}
+                      {can('expenses.delete', e.plot_id) && (
+                        <button type="button" onClick={() => rejectExpense(e)} style={{
+                          padding: '6px 12px', borderRadius: 8, border: '1px solid var(--red, #dc2626)', background: 'transparent',
+                          color: 'var(--red, #dc2626)', fontWeight: 700, fontSize: 12, cursor: 'pointer',
+                        }}>Reject</button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {confirmedMaintenanceThisMonth.length === 0 ? (
+            <div style={{ padding: 40, textAlign: 'center', color: 'var(--muted)' }}>No confirmed maintenance costs this month yet.</div>
+          ) : (
+            <Table headers={['Date', 'Unit', 'Description', 'Amount']} rows={confirmedMaintenanceThisMonth.map((e, i) => (
+              <TR key={e.id} i={i} cells={[
+                { value: new Date(e.expense_date).toLocaleDateString('en-KE'), style: { color: 'var(--muted)' } },
+                { value: e.unit_number ? `Unit ${e.unit_number}` : '—', style: { fontWeight: 600, color: 'var(--text)' } },
+                { value: e.description || e.maintenance_issue || '—', style: { color: 'var(--text)' } },
+                { value: `KES ${Number(e.amount).toLocaleString()}`, style: { fontWeight: 700, color: 'var(--amber, #d97706)' } },
+              ]} />
+            ))} />
+          )}
+          <SeeMoreFooter onClick={() => navigate('/expenses')} />
         </Modal>
       )}
 
