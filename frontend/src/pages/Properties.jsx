@@ -122,6 +122,7 @@ export default function Properties() {
   const houseRefs = useRef({}); // house.id -> DOM node, for scrollIntoView
   const [highlightPlotId, setHighlightPlotId] = useState(location.state?.highlightPlotId || null);
   const [highlightHouseId, setHighlightHouseId] = useState(location.state?.highlightHouseId || null);
+  const [expandedPlotIds, setExpandedPlotIds] = useState(() => new Set());
   const isAdmin    = user?.role === 'admin';
   const isAgent    = user?.role === 'agent';
   const isCaretaker = user?.role === 'caretaker';
@@ -195,11 +196,26 @@ export default function Properties() {
   // onto the unit that actually needs approving instead of just the page.
   useEffect(() => {
     if (!highlightHouseId || houses.length === 0) return;
+    const house = houses.find(h => String(h.id) === String(highlightHouseId));
+    if (house) setExpandedPlotIds(prev => prev.has(house.plot_id) ? prev : new Set(prev).add(house.plot_id));
+  }, [highlightHouseId, houses]);
+
+  useEffect(() => {
+    if (!highlightHouseId) return;
     const node = houseRefs.current[highlightHouseId];
-    if (node) node.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    if (!node) return; // not rendered yet — the effect above expands its plot, this re-runs once it is
+    node.scrollIntoView({ behavior: 'smooth', block: 'center' });
     const t = setTimeout(() => setHighlightHouseId(null), 4000);
     return () => clearTimeout(t);
-  }, [highlightHouseId, houses]);
+  }, [highlightHouseId, houses, expandedPlotIds]);
+
+  function togglePlotExpanded(plotId) {
+    setExpandedPlotIds(prev => {
+      const next = new Set(prev);
+      if (next.has(plotId)) next.delete(plotId); else next.add(plotId);
+      return next;
+    });
+  }
 
   function openAddPlot() {
     setEditing(null);
@@ -497,7 +513,9 @@ export default function Properties() {
         <div style={{ display: 'flex', flexDirection: 'column', gap: 28 }}>
           {plots.length === 0 && <div style={{ textAlign: 'center', color: 'var(--muted)', padding: 60 }}>No properties yet. Add your first plot to get started.</div>}
           {plots.length > 0 && visiblePlots.length === 0 && <div style={{ textAlign: 'center', color: 'var(--muted)', padding: 60 }}>No plots match your filters.</div>}
-          {visiblePlots.map(plot => (
+          {visiblePlots.map(plot => {
+            const expanded = expandedPlotIds.has(plot.id);
+            return (
             <div key={plot.id} ref={el => { plotRefs.current[plot.id] = el; }} style={{
               background: 'var(--surface, #ffffff)', borderRadius: 'var(--radius)',
               boxShadow: String(plot.id) === String(highlightPlotId) ? '0 0 0 3px var(--amber, #d97706), 0 4px 20px rgba(217,119,6,0.35)' : 'var(--shadow, 0 2px 8px rgba(0,0,0,0.10))',
@@ -549,6 +567,12 @@ export default function Properties() {
                   </div>
                 </div>
                 <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                  <button onClick={() => togglePlotExpanded(plot.id)} aria-label={expanded ? 'Collapse units' : 'Expand units'} title={expanded ? 'Collapse units' : 'Expand units'} style={{
+                    width: 30, height: 30, borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: 'var(--text)', flexShrink: 0,
+                  }}>
+                    <span style={{ display: 'inline-block', fontSize: 11, transition: 'transform 0.2s ease', transform: expanded ? 'rotate(0deg)' : 'rotate(-90deg)' }}>▾</span>
+                  </button>
                   <span style={{ background: isDark ? 'rgba(124,58,237,0.25)' : 'var(--primary-light)', color: isDark ? '#c4b5fd' : 'var(--primary)', padding: '4px 12px', borderRadius: 99, fontSize: 12, fontWeight: 600 }}>
                     {allPlotHouses(plot.id).length} units
                   </span>
@@ -575,8 +599,9 @@ export default function Properties() {
                 </div>
               </div>
 
-              {/* Units grid */}
-              {plotHouses(plot.id).length === 0 ? (
+              {/* Units grid — collapsed by default; clicking the chevron
+                  toggles this per property, independent of every other one. */}
+              {expanded && (plotHouses(plot.id).length === 0 ? (
                 <div style={{ padding: '20px 24px', color: 'var(--muted)', fontSize: 13, display: 'flex', alignItems: 'center', gap: 12, background: isDark ? 'var(--surface2)' : 'transparent' }}>
                   {allPlotHouses(plot.id).length === 0 ? (
                     <>
@@ -695,9 +720,10 @@ export default function Properties() {
                     </div>
                   ))}
                 </div>
-              )}
+              ))}
             </div>
-          ))}
+            );
+          })}
         </div>
       )}
 
