@@ -307,7 +307,13 @@ function PropertyMap({ properties, isDark }) {
           <button onClick={() => setExpanded(true)} style={expandBtnStyle} title="Enlarge map">⛶ Enlarge</button>
         </div>
         {!expanded && (
-          <div style={{ flex: 1, minHeight: 260 }}>
+          // position:relative + an explicit z-index gives this div its own
+          // stacking context, so Leaflet's internal panes (which use z-index
+          // values up to 700 internally) stay contained inside it instead of
+          // escaping past unrelated elements elsewhere on the page that have
+          // a lower z-index of their own — like the stat-tile detail modals
+          // (zIndex: 100), which the map was rendering on top of.
+          <div style={{ flex: 1, minHeight: 260, position: 'relative', zIndex: 0 }}>
             <MapContainer center={center} zoom={13} style={{ height: '100%', width: '100%' }} scrollWheelZoom={false}>
               <TileLayer key={tileClass || 'light'} url={tileUrl} className={tileClass} attribution={tileAttribution} />
               {withCoords.map(p => <HoverMarker key={p.id} p={p} isDark={isDark} />)}
@@ -323,11 +329,12 @@ function PropertyMap({ properties, isDark }) {
               <h2 style={{ ...titleStyle, fontSize: 17 }}>Property Map</h2>
               <button onClick={() => setExpanded(false)} style={{ width: 34, height: 34, borderRadius: '50%', border: 'none', background: 'var(--surface2)', cursor: 'pointer', fontSize: 18, color: 'var(--muted)' }}>×</button>
             </div>
-            <div style={{ flex: 1 }}>
+            <div style={{ flex: 1, position: 'relative', zIndex: 0 }}>
               {/* Fresh MapContainer instance rather than resizing the small one —
                   Leaflet caches tile-grid size at mount and doesn't reliably
                   pick up a container resize without an explicit invalidateSize()
-                  call, so a new instance avoids that entirely. */}
+                  call, so a new instance avoids that entirely. Same stacking-
+                  context containment as the small map above, for the same reason. */}
               <MapContainer center={center} zoom={14} style={{ height: '100%', width: '100%' }} scrollWheelZoom={true}>
                 <TileLayer key={tileClass || 'light'} url={tileUrl} className={tileClass} attribution={tileAttribution} />
                 {withCoords.map(p => <HoverMarker key={p.id} p={p} isDark={isDark} />)}
