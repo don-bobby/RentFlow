@@ -523,7 +523,7 @@ export default function Properties() {
               overflow: 'hidden', transition: 'box-shadow 0.4s ease, border-color 0.4s ease',
             }}>
               {/* Plot header */}
-              <div style={{ padding: '18px 24px', borderBottom: '1px solid var(--border, #cbd5e1)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'var(--surface2, #f1f5f9)' }}>
+              <div style={{ padding: '18px 24px', borderBottom: '1px solid var(--border, #cbd5e1)', display: 'flex', flexWrap: 'wrap', gap: 16, justifyContent: 'space-between', alignItems: 'center', background: 'var(--surface2, #f1f5f9)' }}>
                 <div>
                   <div style={{ fontFamily: 'Space Grotesk', fontWeight: 700, fontSize: 17, marginBottom: 8, color: 'var(--text)' }}>{plot.name}</div>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
@@ -566,6 +566,31 @@ export default function Properties() {
                     )}
                   </div>
                 </div>
+
+                {/* Occupancy rate — fills the empty middle of the header, same
+                    vacant/occupied/maintenance math the stat row above and the
+                    Dashboard's own Occupancy Rate tile already use. */}
+                {(() => {
+                  const list = allPlotHouses(plot.id);
+                  const total = list.length;
+                  const occ = list.filter(h => h.status === 'occupied').length;
+                  const vac = list.filter(h => h.status === 'vacant').length;
+                  const pct = total > 0 ? Math.round((occ / total) * 100) : 0;
+                  const barColor = pct >= 80 ? 'var(--green, #16a34a)' : pct >= 50 ? 'var(--amber, #d97706)' : 'var(--red, #dc2626)';
+                  return total > 0 ? (
+                    <div style={{ flex: '0 1 240px', minWidth: 160, margin: '0 20px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 5 }}>
+                        <span style={{ fontSize: 11, fontWeight: 700, color: isDark ? 'var(--blue, #2563eb)' : 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Occupancy</span>
+                        <span style={{ fontSize: 15, fontWeight: 700, color: barColor }}>{pct}%</span>
+                      </div>
+                      <div style={{ height: 7, borderRadius: 99, background: 'var(--border)', overflow: 'hidden' }}>
+                        <div style={{ height: '100%', width: `${pct}%`, borderRadius: 99, background: barColor, transition: 'width 0.3s ease' }} />
+                      </div>
+                      <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 5 }}>{occ} occupied · {vac} vacant</div>
+                    </div>
+                  ) : null;
+                })()}
+
                 <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                   <button onClick={() => togglePlotExpanded(plot.id)} aria-label={expanded ? 'Collapse units' : 'Expand units'} title={expanded ? 'Collapse units' : 'Expand units'} style={{
                     width: 30, height: 30, borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)',
