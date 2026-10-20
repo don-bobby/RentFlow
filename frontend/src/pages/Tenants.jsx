@@ -21,6 +21,54 @@ function useIsDarkMode() {
   return isDark;
 }
 
+// Collapses the per-row Edit/Set PIN/Deactivate/Erase buttons into a single
+// "Actions ▾" dropdown — four always-visible buttons per row (plus a red
+// Erase button only Bob's account sees) was cluttered, especially with 27
+// rows on screen at once. Copied verbatim from Properties.jsx, which uses
+// the same pattern for its plot/unit row actions.
+function ActionMenu({ id, openMenu, setOpenMenu, items, size = 'md' }) {
+  const btnRef = useRef(null);
+  const [pos, setPos] = useState({ top: 0, left: 0 });
+  const isOpen = openMenu === id;
+
+  function toggle(e) {
+    e.stopPropagation();
+    if (!isOpen && btnRef.current) {
+      const r = btnRef.current.getBoundingClientRect();
+      setPos({ top: r.bottom + 6, left: r.right });
+    }
+    setOpenMenu(isOpen ? null : id);
+  }
+
+  return (
+    <div style={{ display: 'inline-block' }}>
+      <button ref={btnRef} onClick={toggle} style={{
+        padding: size === 'sm' ? '4px 10px' : '6px 12px', borderRadius: 8, border: '1px solid var(--border)',
+        background: 'var(--surface)', fontSize: size === 'sm' ? 11 : 12, fontWeight: 600, color: 'var(--text)',
+        cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 5,
+      }}>
+        Actions <span style={{ fontSize: 9 }}>▾</span>
+      </button>
+      {isOpen && (
+        <div onClick={e => e.stopPropagation()} style={{
+          position: 'fixed', top: pos.top, left: pos.left, transform: 'translateX(-100%)',
+          background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10,
+          boxShadow: 'var(--shadow-lg)', minWidth: 150, zIndex: 500, overflow: 'hidden',
+        }}>
+          {items.map((it, i) => (
+            <button key={i} onClick={() => { it.onClick(); setOpenMenu(null); }}
+              onMouseEnter={e => e.currentTarget.style.background = 'var(--surface2)'}
+              onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+              style={{ display: 'block', width: '100%', padding: '10px 14px', border: 'none', background: 'transparent', fontSize: 13, fontWeight: it.danger ? 700 : 500, color: it.danger ? 'var(--red, #dc2626)' : 'var(--text)', cursor: 'pointer', textAlign: 'left' }}>
+              {it.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 const emptyForm = {
   full_name: '', phone: '', email: '', national_id: '',
   house_id: '', move_in_date: '', rent_due_day: 5, deposit_paid: '', emergency_phone: '',
@@ -61,6 +109,7 @@ export default function Tenants() {
   const [eraseError,   setEraseError]   = useState('');
 
   const { can, user } = useAuth();
+  const [openMenu, setOpenMenu] = useState(null);
   // A flat global check misses a property-specific GRANT — someone whose
   // role doesn't have tenants.create at all, but who was given it for just
   // one property via an override, has no entry in user.permissions and so
@@ -98,6 +147,12 @@ export default function Tenants() {
   }
 
   useEffect(() => { load(); }, []);
+
+  useEffect(() => {
+    function closeMenus() { setOpenMenu(null); }
+    document.addEventListener('click', closeMenus);
+    return () => document.removeEventListener('click', closeMenus);
+  }, []);
 
   // Dashboard's "+ Add Tenant" quick action used to just navigate here and
   // leave the user to find and click "+ Add Tenant" again themselves on an
@@ -475,43 +530,20 @@ export default function Tenants() {
                   </td>
                   {canManageAny ? (
                     <td style={{ padding: '13px 20px' }}>
-                      <div style={{ display: 'flex', gap: 6 }}>
-                        {canEditRow && (
-                          <button onClick={() => openEdit(t)} style={{ padding: '5px 14px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', fontSize: 12, fontWeight: 600, color: 'var(--primary, #7c3aed)', cursor: 'pointer' }}>
-                            Edit
-                          </button>
-                        )}
-                        {canSetPin && (
-                          <button onClick={() => { setPinModal(t); setPin(''); setPinError(''); setPinSuccess(''); }} style={{
-                            padding: '5px 14px', borderRadius: 8, border: 'none',
-                            background: isDark ? hexToRgba('#7c3aed', 0.22) : 'var(--primary-light)',
-                            color: isDark ? '#c4b5fd' : 'var(--primary)',
-                            fontSize: 12, fontWeight: 600, cursor: 'pointer',
-                          }}>
-                            Set PIN
-                          </button>
-                        )}
-                        {canDeactivateRow && t.is_active && (
-                          <button onClick={() => handleDeactivate(t)} disabled={deactivatingId === t.id} style={{
-                            padding: '5px 14px', borderRadius: 8, border: 'none',
-                            background: isDark ? hexToRgba('#d97706', 0.22) : 'var(--amber-light, #fef3c7)',
-                            color: isDark ? '#fbbf24' : 'var(--amber, #b45309)',
-                            fontSize: 12, fontWeight: 600, cursor: 'pointer',
-                          }}>
-                            {deactivatingId === t.id ? 'Deactivating...' : 'Deactivate'}
-                          </button>
-                        )}
-                        {isEraseAdmin && (
-                          <button onClick={() => openErase(t)} style={{
-                            padding: '5px 14px', borderRadius: 8, border: 'none',
-                            background: isDark ? hexToRgba('#dc2626', 0.22) : 'var(--red-light)',
-                            color: isDark ? '#f87171' : 'var(--red, #dc2626)',
-                            fontSize: 12, fontWeight: 600, cursor: 'pointer',
-                          }}>
-                            Erase
-                          </button>
-                        )}
-                      </div>
+                      {(() => {
+                        const items = [
+                          canEditRow && { label: 'Edit', onClick: () => openEdit(t) },
+                          canSetPin && { label: 'Set PIN', onClick: () => { setPinModal(t); setPin(''); setPinError(''); setPinSuccess(''); } },
+                          canDeactivateRow && t.is_active && {
+                            label: deactivatingId === t.id ? 'Deactivating...' : 'Deactivate',
+                            onClick: () => handleDeactivate(t),
+                          },
+                          isEraseAdmin && { label: 'Erase', onClick: () => openErase(t), danger: true },
+                        ].filter(Boolean);
+                        return items.length > 0
+                          ? <ActionMenu id={t.id} size="sm" openMenu={openMenu} setOpenMenu={setOpenMenu} items={items} />
+                          : null;
+                      })()}
                     </td>
                   ) : (
                     <td style={{ padding: '13px 20px' }}>
