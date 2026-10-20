@@ -81,6 +81,7 @@ export default function Properties() {
   const [tenants,   setTenants]   = useState([]); // for showing occupant name/phone/balance on occupied unit cards
   const [payments,  setPayments]  = useState([]); // for each property's "This Month" revenue stat
   const [maintenanceRequests, setMaintenanceRequests] = useState([]); // for "Maintenance pending" + caretaker workload
+  const [expenses,  setExpenses]  = useState([]); // for each property's "Expenses (Month)" stat
   const [landlords, setLandlords] = useState([]);
   const [caretakers, setCaretakers] = useState([]);
   const [agents,     setAgents]     = useState([]);
@@ -188,6 +189,10 @@ export default function Properties() {
       const mrr = await API.get('/maintenance');
       setMaintenanceRequests(Array.isArray(mrr.data) ? mrr.data : (mrr.data.data || []));
     } catch (e) { setMaintenanceRequests([]); }
+    try {
+      const exr = await API.get('/expenses');
+      setExpenses(Array.isArray(exr.data) ? exr.data : (exr.data.data || []));
+    } catch (e) { setExpenses([]); }
   }
 
   // Intentionally run once on mount only — `load` is a plain function
@@ -396,6 +401,23 @@ export default function Properties() {
         return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
       })
       .reduce((sum, p) => sum + parseFloat(p.amount || 0), 0);
+  };
+
+  // This month's confirmed expenses for a property — mirrors
+  // plotMonthRevenue above, but on the cost side. Excludes 'pending'
+  // (caretaker-entered, unconfirmed) expenses, same rule the Dashboard's
+  // Maintenance Spend (Month) tile already uses — an unconfirmed cost isn't
+  // real spend yet.
+  const plotMonthExpenses = (plotId) => {
+    const now = new Date();
+    return expenses
+      .filter(e => String(e.plot_id) === String(plotId))
+      .filter(e => e.status !== 'pending')
+      .filter(e => {
+        const d = new Date(e.expense_date);
+        return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
+      })
+      .reduce((sum, e) => sum + parseFloat(e.amount || 0), 0);
   };
 
   // Maintenance requests currently pending on this property specifically —
@@ -705,6 +727,7 @@ export default function Properties() {
               {(() => {
                 const unpaid = plotUnpaidRent(plot.id);
                 const monthRev = plotMonthRevenue(plot.id);
+                const monthExp = plotMonthExpenses(plot.id);
                 const pendingM = plotPendingMaintenance(plot.id);
                 const workload = caretakerWorkload(plot);
                 const pill = (label, value, tone) => (
@@ -722,6 +745,7 @@ export default function Properties() {
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, padding: '12px 24px', background: 'var(--surface2, #f1f5f9)', borderBottom: '1px solid var(--border, #cbd5e1)' }}>
                     {payments.length > 0 && pill('Unpaid Rent', `KES ${unpaid.toLocaleString()}`, unpaid > 0 ? 'red' : 'green')}
                     {payments.length > 0 && pill('This Month', `KES ${monthRev.toLocaleString()}`, 'blue')}
+                    {expenses.length > 0 && pill('Expenses', `KES ${monthExp.toLocaleString()}`, monthExp > 0 ? 'amber' : 'green')}
                     {maintenanceRequests.length > 0 && pill('Maintenance', pendingM > 0 ? `${pendingM} pending` : 'none pending', pendingM > 0 ? 'amber' : 'green')}
                     {workload != null && maintenanceRequests.length > 0 && pill('Caretaker Load', `${workload} open`, workload > 5 ? 'amber' : 'green')}
                   </div>
