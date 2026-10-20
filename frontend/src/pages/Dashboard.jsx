@@ -490,6 +490,25 @@ export default function Dashboard() {
   const pendingMaintenanceExpenses = maintenanceExpenses.filter(e => e.status === 'pending');
   const monthMaintenanceSpend = confirmedMaintenanceThisMonth.reduce((s, e) => s + parseFloat(e.amount || 0), 0);
 
+  // All expenses (maintenance-linked or not — repairs, salaries, water,
+  // electricity, recurring bills, everything in Expenses) for this month,
+  // same "shows regardless of what's generating it" tile the Maintenance
+  // Spend one deliberately doesn't try to be.
+  const allPendingExpenses = (expenses || []).filter(e => e.status === 'pending');
+  const confirmedExpensesThisMonth = (expenses || []).filter(e => {
+    if (e.status === 'pending') return false;
+    const d = new Date(e.expense_date);
+    return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
+  });
+  const monthExpensesTotal = confirmedExpensesThisMonth.reduce((s, e) => s + parseFloat(e.amount || 0), 0);
+  const expensesByCategory = Object.entries(
+    confirmedExpensesThisMonth.reduce((acc, e) => {
+      const cat = e.category || 'Other';
+      acc[cat] = (acc[cat] || 0) + parseFloat(e.amount || 0);
+      return acc;
+    }, {})
+  ).sort((a, b) => b[1] - a[1]);
+
   // Confirm/reject act straight on the dashboard's own expenses list (no
   // extra fetch) — everything derived above (the tile, the modal's two
   // sections) recomputes from this on the next render.
@@ -664,8 +683,12 @@ export default function Dashboard() {
           <StatCard label="Unpaid Rent"       value={`KES ${totalUnpaid.toLocaleString()}`}   icon="⚠️" colorKey="red"     onClick={() => setModal('unpaid')}  sub={`${unpaidTenants.length} tenant${unpaidTenants.length !== 1 ? 's' : ''}`} />
           <StatCard label="Total Revenue"     value={`KES ${totalRevenue.toLocaleString()}`}  icon="📈" colorKey="blue"    onClick={() => setModal('allrevenue')} />
           <StatCard label="Maintenance"       value={pendingRequests.length} icon="🔧" colorKey="primary" onClick={() => setModal('maintenance')} sub="pending requests" />
+          {can('expenses.view') && (
+            <StatCard label="Expenses (Month)" value={`KES ${monthExpensesTotal.toLocaleString()}`} icon="🧾" colorKey="red" onClick={() => setModal('expenses')}
+              sub={allPendingExpenses.length > 0 ? `${allPendingExpenses.length} awaiting confirmation` : 'confirmed this month'} />
+          )}
           {maintenanceExpenses.length > 0 && (
-            <StatCard label="Maintenance Spend (Month)" value={`KES ${monthMaintenanceSpend.toLocaleString()}`} icon="🧾" colorKey="amber" onClick={() => setModal('maintenance_spend')}
+            <StatCard label="Maintenance Spend (Month)" value={`KES ${monthMaintenanceSpend.toLocaleString()}`} icon="🔧" colorKey="amber" onClick={() => setModal('maintenance_spend')}
               sub={pendingMaintenanceExpenses.length > 0 ? `${pendingMaintenanceExpenses.length} awaiting confirmation` : 'confirmed this month'} />
           )}
           {pendingUnits?.filter(h => !h.rejection_reason).length > 0 && (
@@ -1085,6 +1108,84 @@ export default function Dashboard() {
             ]} />
           ))} />
           <SeeMoreFooter onClick={() => navigate('/maintenance')} />
+        </Modal>
+      )}
+
+      {modal === 'expenses' && (
+        <Modal title={`Expenses — KES ${monthExpensesTotal.toLocaleString()} this month`} onClose={() => setModal(null)}>
+          {expensesByCategory.length > 0 && (
+            <div style={{ padding: '16px 24px', borderBottom: '1px solid var(--border)' }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 10 }}>
+                By category
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {expensesByCategory.map(([cat, amt]) => (
+                  <div key={cat} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <div style={{ width: 110, flexShrink: 0, fontSize: 12, fontWeight: 600, color: 'var(--text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{cat}</div>
+                    <div style={{ flex: 1, height: 7, borderRadius: 99, background: 'var(--surface2)', overflow: 'hidden' }}>
+                      <div style={{ height: '100%', width: `${monthExpensesTotal > 0 ? (amt / monthExpensesTotal) * 100 : 0}%`, borderRadius: 99, background: 'var(--red, #dc2626)' }} />
+                    </div>
+                    <div style={{ width: 90, flexShrink: 0, textAlign: 'right', fontSize: 12, fontWeight: 700, color: 'var(--text)' }}>KES {amt.toLocaleString()}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {allPendingExpenses.length > 0 && (
+            <div style={{ padding: '16px 24px', borderBottom: '1px solid var(--border)' }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--amber, #d97706)', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 10 }}>
+                ⏳ Awaiting confirmation ({allPendingExpenses.length})
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                {allPendingExpenses.map(e => (
+                  <div key={e.id} style={{
+                    display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12,
+                    padding: '10px 14px', borderRadius: 10, background: 'var(--surface2)',
+                  }}>
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ fontWeight: 700, fontSize: 13, color: 'var(--text)' }}>
+                        KES {Number(e.amount).toLocaleString()} — {e.category || 'Other'}
+                      </div>
+                      <div style={{ fontSize: 12, color: 'var(--muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        {e.plot_name || 'General'}{e.unit_number ? ` · Unit ${e.unit_number}` : ''} · {e.description || '—'}
+                        {e.created_by_name ? ` · logged by ${e.created_by_name}` : ''}
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+                      {can('expenses.edit', e.plot_id) && (
+                        <button type="button" onClick={() => confirmExpense(e.id)} style={{
+                          padding: '6px 12px', borderRadius: 8, border: 'none', background: 'var(--green, #16a34a)',
+                          color: '#fff', fontWeight: 700, fontSize: 12, cursor: 'pointer',
+                        }}>Confirm</button>
+                      )}
+                      {can('expenses.delete', e.plot_id) && (
+                        <button type="button" onClick={() => rejectExpense(e)} style={{
+                          padding: '6px 12px', borderRadius: 8, border: '1px solid var(--red, #dc2626)', background: 'transparent',
+                          color: 'var(--red, #dc2626)', fontWeight: 700, fontSize: 12, cursor: 'pointer',
+                        }}>Reject</button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {confirmedExpensesThisMonth.length === 0 ? (
+            <div style={{ padding: 40, textAlign: 'center', color: 'var(--muted)' }}>No confirmed expenses this month yet.</div>
+          ) : (
+            <Table headers={['Date', 'Property', 'Category', 'Description', 'Amount']} rows={confirmedExpensesThisMonth.map((e, i) => (
+              <TR key={e.id} i={i} cells={[
+                { value: new Date(e.expense_date).toLocaleDateString('en-KE'), style: { color: 'var(--muted)' } },
+                { value: e.plot_name ? `${e.plot_name}${e.unit_number ? ` · Unit ${e.unit_number}` : ''}` : 'General', style: { fontWeight: 600, color: 'var(--text)' } },
+                { value: e.category || 'Other', style: { color: 'var(--text)' } },
+                { value: e.description || '—', style: { color: 'var(--text)' } },
+                { value: `KES ${Number(e.amount).toLocaleString()}`, style: { fontWeight: 700, color: 'var(--red, #dc2626)' } },
+              ]} />
+            ))} />
+          )}
+          <SeeMoreFooter onClick={() => navigate('/expenses')} />
         </Modal>
       )}
 
