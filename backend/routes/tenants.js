@@ -467,18 +467,16 @@ router.delete('/:id', staffAuth, async (req, res) => {
 // payments.tenant_id and maintenance_requests.tenant_id have no ON DELETE
 // rule in schema.sql (defaults to RESTRICT), so a plain DELETE FROM tenants
 // would fail with a foreign-key violation for almost any real tenant — one
-// who has ever made a payment or filed a maintenance request. Rather than
-// destroying that financial/maintenance history (this app has gone out of
-// its way everywhere else to preserve exactly this kind of record — audit
-// logs, confirmed/pending expense trails, etc.), those rows are detached
-// instead: tenant_id is set to NULL on them before the tenant row is
-// deleted, so the payment/work-order records survive, just no longer
-// pointing at a person. tenant_activity_log / notice_reads / tenant_otps
-// already CASCADE on tenants(id) via earlier migrations, and
-// deposit_transactions already SET NULLs — so those clean up on their own.
-// All of this runs in one transaction so a failure partway through can't
-// leave the tenant detached from their payments but still present, or vice
-// versa.
+// who has ever made a payment or filed a maintenance request. Per explicit
+// instruction, this erase is a true cascade: every payment and maintenance
+// request belonging to this tenant is deleted along with them, not just
+// detached — "permanently erase" means the tenant's whole trail disappears,
+// not just the person record. tenant_activity_log / notice_reads /
+// tenant_otps already CASCADE on tenants(id) via earlier migrations, and
+// deposit_transactions already SET NULLs — so those clean up on their own
+// regardless. All of this runs in one transaction so a failure partway
+// through can't leave payments/requests deleted but the tenant still
+// present, or vice versa.
 const PERMANENT_ERASE_EMAIL = 'cfcbobby@tutamail.com';
 
 router.delete('/:id/permanent', staffAuth, async (req, res) => {
@@ -501,8 +499,8 @@ router.delete('/:id/permanent', staffAuth, async (req, res) => {
     const tenant = tenantRes.rows[0];
 
     await client.query('BEGIN');
-    await client.query('UPDATE payments SET tenant_id = NULL WHERE tenant_id = $1', [tenant.id]);
-    await client.query('UPDATE maintenance_requests SET tenant_id = NULL WHERE tenant_id = $1', [tenant.id]);
+    await client.query('DELETE FROM payments WHERE tenant_id = $1', [tenant.id]);
+    await client.query('DELETE FROM maintenance_requests WHERE tenant_id = $1', [tenant.id]);
     await client.query('DELETE FROM tenants WHERE id = $1', [tenant.id]);
     if (tenant.house_id) {
       await client.query(

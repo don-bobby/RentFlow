@@ -568,10 +568,10 @@ export default function Tenants() {
       {/* Permanent Erase Modal — admin-only (cfcbobby@tutamail.com), gated
           behind typing the tenant's exact full name since this is the one
           irreversible action in the whole app: the tenant row itself is
-          deleted outright, not deactivated. Their payments and maintenance
-          requests are kept but detached (tenant_id set to NULL) rather than
-          deleted, so financial/work history survives; only the person
-          record itself is gone for good. */}
+          deleted outright, not deactivated, and (per explicit instruction)
+          their payments and maintenance requests are deleted along with
+          them rather than kept — the whole trail disappears, not just the
+          person record. */}
       {eraseModal && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, padding: 20 }}>
           <div style={{ background: 'var(--surface)', borderRadius: 16, padding: 28, width: '100%', maxWidth: 440, boxShadow: 'var(--shadow-lg)', border: '2px solid var(--red, #dc2626)' }}>
@@ -579,8 +579,7 @@ export default function Tenants() {
               Permanently Erase Tenant
             </h2>
             <p style={{ color: 'var(--muted)', fontSize: 13, marginBottom: 14, lineHeight: 1.5 }}>
-              This deletes <strong>{eraseModal.full_name}</strong>'s record outright. It cannot be undone — unlike Deactivate.
-              Their existing payments and maintenance requests are kept for your records but will no longer show their name.
+              This deletes <strong>{eraseModal.full_name}</strong>'s record outright, along with all of their payment history and maintenance requests. It cannot be undone — unlike Deactivate.
             </p>
             {eraseError && <div style={{ background: isDark ? hexToRgba('#dc2626', 0.2) : 'var(--red-light)', color: isDark ? '#f87171' : 'var(--red)', padding: '10px 14px', borderRadius: 8, marginBottom: 14, fontSize: 13 }}>{eraseError}</div>}
             <div style={{ marginBottom: 20 }}>
