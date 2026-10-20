@@ -508,6 +508,7 @@ export default function Dashboard() {
       return acc;
     }, {})
   ).sort((a, b) => b[1] - a[1]);
+  const netIncomeMonth = monthRevenue - monthExpensesTotal;
 
   // Confirm/reject act straight on the dashboard's own expenses list (no
   // extra fetch) — everything derived above (the tile, the modal's two
@@ -562,12 +563,21 @@ export default function Dashboard() {
     .sort((a, b) => b.amount - a.amount)
     .slice(0, 5);
 
-  // Pending dues — tenants owing rent, with an approximate "months behind"
-  // (balance ÷ their unit's rent). Approximate, not a precise day count.
+  // Pending dues — tenants owing rent, ranked highest balance first (this
+  // IS the "Top Unpaid Tenants" list — unit/property added here so it's
+  // enough to act on without opening the full Unpaid Rent modal), with an
+  // approximate "months behind" (balance ÷ their unit's rent). Approximate,
+  // not a precise day count.
   const pendingDues = unpaidTenants.map(t => {
     const house = houses.find(h => h.id === t.house_id);
+    const plot  = plots.find(p => p.id === house?.plot_id);
     const rent  = parseFloat(house?.rent_amount || 0) || 1;
-    return { ...t, monthsBehind: Math.max(1, Math.round(parseFloat(t.balance || 0) / rent)) };
+    return {
+      ...t,
+      monthsBehind: Math.max(1, Math.round(parseFloat(t.balance || 0) / rent)),
+      unitNumber: house?.unit_number,
+      plotName: plot?.name,
+    };
   }).sort((a, b) => parseFloat(b.balance || 0) - parseFloat(a.balance || 0)).slice(0, 6);
 
   // Properties overview (stands in for the map — real per-property stats
@@ -686,6 +696,10 @@ export default function Dashboard() {
           {can('expenses.view') && (
             <StatCard label="Expenses (Month)" value={`KES ${monthExpensesTotal.toLocaleString()}`} icon="🧾" colorKey="red" onClick={() => setModal('expenses')}
               sub={allPendingExpenses.length > 0 ? `${allPendingExpenses.length} awaiting confirmation` : 'confirmed this month'} />
+          )}
+          {can('expenses.view') && (
+            <StatCard label="Net Income (Month)" value={`KES ${netIncomeMonth.toLocaleString()}`} icon={netIncomeMonth >= 0 ? '📈' : '📉'} colorKey={netIncomeMonth >= 0 ? 'green' : 'red'} onClick={() => setModal('net_income')}
+              sub="revenue minus expenses" />
           )}
           {maintenanceExpenses.length > 0 && (
             <StatCard label="Maintenance Spend (Month)" value={`KES ${monthMaintenanceSpend.toLocaleString()}`} icon="🔧" colorKey="amber" onClick={() => setModal('maintenance_spend')}
@@ -845,7 +859,10 @@ export default function Dashboard() {
                 }}>
                   <div style={{ minWidth: 0 }}>
                     <div style={{ fontWeight: 700, fontSize: 13, color: isDark ? '#f1f5f9' : '#0f172a', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{t.full_name}</div>
-                    <div style={{ fontSize: 11, color: 'var(--muted)' }}>KES {parseFloat(t.balance).toLocaleString()} owed</div>
+                    <div style={{ fontSize: 11, color: 'var(--muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      KES {parseFloat(t.balance).toLocaleString()} owed
+                      {t.plotName ? ` · ${t.plotName}${t.unitNumber ? ` Unit ${t.unitNumber}` : ''}` : ''}
+                    </div>
                   </div>
                   <span style={{ flexShrink: 0, fontSize: 11, fontWeight: 700, padding: '3px 10px', borderRadius: 99, background: isDark ? 'rgba(248,113,113,0.15)' : '#fee2e2', color: isDark ? '#f87171' : '#dc2626' }}>
                     {t.monthsBehind} mo{t.monthsBehind !== 1 ? 's' : ''} behind
@@ -1186,6 +1203,35 @@ export default function Dashboard() {
             ))} />
           )}
           <SeeMoreFooter onClick={() => navigate('/expenses')} />
+        </Modal>
+      )}
+
+      {modal === 'net_income' && (
+        <Modal title={`Net Income — KES ${netIncomeMonth.toLocaleString()} this month`} onClose={() => setModal(null)}>
+          <div style={{ padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '14px 18px', borderRadius: 10, background: 'var(--surface2)' }}>
+              <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>💰 Revenue collected this month</span>
+              <span style={{ fontSize: 15, fontWeight: 700, color: 'var(--blue, #2563eb)' }}>KES {monthRevenue.toLocaleString()}</span>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '14px 18px', borderRadius: 10, background: 'var(--surface2)' }}>
+              <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>🧾 Expenses confirmed this month</span>
+              <span style={{ fontSize: 15, fontWeight: 700, color: 'var(--red, #dc2626)' }}>− KES {monthExpensesTotal.toLocaleString()}</span>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px 18px', borderRadius: 10, border: `2px solid ${netIncomeMonth >= 0 ? 'var(--green, #16a34a)' : 'var(--red, #dc2626)'}` }}>
+              <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--text)' }}>Net income</span>
+              <span style={{ fontSize: 18, fontWeight: 800, color: netIncomeMonth >= 0 ? 'var(--green, #16a34a)' : 'var(--red, #dc2626)' }}>
+                {netIncomeMonth >= 0 ? '' : '− '}KES {Math.abs(netIncomeMonth).toLocaleString()}
+              </span>
+            </div>
+            <div style={{ display: 'flex', gap: 10, marginTop: 4 }}>
+              <button type="button" onClick={() => setModal('revenue')} style={{ flex: 1, padding: '9px 14px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontWeight: 600, fontSize: 13, cursor: 'pointer' }}>
+                View Revenue
+              </button>
+              <button type="button" onClick={() => setModal('expenses')} style={{ flex: 1, padding: '9px 14px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontWeight: 600, fontSize: 13, cursor: 'pointer' }}>
+                View Expenses
+              </button>
+            </div>
+          </div>
         </Modal>
       )}
 
