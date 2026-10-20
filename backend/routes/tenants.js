@@ -456,4 +456,83 @@ router.delete('/:id', staffAuth, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// PERMANENT ERASE — hard-deletes the tenant row itself, irreversibly.
+// Restricted to a single named account (Bob's own admin login), not to the
+// admin ROLE in general — per his explicit instruction that nobody else,
+// including other admins, should have this. That's why the check below is
+// a literal email comparison instead of a permissions.includes() lookup
+// like every other route in this app: there is deliberately no permission
+// row, override, or toggle anywhere that can grant this to anyone else.
+//
+// payments.tenant_id and maintenance_requests.tenant_id have no ON DELETE
+// rule in schema.sql (defaults to RESTRICT), so a plain DELETE FROM tenants
+// would fail with a foreign-key violation for almost any real tenant — one
+// who has ever made a payment or filed a maintenance request. Rather than
+// destroying that financial/maintenance history (this app has gone out of
+// its way everywhere else to preserve exactly this kind of record — audit
+// logs, confirmed/pending expense trails, etc.), those rows are detached
+// instead: tenant_id is set to NULL on them before the tenant row is
+// deleted, so the payment/work-order records survive, just no longer
+// pointing at a person. tenant_activity_log / notice_reads / tenant_otps
+// already CASCADE on tenants(id) via earlier migrations, and
+// deposit_transactions already SET NULLs — so those clean up on their own.
+// All of this runs in one transaction so a failure partway through can't
+// leave the tenant detached from their payments but still present, or vice
+// versa.
+const PERMANENT_ERASE_EMAIL = 'cfcbobby@tutamail.com';
+
+router.delete('/:id/permanent', staffAuth, async (req, res) => {
+  if (!req.user?.email || req.user.email.toLowerCase() !== PERMANENT_ERASE_EMAIL) {
+    return res.status(403).json({ error: 'Permanent erase is restricted to a single admin account.' });
+  }
+
+  const client = await pool.connect();
+  try {
+    const tenantRes = await client.query(
+      `SELECT t.id, t.full_name, t.national_id, t.phone, t.house_id, p.id AS plot_id_actual
+       FROM tenants t LEFT JOIN houses h ON t.house_id = h.id LEFT JOIN plots p ON h.plot_id = p.id
+       WHERE t.id = $1`,
+      [req.params.id]
+    );
+    if (tenantRes.rows.length === 0) {
+      client.release();
+      return res.status(404).json({ error: 'Tenant not found' });
+    }
+    const tenant = tenantRes.rows[0];
+
+    await client.query('BEGIN');
+    await client.query('UPDATE payments SET tenant_id = NULL WHERE tenant_id = $1', [tenant.id]);
+    await client.query('UPDATE maintenance_requests SET tenant_id = NULL WHERE tenant_id = $1', [tenant.id]);
+    await client.query('DELETE FROM tenants WHERE id = $1', [tenant.id]);
+    if (tenant.house_id) {
+      await client.query(
+        "UPDATE houses SET status='vacant', status_changed_at=NOW() WHERE id=$1 AND status != 'vacant'",
+        [tenant.house_id]
+      );
+    }
+    await client.query('COMMIT');
+
+    await logAudit({
+      user: req.user,
+      action: 'tenant.permanent_erase',
+      entityType: 'tenant',
+      entityId: tenant.id,
+      changes: {
+        erased_record: {
+          full_name: tenant.full_name,
+          national_id: tenant.national_id,
+          phone: tenant.phone,
+        },
+      },
+    });
+
+    res.json({ success: true, message: 'Tenant permanently erased' });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
+  }
+});
+
 module.exports = router;

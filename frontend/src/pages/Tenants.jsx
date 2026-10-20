@@ -49,7 +49,18 @@ export default function Tenants() {
   const [pinError,  setPinError]  = useState('');
   const [pinSuccess,setPinSuccess]= useState('');
 
-  const { can }   = useAuth();
+  const [deactivatingId, setDeactivatingId] = useState(null);
+
+  // Erase modal — typing the tenant's own name is the confirmation gate,
+  // since a plain window.confirm() is too easy to click through for
+  // something this irreversible (unlike Deactivate, which just flips a
+  // flag and can be undone by re-editing the tenant).
+  const [eraseModal,   setEraseModal]   = useState(null); // tenant object
+  const [eraseConfirm, setEraseConfirm] = useState('');
+  const [eraseSaving,  setEraseSaving]  = useState(false);
+  const [eraseError,   setEraseError]   = useState('');
+
+  const { can, user } = useAuth();
   // A flat global check misses a property-specific GRANT — someone whose
   // role doesn't have tenants.create at all, but who was given it for just
   // one property via an override, has no entry in user.permissions and so
@@ -155,6 +166,43 @@ export default function Tenants() {
     } finally { setPinSaving(false); }
   }
 
+  async function handleDeactivate(t) {
+    if (!window.confirm(`Deactivate ${t.full_name}? This frees their unit and blocks their tenant portal login. Their payment and maintenance history is kept, and this can be undone later by re-editing the tenant.`)) return;
+    setDeactivatingId(t.id);
+    try {
+      await API.delete(`/tenants/${t.id}`);
+      await load();
+    } catch (e) {
+      alert(e.response?.data?.error || 'Failed to deactivate tenant.');
+    } finally {
+      setDeactivatingId(null);
+    }
+  }
+
+  function openErase(t) {
+    setEraseModal(t);
+    setEraseConfirm('');
+    setEraseError('');
+  }
+
+  async function handleErase() {
+    if (!eraseModal) return;
+    if (eraseConfirm.trim() !== eraseModal.full_name) {
+      setEraseError('Type the tenant\'s full name exactly to confirm.');
+      return;
+    }
+    setEraseSaving(true); setEraseError('');
+    try {
+      await API.delete(`/tenants/${eraseModal.id}/permanent`);
+      setEraseModal(null);
+      await load();
+    } catch (e) {
+      setEraseError(e.response?.data?.error || 'Failed to erase tenant.');
+    } finally {
+      setEraseSaving(false);
+    }
+  }
+
   function tenantPlotName(t) {
     return t.plot_name || allHouses.find(h => h.id === t.house_id)?.plot_name || '—';
   }
@@ -174,7 +222,13 @@ export default function Tenants() {
   // permission again, but for that row's specific property, since an
   // override could grant or revoke it for just one — so a particular row
   // can still end up with no buttons even when this is true.
-  const canManageAny = can('tenants.edit') || can('tenants.set_pin');
+  const canDeactivateAny = can('tenants.deactivate');
+  // Not a permissions.includes() check like everything else here — this is
+  // deliberately hardcoded to one specific login, per Bob's instruction
+  // that permanent erase belongs to his account alone, not the admin role
+  // (so another admin account, if one is ever created, does NOT get this).
+  const isEraseAdmin = user?.email?.toLowerCase() === 'cfcbobby@tutamail.com';
+  const canManageAny = can('tenants.edit') || can('tenants.set_pin') || canDeactivateAny || isEraseAdmin;
 
   const propertyOptions = [...new Set(allHouses.map(h => h.plot_name).filter(Boolean))].sort();
 
@@ -367,7 +421,8 @@ export default function Tenants() {
                 const plotId     = tenantPlotId(t);
                 const canEditRow = can('tenants.edit', plotId);
                 const canSetPin  = can('tenants.set_pin', plotId);
-                const canManageRow = canEditRow || canSetPin;
+                const canDeactivateRow = can('tenants.deactivate', plotId);
+                const canManageRow = canEditRow || canSetPin || canDeactivateRow || isEraseAdmin;
                 return (
                 <tr key={t.id} style={{ borderTop: '1px solid var(--border)', background: i % 2 === 0 ? 'var(--surface)' : 'var(--surface2)' }}>
                   <td style={{ padding: '13px 20px' }}>
@@ -436,6 +491,26 @@ export default function Tenants() {
                             Set PIN
                           </button>
                         )}
+                        {canDeactivateRow && t.is_active && (
+                          <button onClick={() => handleDeactivate(t)} disabled={deactivatingId === t.id} style={{
+                            padding: '5px 14px', borderRadius: 8, border: 'none',
+                            background: isDark ? hexToRgba('#d97706', 0.22) : 'var(--amber-light, #fef3c7)',
+                            color: isDark ? '#fbbf24' : 'var(--amber, #b45309)',
+                            fontSize: 12, fontWeight: 600, cursor: 'pointer',
+                          }}>
+                            {deactivatingId === t.id ? 'Deactivating...' : 'Deactivate'}
+                          </button>
+                        )}
+                        {isEraseAdmin && (
+                          <button onClick={() => openErase(t)} style={{
+                            padding: '5px 14px', borderRadius: 8, border: 'none',
+                            background: isDark ? hexToRgba('#dc2626', 0.22) : 'var(--red-light)',
+                            color: isDark ? '#f87171' : 'var(--red, #dc2626)',
+                            fontSize: 12, fontWeight: 600, cursor: 'pointer',
+                          }}>
+                            Erase
+                          </button>
+                        )}
                       </div>
                     </td>
                   ) : (
@@ -484,6 +559,51 @@ export default function Tenants() {
               <button onClick={() => setPinModal(null)} style={{ padding: '10px 20px', borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface)', fontWeight: 600, fontSize: 14, color: 'var(--text)' }}>Close</button>
               <button onClick={handleSetPin} disabled={pinSaving} style={{ padding: '10px 20px', borderRadius: 10, border: 'none', background: 'var(--primary, #7c3aed)', color: '#fff', fontWeight: 600, fontSize: 14 }}>
                 {pinSaving ? 'Saving...' : 'Set PIN'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Permanent Erase Modal — admin-only (cfcbobby@tutamail.com), gated
+          behind typing the tenant's exact full name since this is the one
+          irreversible action in the whole app: the tenant row itself is
+          deleted outright, not deactivated. Their payments and maintenance
+          requests are kept but detached (tenant_id set to NULL) rather than
+          deleted, so financial/work history survives; only the person
+          record itself is gone for good. */}
+      {eraseModal && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, padding: 20 }}>
+          <div style={{ background: 'var(--surface)', borderRadius: 16, padding: 28, width: '100%', maxWidth: 440, boxShadow: 'var(--shadow-lg)', border: '2px solid var(--red, #dc2626)' }}>
+            <h2 style={{ fontFamily: 'Space Grotesk', fontWeight: 700, fontSize: 18, marginBottom: 6, color: 'var(--red, #dc2626)' }}>
+              Permanently Erase Tenant
+            </h2>
+            <p style={{ color: 'var(--muted)', fontSize: 13, marginBottom: 14, lineHeight: 1.5 }}>
+              This deletes <strong>{eraseModal.full_name}</strong>'s record outright. It cannot be undone — unlike Deactivate.
+              Their existing payments and maintenance requests are kept for your records but will no longer show their name.
+            </p>
+            {eraseError && <div style={{ background: isDark ? hexToRgba('#dc2626', 0.2) : 'var(--red-light)', color: isDark ? '#f87171' : 'var(--red)', padding: '10px 14px', borderRadius: 8, marginBottom: 14, fontSize: 13 }}>{eraseError}</div>}
+            <div style={{ marginBottom: 20 }}>
+              <label style={labelStyle}>Type <strong>{eraseModal.full_name}</strong> to confirm</label>
+              <input
+                type="text" value={eraseConfirm} onChange={e => setEraseConfirm(e.target.value)}
+                placeholder={eraseModal.full_name}
+                style={inputStyle}
+              />
+            </div>
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+              <button onClick={() => setEraseModal(null)} style={{ padding: '10px 20px', borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface)', fontWeight: 600, fontSize: 14, color: 'var(--text)' }}>Cancel</button>
+              <button
+                onClick={handleErase}
+                disabled={eraseSaving || eraseConfirm.trim() !== eraseModal.full_name}
+                style={{
+                  padding: '10px 20px', borderRadius: 10, border: 'none',
+                  background: 'var(--red, #dc2626)', color: '#fff', fontWeight: 600, fontSize: 14,
+                  opacity: (eraseConfirm.trim() !== eraseModal.full_name) ? 0.5 : 1,
+                  cursor: (eraseConfirm.trim() !== eraseModal.full_name) ? 'not-allowed' : 'pointer',
+                }}
+              >
+                {eraseSaving ? 'Erasing...' : 'Erase Permanently'}
               </button>
             </div>
           </div>
