@@ -616,7 +616,7 @@ export default function Properties() {
               overflow: 'hidden', transition: 'box-shadow 0.4s ease, border-color 0.4s ease',
             }}>
               {/* Plot header */}
-              <div style={{ padding: '18px 24px', borderBottom: '1px solid var(--border, #cbd5e1)', display: 'flex', flexWrap: 'wrap', gap: 16, justifyContent: 'space-between', alignItems: 'center', background: 'var(--surface2, #f1f5f9)' }}>
+              <div onClick={() => togglePlotExpanded(plot.id)} style={{ padding: '18px 24px', borderBottom: '1px solid var(--border, #cbd5e1)', display: 'flex', flexWrap: 'wrap', gap: 16, justifyContent: 'space-between', alignItems: 'center', background: 'var(--surface2, #f1f5f9)', cursor: 'pointer' }}>
                 <div>
                   <div style={{ fontFamily: 'Space Grotesk', fontWeight: 700, fontSize: 17, marginBottom: 8, color: 'var(--text)' }}>{plot.name}</div>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
@@ -685,12 +685,12 @@ export default function Properties() {
                 })()}
 
                 <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                  <button onClick={() => togglePlotExpanded(plot.id)} aria-label={expanded ? 'Collapse units' : 'Expand units'} title={expanded ? 'Collapse units' : 'Expand units'} style={{
+                  <span aria-hidden="true" title={expanded ? 'Collapse units' : 'Expand units'} style={{
                     width: 30, height: 30, borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: 'var(--text)', flexShrink: 0,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text)', flexShrink: 0,
                   }}>
                     <span style={{ display: 'inline-block', fontSize: 11, transition: 'transform 0.2s ease', transform: expanded ? 'rotate(0deg)' : 'rotate(-90deg)' }}>▾</span>
-                  </button>
+                  </span>
                   <span style={{ background: isDark ? 'rgba(124,58,237,0.25)' : 'var(--primary-light)', color: isDark ? '#c4b5fd' : 'var(--primary)', padding: '4px 12px', borderRadius: 99, fontSize: 12, fontWeight: 600 }}>
                     {allPlotHouses(plot.id).length} units
                   </span>
