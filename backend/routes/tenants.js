@@ -493,8 +493,10 @@ router.delete('/:id/permanent', staffAuth, async (req, res) => {
       [req.params.id]
     );
     if (tenantRes.rows.length === 0) {
-      client.release();
       return res.status(404).json({ error: 'Tenant not found' });
+      // (client.release() happens once, in the single finally below —
+      // releasing here too used to double-release this same client on
+      // this exact path.)
     }
     const tenant = tenantRes.rows[0];
 
@@ -526,6 +528,10 @@ router.delete('/:id/permanent', staffAuth, async (req, res) => {
 
     res.json({ success: true, message: 'Tenant permanently erased' });
   } catch (err) {
+    // Logged server-side (this doesn't reach the browser) since the erase
+    // modal was showing a generic "Failed to erase tenant." with nothing
+    // underneath it to debug from — check this terminal for the real cause.
+    console.error('Permanent tenant erase failed:', err);
     await client.query('ROLLBACK').catch(() => {});
     res.status(500).json({ error: err.message });
   } finally {

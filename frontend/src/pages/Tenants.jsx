@@ -252,7 +252,13 @@ export default function Tenants() {
       setEraseModal(null);
       await load();
     } catch (e) {
-      setEraseError(e.response?.data?.error || 'Failed to erase tenant.');
+      // e.response?.data?.error is the server's own message when it
+      // responded at all — if there's no response (route not reachable,
+      // CORS, timeout, backend not yet restarted with this route), fall
+      // back to axios's own e.message instead of a fixed generic string,
+      // since that's usually the actual clue (e.g. "Network Error" vs.
+      // "Request failed with status code 404" vs. a real server message).
+      setEraseError(e.response?.data?.error || e.message || 'Failed to erase tenant.');
     } finally {
       setEraseSaving(false);
     }
