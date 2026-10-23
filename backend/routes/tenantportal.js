@@ -2,6 +2,7 @@ const express = require('express');
 const router  = express.Router();
 const pool    = require('../database/db');
 const jwt     = require('jsonwebtoken');
+const { VALID_PAYMENT_SQL } = require('../utils/rentLedger');
 const { logTenantActivity } = require('../utils/tenantActivity');
 
 // This never re-checked the database — it just trusted the role sitting
@@ -88,7 +89,7 @@ router.get('/arrears', tenantAuth, async (req, res) => {
       `SELECT COALESCE(for_year, EXTRACT(YEAR FROM payment_date)::int) AS year,
               COALESCE(for_month, EXTRACT(MONTH FROM payment_date)::int) AS month,
               COALESCE(SUM(amount_allocated), SUM(amount)) AS total_paid
-       FROM payments WHERE tenant_id = $1
+       FROM payments WHERE tenant_id = $1 AND ${VALID_PAYMENT_SQL}
        GROUP BY year, month`,
       [req.tenant.id]
     );

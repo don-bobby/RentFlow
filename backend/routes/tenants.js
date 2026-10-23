@@ -1,4 +1,5 @@
 const express = require('express');
+const { computeLedger, loadPaidMaps } = require('../utils/rentLedger');
 const router  = express.Router();
 const pool    = require('../database/db');
 const { logAudit, diff } = require('../utils/audit');
@@ -90,17 +91,9 @@ router.get('/', staffAuth, async (req, res) => {
           WHERE py.tenant_id = t.id AND py.method != 'balance_charge'
         ), 0) AS total_paid,
 
-        -- Dynamic balance = total due - total paid
-        GREATEST(0,
-          GREATEST(1,
-            (EXTRACT(YEAR  FROM NOW()) - EXTRACT(YEAR  FROM t.move_in_date)) * 12 +
-            (EXTRACT(MONTH FROM NOW()) - EXTRACT(MONTH FROM t.move_in_date)) + 1
-          ) * h.rent_amount -
-          COALESCE((
-            SELECT SUM(py.amount) FROM payments py
-            WHERE py.tenant_id = t.id AND py.method != 'balance_charge'
-          ), 0)
-        ) AS balance
+        -- Rent balance is computed below from the shared month-by-month
+        -- ledger (utils/rentLedger.js), not from a total-based SQL formula.
+        0 AS balance
 
       FROM tenants t
       LEFT JOIN houses h ON t.house_id = h.id
@@ -116,6 +109,12 @@ router.get('/', staffAuth, async (req, res) => {
     // narrows the rows down to ones this user actually has tenants.view
     // for, property by property.
     const visibleRows = await filterRowsByPermission(req.user, result.rows, 'tenants.view', (row) => row.plot_id);
+    const paidMaps = await loadPaidMaps(pool, visibleRows.map(r => r.id));
+    for (const r of visibleRows) {
+      r.balance = r.is_active === false ? 0 : computeLedger({
+        rent: r.rent_amount, moveInDate: r.move_in_date, paidMap: paidMaps[r.id] || {},
+      }).totalOwed;
+    }
     const data = await stripSensitiveFields(req, visibleRows);
     res.json({ success: true, data });
   } catch (err) { res.status(500).json({ error: err.message }); }

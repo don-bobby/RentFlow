@@ -5,6 +5,7 @@ const { getVisiblePlotIds } = require('../middleware/scope');
 const { authMiddleware: staffAuth } = require('../middleware/auth');
 const { requirePermission, getPermissions, filterRowsByPermission } = require('../middleware/permissions');
 const { logAudit } = require('../utils/audit');
+const { refreshTenantBalance, VALID_PAYMENT_SQL } = require('../utils/rentLedger');
 
 // GET all payments — admin/super_admin see all, agent sees their landlords',
 // landlord sees own, caretaker sees assigned (scoping lives in one place now)
@@ -108,7 +109,7 @@ router.get('/arrears/:tenantId', staffAuth, async (req, res) => {
         `SELECT COALESCE(for_year, EXTRACT(YEAR FROM payment_date)::int) AS year,
                 COALESCE(for_month, EXTRACT(MONTH FROM payment_date)::int) AS month,
                 COALESCE(SUM(amount_allocated), SUM(amount)) AS total_paid
-         FROM payments WHERE tenant_id=$1 AND status != 'pending' GROUP BY year, month`,
+         FROM payments WHERE tenant_id=$1 AND ${VALID_PAYMENT_SQL} GROUP BY year, month`,
         [req.params.tenantId]
       );
       const paidMap = {};
@@ -237,7 +238,7 @@ router.post('/', staffAuth, async (req, res) => {
         `SELECT COALESCE(for_year, EXTRACT(YEAR FROM payment_date)::int) AS year,
                 COALESCE(for_month, EXTRACT(MONTH FROM payment_date)::int) AS month,
                 COALESCE(SUM(amount_allocated), SUM(amount)) AS total_paid
-         FROM payments WHERE tenant_id=$1 AND status != 'pending' GROUP BY year, month`,
+         FROM payments WHERE tenant_id=$1 AND ${VALID_PAYMENT_SQL} GROUP BY year, month`,
         [tenant_id]
       );
       const paidMap = {};
@@ -306,19 +307,7 @@ router.post('/', staffAuth, async (req, res) => {
       insertedRows.push(row.rows[0]);
     }
 
-    const balanceRes = await pool.query(`
-      UPDATE tenants SET balance = GREATEST(0,
-        GREATEST(1,
-          (EXTRACT(YEAR  FROM NOW()) - EXTRACT(YEAR  FROM move_in_date)) * 12 +
-          (EXTRACT(MONTH FROM NOW()) - EXTRACT(MONTH FROM move_in_date)) + 1
-        ) * (SELECT rent_amount FROM houses WHERE id = tenants.house_id) -
-        COALESCE((
-          SELECT SUM(amount) FROM payments
-          WHERE tenant_id = $1 AND method != 'balance_charge'
-        ), 0)
-      ) WHERE id = $1 RETURNING balance
-    `, [tenant_id]);
-    const balanceAfter = parseFloat(balanceRes.rows[0]?.balance ?? 0);
+    const balanceAfter = await refreshTenantBalance(pool, tenant_id);
 
     // Was never logged at all — a recorded payment left no trace in the
     // audit trail, even though it changes a tenant's balance materially.
@@ -447,19 +436,7 @@ router.delete('/:id', staffAuth, async (req, res) => {
 
     let balanceAfter = balance_before;
     if (tenant_id) {
-      const balanceRes = await pool.query(`
-        UPDATE tenants SET balance = GREATEST(0,
-          GREATEST(1,
-            (EXTRACT(YEAR  FROM NOW()) - EXTRACT(YEAR  FROM move_in_date)) * 12 +
-            (EXTRACT(MONTH FROM NOW()) - EXTRACT(MONTH FROM move_in_date)) + 1
-          ) * (SELECT rent_amount FROM houses WHERE id = tenants.house_id) -
-          COALESCE((
-            SELECT SUM(amount) FROM payments
-            WHERE tenant_id = $1 AND method != 'balance_charge'
-          ), 0)
-        ) WHERE id = $1 RETURNING balance
-      `, [tenant_id]);
-      balanceAfter = balanceRes.rows[0]?.balance;
+      balanceAfter = await refreshTenantBalance(pool, tenant_id);
     }
 
     // Deleting a payment is exactly the kind of action an audit trail exists

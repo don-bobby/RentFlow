@@ -11,7 +11,7 @@ import { useAuth } from '../context/AuthContext';
 // (`adminAgentOnly` is the one existing exception to that, for 'assignments').
 const REPORTS = [
   { id: 'payments',       icon: '💳', label: 'Payment Collection',    desc: 'All rent payments received',           color: 'var(--green)',   light: 'var(--green-light)',   permission: 'reports.payment_collection' },
-  { id: 'paymenthistory', icon: '🧾', label: 'Payment History',       desc: 'One tenant\'s full rent + deposit timeline', color: 'var(--primary)', light: 'var(--primary-light)' },
+  { id: 'paymenthistory', icon: '🧾', label: 'Payment History',       desc: 'One tenant\'s full rent + deposit timeline', color: 'var(--primary)', light: 'var(--primary-light)', permission: 'reports.payment_collection' },
   { id: 'unpaid',         icon: '⚠️', label: 'Unpaid Rent',           desc: 'Outstanding balances, with aging',     color: 'var(--red)',     light: 'var(--red-light)',     permission: 'reports.unpaid_rent' },
   { id: 'tenants',        icon: '👥', label: 'Tenant List',           desc: 'All active and inactive tenants',      color: 'var(--primary)', light: 'var(--primary-light)', permission: 'reports.tenant_list' },
   { id: 'maintenance',    icon: '🔧', label: 'Maintenance Records',   desc: 'All maintenance requests by status',   color: 'var(--amber)',   light: 'var(--amber-light)',   permission: 'reports.maintenance' },
@@ -992,7 +992,9 @@ export default function Reports() {
     }
 
     if (active === 'paymenthistory') {
-      const tenant = (tenants || []).find(t => String(t.id) === String(historyTenantId));
+      // Same gate as Payment Collection — this shows the same money, per tenant
+      // (see canForPlot above for the per-property version).
+      const tenant = (tenants || []).filter(t => canForPlot('reports.payment_collection', t.plot_id, plotPermissions)).find(t => String(t.id) === String(historyTenantId));
       if (!tenant) {
         columns = []; rows = []; summary = [];
         title = 'Payment History';
@@ -1769,7 +1771,7 @@ export default function Reports() {
           {active === 'paymenthistory' && (
             <select className="rp-select" value={historyTenantId} onChange={e => setHistoryTenantId(e.target.value)}>
               <option value="">— Select a tenant —</option>
-              {(data.tenants || []).slice().sort((a, b) => a.full_name.localeCompare(b.full_name)).map(t => (
+              {(data.tenants || []).filter(t => canForPlot('reports.payment_collection', t.plot_id, data.plotPermissions)).sort((a, b) => a.full_name.localeCompare(b.full_name)).map(t => (
                 <option key={t.id} value={t.id}>{t.full_name} — {t.unit_number ? `Unit ${t.unit_number}` : `#${t.house_id || '—'}`}</option>
               ))}
             </select>
