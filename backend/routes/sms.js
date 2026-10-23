@@ -109,8 +109,8 @@ router.post('/send-reminders', auth, requireAdminOrAgent, async (req, res) => {
     for (const tenant of tenants.rows) {
       if (!tenant.phone) { results.skipped++; continue; }
       const moveIn = new Date(tenant.move_in_date);
-      let y = moveIn.getDate() === 1 ? moveIn.getFullYear() : (moveIn.getMonth() === 11 ? moveIn.getFullYear() + 1 : moveIn.getFullYear());
-      let m = moveIn.getDate() === 1 ? moveIn.getMonth() + 1 : (moveIn.getMonth() === 11 ? 1 : moveIn.getMonth() + 2);
+      let y = moveIn.getFullYear(); // billing starts in the move-in month itself (full month, no skipping)
+      let m = moveIn.getMonth() + 1;
       const unpaid = [];
       while (y < now.getFullYear() || (y === now.getFullYear() && m <= now.getMonth() + 1)) {
         const balance = parseFloat(tenant.rent_amount) - (paidMap[`${tenant.id}-${y}-${m}`] || 0);
@@ -192,8 +192,8 @@ async function attachBalances(tenantRows) {
     const rent = parseFloat(t.rent_amount || 0);
     if (!t.move_in_date || rent <= 0) return { ...t, balance: 0 };
     const moveIn = new Date(t.move_in_date);
-    let y = moveIn.getDate() === 1 ? moveIn.getFullYear() : (moveIn.getMonth() === 11 ? moveIn.getFullYear() + 1 : moveIn.getFullYear());
-    let m = moveIn.getDate() === 1 ? moveIn.getMonth() + 1 : (moveIn.getMonth() === 11 ? 1 : moveIn.getMonth() + 2);
+    let y = moveIn.getFullYear(); // billing starts in the move-in month itself (full month, no skipping)
+    let m = moveIn.getMonth() + 1;
     let balance = 0;
     while (y < now.getFullYear() || (y === now.getFullYear() && m <= now.getMonth() + 1)) {
       balance += rent - (paidMap[`${t.id}-${y}-${m}`] || 0);

@@ -62,8 +62,8 @@ cron.schedule('0 8 1 * *', async () => {
       if (!tenant.phone) continue;
 
       const moveIn = new Date(tenant.move_in_date);
-      let y = moveIn.getDate() === 1 ? moveIn.getFullYear() : (moveIn.getMonth() === 11 ? moveIn.getFullYear() + 1 : moveIn.getFullYear());
-      let m = moveIn.getDate() === 1 ? moveIn.getMonth() + 1 : (moveIn.getMonth() === 11 ? 1 : moveIn.getMonth() + 2);
+      let y = moveIn.getFullYear(); // billing starts in the move-in month itself (full month, no skipping)
+      let m = moveIn.getMonth() + 1;
 
       const unpaidMonths = [];
       while (y < now.getFullYear() || (y === now.getFullYear() && m <= now.getMonth() + 1)) {
@@ -133,8 +133,8 @@ cron.schedule('0 9 1 * *', async () => {
     const rows = [];
     for (const tenant of tenants.rows) {
       const moveIn = new Date(tenant.move_in_date);
-      let y = moveIn.getDate() === 1 ? moveIn.getFullYear() : (moveIn.getMonth() === 11 ? moveIn.getFullYear() + 1 : moveIn.getFullYear());
-      let m = moveIn.getDate() === 1 ? moveIn.getMonth() + 1 : (moveIn.getMonth() === 11 ? 1 : moveIn.getMonth() + 2);
+      let y = moveIn.getFullYear(); // billing starts in the move-in month itself (full month, no skipping)
+      let m = moveIn.getMonth() + 1;
       let owed = 0;
       while (y < now.getFullYear() || (y === now.getFullYear() && m <= now.getMonth() + 1)) {
         owed += Math.max(0, parseFloat(tenant.rent_amount) - (paidMap[`${tenant.id}-${y}-${m}`] || 0));

@@ -192,14 +192,11 @@ router.get('/unpaid-months', staffAuth, async (req, res) => {
       const rent = parseFloat(tenant.rent_amount || 0);
       const moveIn = new Date(tenant.move_in_date);
 
-      // First billing month: if moved in on the 1st, charge that month;
-      // otherwise start charging from the following month
-      const startYear  = moveIn.getDate() === 1
-        ? moveIn.getFullYear()
-        : (moveIn.getMonth() === 11 ? moveIn.getFullYear() + 1 : moveIn.getFullYear());
-      const startMonth = moveIn.getDate() === 1
-        ? moveIn.getMonth() + 1
-        : (moveIn.getMonth() === 11 ? 1 : moveIn.getMonth() + 2);
+      // First billing month is always the move-in month itself, charged at
+      // the full rent (previously a mid-month move-in skipped to the
+      // following month, so the move-in month was never billed at all).
+      const startYear  = moveIn.getFullYear();
+      const startMonth = moveIn.getMonth() + 1;
 
       const unpaidMonths = [];
       let y = startYear;

@@ -81,8 +81,8 @@ router.get('/arrears', tenantAuth, async (req, res) => {
     if (!move_in_date) return res.json({ success: true, data: [] });
 
     const moveIn = new Date(move_in_date);
-    let y = moveIn.getDate() === 1 ? moveIn.getFullYear() : (moveIn.getMonth() === 11 ? moveIn.getFullYear() + 1 : moveIn.getFullYear());
-    let m = moveIn.getDate() === 1 ? moveIn.getMonth() + 1 : (moveIn.getMonth() === 11 ? 1 : moveIn.getMonth() + 2);
+    let y = moveIn.getFullYear(); // billing starts in the move-in month itself (full month, no skipping)
+    let m = moveIn.getMonth() + 1;
 
     const paid = await pool.query(
       `SELECT COALESCE(for_year, EXTRACT(YEAR FROM payment_date)::int) AS year,
