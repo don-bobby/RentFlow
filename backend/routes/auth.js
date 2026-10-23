@@ -34,13 +34,16 @@ router.get('/me', liveAuthMiddleware, async (req, res) => {
   try {
     const { profile, permissions } = await getPermissions(req.user);
 
-    // Landlords previously had no way to see WHICH agent manages them, only
-    // the raw agent_id was ever exposed (or nothing at all, from the UI's
-    // point of view). Resolve it to a name here.
+    // Which agent(s) manage this landlord's properties — agents are
+    // assigned per property now, so a landlord can have several (or none).
     let agent_name = null;
-    if (req.user.agent_id) {
-      const a = await pool.query('SELECT name FROM users WHERE id = $1', [req.user.agent_id]);
-      agent_name = a.rows[0]?.name || null;
+    if (req.user.role === 'landlord') {
+      const a = await pool.query(
+        `SELECT STRING_AGG(DISTINCT ag.name, ', ') AS names
+         FROM plots p JOIN users ag ON ag.id = p.agent_id WHERE p.user_id = $1`,
+        [req.user.id]
+      );
+      agent_name = a.rows[0]?.names || null;
     }
 
     // `permissions` above only ever reflects role defaults + GLOBAL overrides
@@ -362,8 +365,9 @@ router.get('/users', authMiddleware, async (req, res) => {
       );
 
     } else if (req.user.role === 'agent') {
-      // Agents see: themselves, the landlords assigned to them (agent_id = their id),
-      // and caretakers reachable through those landlords' plots — via either the
+      // Agents see: themselves, landlords who own at least one property they
+      // manage (or whom they onboarded), and caretakers on the properties
+      // they manage — via either the
       // legacy single u.plot_id assignment or the multi-plot caretaker_plots table.
       result = await pool.query(
         `SELECT u.id, u.name, u.email, u.role, u.phone, u.is_approved, u.plot_id, u.agent_id, u.created_at,
@@ -382,13 +386,16 @@ router.get('/users', authMiddleware, async (req, res) => {
            GROUP BY cp.caretaker_id
          ) ctp ON ctp.user_id = u.id AND u.role = 'caretaker'
          WHERE u.id = $1
-            OR (u.role = 'landlord' AND u.agent_id = $1)
+            OR (u.role = 'landlord' AND (
+                  u.agent_id = $1
+                  OR EXISTS (SELECT 1 FROM plots p WHERE p.user_id = u.id AND p.agent_id = $1)
+                ))
             OR (u.role = 'caretaker' AND (
-                  u.plot_id IN (SELECT id FROM plots WHERE user_id IN (SELECT id FROM users WHERE agent_id = $1))
+                  u.plot_id IN (SELECT id FROM plots WHERE agent_id = $1)
                   OR u.id IN (
                     SELECT cp.caretaker_id FROM caretaker_plots cp
                     JOIN plots p ON p.id = cp.plot_id
-                    WHERE p.user_id IN (SELECT id FROM users WHERE agent_id = $1)
+                    WHERE p.agent_id = $1
                   )
                 ))
          ORDER BY u.created_at DESC`,
@@ -415,48 +422,22 @@ router.get('/users/pending-landlords-count', authMiddleware, requireAdmin, async
   }
 });
 
-// ── PATCH /api/auth/users/:id/approve (admin approves a landlord) ─────────────
-// Body may optionally include { agent_id }: if given, the landlord is
-// approved AND assigned to that agent (switching their profile to
-// landlord_with_agent) in one step. Omit or pass null to approve as
-// self-managed (landlord_self).
-// A landlord's agent is the DEFAULT for all their properties — a plot's own
-// agent_id normally just mirrors it. Only when a plot has been deliberately
-// set to a DIFFERENT agent (a genuine one-off exception, e.g. one building
-// handled by a different agent than the rest of the portfolio) does it stay
-// untouched here. Concretely: cascade the new agent onto every plot that
-// currently matches the landlord's OLD agent (or has none set at all) —
-// never onto a plot already pointing at some other agent.
-async function cascadeAgentToPlots(landlordId, oldAgentId, newAgentId) {
-  await pool.query(
-    `UPDATE plots SET agent_id = $1
-     WHERE user_id = $2 AND (agent_id = $3 OR agent_id IS NULL)`,
-    [newAgentId, landlordId, oldAgentId]
-  );
-}
-
+// ── PATCH /api/auth/users/:id/approve (admin approves a landlord / reactivates a user) ──
+// Agents are assigned PER PROPERTY (plots.agent_id, set on the Properties
+// page) — approving a landlord no longer assigns an agent to anything, and
+// any agent_id in the body is ignored. users.agent_id is kept only as an
+// "onboarded by this agent" link so an agent can see and create properties
+// for a landlord they added before that landlord has a property of their own.
 router.patch('/users/:id/approve', authMiddleware, requireAdmin, async (req, res) => {
-  const { agent_id } = req.body;
   try {
-    if (agent_id) {
-      const agentCheck = await pool.query(`SELECT id FROM users WHERE id = $1 AND role = 'agent'`, [agent_id]);
-      if (!agentCheck.rows[0]) return res.status(400).json({ error: 'agent_id must refer to an existing agent.' });
-    }
-    const before = await pool.query('SELECT agent_id FROM users WHERE id = $1', [req.params.id]);
-    const oldAgentId = before.rows[0]?.agent_id || null;
-
     const result = await pool.query(
-      `UPDATE users SET is_approved = true, agent_id = $2 WHERE id = $1
+      `UPDATE users SET is_approved = true WHERE id = $1
        RETURNING id, name, email, role, is_approved, agent_id`,
-      [req.params.id, agent_id || null]
+      [req.params.id]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'User not found.' });
 
-    if ((agent_id || null) !== oldAgentId) {
-      await cascadeAgentToPlots(req.params.id, oldAgentId, agent_id || null);
-    }
-
-    await logAudit({ user: req.user, action: 'user.approve', entityType: 'user', entityId: req.params.id, changes: { is_approved: { from: false, to: true }, agent_id: { to: agent_id || null } } });
+    await logAudit({ user: req.user, action: 'user.approve', entityType: 'user', entityId: req.params.id, changes: { is_approved: { from: false, to: true } } });
     res.json({ success: true, user: result.rows[0] });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -473,9 +454,9 @@ router.patch('/users/:id/reject', authMiddleware, requireAdmin, async (req, res)
     if (result.rows.length === 0) return res.status(404).json({ error: 'User not found.' });
 
     // Suspending an agent isn't a delete, so the FK's ON DELETE SET NULL
-    // won't fire on its own — release their landlords explicitly so they
-    // fall back to self-managed rather than being stuck pointing at a
-    // suspended agent.
+    // won't fire on its own — release their properties (and onboarding
+    // links) explicitly so they fall back to self-managed rather than being
+    // stuck pointing at a suspended agent.
     if (result.rows[0].role === 'agent') {
       await pool.query(`UPDATE users SET agent_id = NULL WHERE agent_id = $1`, [req.params.id]);
       // Plots individually assigned to this agent (the exception case, not
@@ -485,40 +466,6 @@ router.patch('/users/:id/reject', authMiddleware, requireAdmin, async (req, res)
     }
 
     await logAudit({ user: req.user, action: 'user.reject', entityType: 'user', entityId: req.params.id, changes: { is_approved: { from: true, to: false } } });
-    res.json({ success: true, user: result.rows[0] });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// ── PATCH /api/auth/users/:id/agent (assign, change, or remove a landlord's agent)
-// Body: { agent_id } — a number to assign/change, or null/omitted to remove
-// (landlord falls back to self-managed). Admin only, since this changes
-// what a landlord can see and do system-wide.
-router.patch('/users/:id/agent', authMiddleware, requireAdmin, async (req, res) => {
-  const { agent_id } = req.body;
-  try {
-    const landlordCheck = await pool.query(`SELECT id, role, agent_id FROM users WHERE id = $1`, [req.params.id]);
-    if (!landlordCheck.rows[0]) return res.status(404).json({ error: 'User not found.' });
-    if (landlordCheck.rows[0].role !== 'landlord') {
-      return res.status(400).json({ error: 'agent_id can only be set on landlord accounts.' });
-    }
-    if (agent_id) {
-      const agentCheck = await pool.query(`SELECT id FROM users WHERE id = $1 AND role = 'agent'`, [agent_id]);
-      if (!agentCheck.rows[0]) return res.status(400).json({ error: 'agent_id must refer to an existing agent.' });
-    }
-    const oldAgentId = landlordCheck.rows[0].agent_id || null;
-
-    const result = await pool.query(
-      `UPDATE users SET agent_id = $2 WHERE id = $1 RETURNING id, name, email, role, agent_id`,
-      [req.params.id, agent_id || null]
-    );
-
-    if ((agent_id || null) !== oldAgentId) {
-      await cascadeAgentToPlots(req.params.id, oldAgentId, agent_id || null);
-    }
-
-    await logAudit({ user: req.user, action: 'user.set_agent', entityType: 'user', entityId: req.params.id, changes: { agent_id: { to: agent_id || null } } });
     res.json({ success: true, user: result.rows[0] });
   } catch (err) {
     res.status(500).json({ error: err.message });

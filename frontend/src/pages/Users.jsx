@@ -75,7 +75,6 @@ export default function Users() {
   const [roleFilter,   setRoleFilter]   = useState('all');
   const [pendingOnly,  setPendingOnly]  = useState(false); // driven by ?filter=pending
   const [approveTarget, setApproveTarget] = useState(null); // landlord being approved in the modal
-  const [selectedAgent, setSelectedAgent] = useState('');   // agent_id chosen in the approve modal
   const [form,         setForm]         = useState({ name: '', email: '', password: '', role: 'caretaker', phone: '', plot_id: '' });
 
   // Per-user-per-property permission overrides (admin only). `modal ===
@@ -245,7 +244,6 @@ export default function Users() {
 
   function openApprove(user) {
     setApproveTarget(user);
-    setSelectedAgent('');
     setError('');
     setModal('approve');
   }
@@ -254,9 +252,8 @@ export default function Users() {
     if (!approveTarget) return;
     setSaving(true); setError('');
     try {
-      const agentId = selectedAgent ? parseInt(selectedAgent) : null;
-      await API.patch(`/auth/users/${approveTarget.id}/approve`, { agent_id: agentId });
-      setUsers(us => us.map(u => u.id === approveTarget.id ? { ...u, is_approved: true, agent_id: agentId } : u));
+      await API.patch(`/auth/users/${approveTarget.id}/approve`);
+      setUsers(us => us.map(u => u.id === approveTarget.id ? { ...u, is_approved: true } : u));
       // The sidebar/topbar "pending landlords" badge (Layout.jsx) only
       // otherwise refreshes on a 30s poll — fire this so it updates
       // immediately instead of looking stale right after an approval.
@@ -271,7 +268,7 @@ export default function Users() {
 
   async function handleReject(user) {
     const extra = user.role === 'agent'
-      ? ' Their landlords will be switched to self-managed and will NOT be reassigned automatically if you reactivate this agent.'
+      ? ' Every property they manage will become self-managed and will NOT be reassigned automatically if you reactivate this agent.'
       : '';
     if (!window.confirm(`Suspend ${user.name}? They will lose access until re-approved.${extra}`)) return;
     try {
@@ -294,16 +291,6 @@ export default function Users() {
       await API.patch(`/auth/users/${user.id}/approve`, { agent_id: null });
       setUsers(us => us.map(u => u.id === user.id ? { ...u, is_approved: true } : u));
     } catch (e) { alert(e.response?.data?.error || 'Failed to reactivate user.'); }
-  }
-
-  // Reassign (or clear) an already-approved landlord's agent — separate from
-  // the approve dialog, which only sets this at approval time.
-  async function handleAgentChange(user, newAgentId) {
-    try {
-      const agentId = newAgentId ? parseInt(newAgentId) : null;
-      await API.patch(`/auth/users/${user.id}/agent`, { agent_id: agentId });
-      setUsers(us => us.map(u => u.id === user.id ? { ...u, agent_id: agentId } : u));
-    } catch (e) { alert(e.response?.data?.error || 'Failed to update agent.'); }
   }
 
   async function handleResetPassword(user) {
@@ -703,16 +690,8 @@ export default function Users() {
                     <button onClick={() => { openApprove(selected); setModal(null); }} style={{ padding: '9px', borderRadius: 7, border: 'none', background: 'var(--green, #16a34a)', color: '#fff', fontWeight: 600, fontSize: 12.5, cursor: 'pointer' }}>✓ Approve landlord</button>
                   )}
                   {selected.role === 'landlord' && selected.is_approved && (
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <span style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--muted)', whiteSpace: 'nowrap' }}>Agent:</span>
-                      <select
-                        value={selected.agent_id || ''}
-                        onChange={e => { handleAgentChange(selected, e.target.value); setSelected(s => ({ ...s, agent_id: e.target.value ? parseInt(e.target.value) : null })); }}
-                        style={{ flex: 1, padding: '6px 8px', borderRadius: 7, border: '1px solid var(--border)', background: 'var(--surface2)', fontSize: 12, color: 'var(--text)' }}
-                      >
-                        <option value="">— Self-managed —</option>
-                        {agents.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
-                      </select>
+                    <div style={{ fontSize: 11.5, color: 'var(--muted)' }}>
+                      Agents are assigned per property — change one on the Properties page. A landlord can have some properties run by an agent and others self-managed.
                     </div>
                   )}
                   <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
@@ -782,19 +761,9 @@ export default function Users() {
           <div style={{ background: 'var(--surface)', borderRadius: 16, padding: 28, width: '100%', maxWidth: 440, boxShadow: 'var(--shadow-lg)' }}>
             <h2 style={{ fontFamily: 'Space Grotesk', fontWeight: 700, fontSize: 18, marginBottom: 8 }}>Approve Landlord</h2>
             <p style={{ color: 'var(--muted)', fontSize: 13, marginBottom: 20 }}>
-              Approving <strong>{approveTarget.name}</strong>. Optionally assign an agent to manage them — leave this blank to keep them self-managed.
+              Approving <strong>{approveTarget.name}</strong>. Their properties start self-managed; assign an agent to any individual property from the Properties page.
             </p>
             {error && <div style={{ background: 'var(--red-light, #fee2e2)', color: 'var(--red, #dc2626)', padding: '9px 14px', borderRadius: 8, marginBottom: 14, fontSize: 13 }}>{error}</div>}
-            <div>
-              <label style={labelStyle}>Assign Agent (optional)</label>
-              <select value={selectedAgent} onChange={e => setSelectedAgent(e.target.value)} style={inputStyle}>
-                <option value="">— Self-managed (no agent) —</option>
-                {agents.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
-              </select>
-              {agents.length === 0 && (
-                <div style={{ color: 'var(--muted)', fontSize: 12, marginTop: 6 }}>No agents exist yet — this landlord will be approved as self-managed.</div>
-              )}
-            </div>
             <div style={{ display: 'flex', gap: 10, marginTop: 24, justifyContent: 'flex-end' }}>
               <button onClick={() => { setModal(null); setApproveTarget(null); }} style={{ padding: '10px 20px', borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface)', fontWeight: 600, fontSize: 14, cursor: 'pointer' }}>Cancel</button>
               <button onClick={handleApprove} disabled={saving} style={{ padding: '10px 20px', borderRadius: 10, border: 'none', background: 'var(--green, #16a34a)', color: '#fff', fontWeight: 600, fontSize: 14, cursor: 'pointer' }}>
@@ -839,15 +808,13 @@ export default function Users() {
                 )}
               </div>
             ) : selected.role === 'agent' ? (
-              /* Agent — read-only: these come from plots.agent_id, which is
-                 either inherited from the landlord's own agent setting or
-                 overridden per-property. There's no separate add/remove
-                 list here — reassign from the landlord's row (or the
-                 property's own edit screen for a one-off override). */
+              /* Agent — read-only: these come from each property's own
+                 plots.agent_id. Assign or change it on the property's edit
+                 screen (Properties page). */
               <div>
                 <label style={labelStyle}>Managed Properties</label>
                 <div style={{ color: 'var(--muted)', fontSize: 12, marginBottom: 10 }}>
-                  Inherited from each property's landlord, or individually overridden on the property itself.
+                  Assigned individually on each property (Properties page).
                 </div>
                 {plots.filter(p => p.agent_id === selected.id).length === 0 ? (
                   <div style={{ color: 'var(--muted)', fontSize: 13, padding: '10px 0' }}>No properties currently managed by this agent.</div>

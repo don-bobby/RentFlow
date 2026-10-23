@@ -6,13 +6,9 @@
 //
 // Chain, confirmed against the real schema:
 //   super_admin  -> all plots
-//   agent        -> plots owned by landlords where users.agent_id = agent's id,
-//                    UNION plots directly assigned via plots.agent_id (a plot
-//                    can be handed to an agent individually, independent of
-//                    whether its landlord has that agent set at all — this
-//                    second path existed in the data but was never checked
-//                    here, which made those plots invisible to the very
-//                    agent they were assigned to)
+//   agent        -> plots assigned to them via plots.agent_id. Agents are
+//                    assigned PER PROPERTY: a landlord can have one property
+//                    run by an agent and the rest self-managed.
 //   landlord     -> plots.user_id = their own id
 //   caretaker    -> plots reachable via caretaker_plots.caretaker_id
 
@@ -27,15 +23,7 @@ async function getVisiblePlotIds(user) {
       return 'ALL';
 
     case 'agent': {
-      const result = await pool.query(
-        `SELECT p.id FROM plots p
-         JOIN users landlord ON landlord.id = p.user_id
-         WHERE landlord.agent_id = $1
-         UNION
-         SELECT p.id FROM plots p
-         WHERE p.agent_id = $1`,
-        [user.id]
-      );
+      const result = await pool.query('SELECT id FROM plots WHERE agent_id = $1', [user.id]);
       return result.rows.map(r => r.id);
     }
 

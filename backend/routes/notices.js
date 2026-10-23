@@ -95,11 +95,11 @@ async function canMessage(sender, recipientId, recipientType) {
     if (recipientType === 'user') {
       // Their own landlords, or caretakers assigned to those landlords' plots
       const r = await pool.query(
-        `SELECT 1 FROM users WHERE id = $1 AND role = 'landlord' AND agent_id = $2
+        `SELECT 1 FROM plots p WHERE p.user_id = $1 AND p.agent_id = $2
          UNION
          SELECT 1 FROM users u JOIN caretaker_plots cp ON cp.caretaker_id = u.id
-           JOIN plots p ON p.id = cp.plot_id JOIN users landlord ON landlord.id = p.user_id
-           WHERE u.id = $1 AND u.role = 'caretaker' AND landlord.agent_id = $2`,
+           JOIN plots p ON p.id = cp.plot_id
+           WHERE u.id = $1 AND u.role = 'caretaker' AND p.agent_id = $2`,
         [recipientId, sender.id]
       );
       return r.rows.length > 0;
@@ -107,8 +107,7 @@ async function canMessage(sender, recipientId, recipientType) {
     if (recipientType === 'tenant') {
       const r = await pool.query(
         `SELECT 1 FROM tenants t JOIN houses h ON t.house_id = h.id JOIN plots p ON h.plot_id = p.id
-         JOIN users landlord ON landlord.id = p.user_id
-         WHERE t.id = $1 AND landlord.agent_id = $2`,
+         WHERE t.id = $1 AND p.agent_id = $2`,
         [recipientId, sender.id]
       );
       return r.rows.length > 0;
@@ -119,7 +118,7 @@ async function canMessage(sender, recipientId, recipientType) {
     if (recipientType === 'user') {
       // Their own agent (if any), or a caretaker assigned to their own plots
       const r = await pool.query(
-        `SELECT 1 FROM users WHERE id = $2 AND id = (SELECT agent_id FROM users WHERE id = $1)
+        `SELECT 1 FROM plots WHERE user_id = $1 AND agent_id = $2
          UNION
          SELECT 1 FROM users u JOIN caretaker_plots cp ON cp.caretaker_id = u.id
            JOIN plots p ON p.id = cp.plot_id
@@ -140,7 +139,7 @@ async function canMessage(sender, recipientId, recipientType) {
          WHERE p.id IN (
            SELECT plot_id FROM caretaker_plots WHERE caretaker_id = $1
            UNION SELECT plot_id FROM users WHERE id = $1 AND plot_id IS NOT NULL
-         ) AND (p.user_id = $2 OR $2 = (SELECT agent_id FROM users WHERE id = p.user_id))`,
+         ) AND (p.user_id = $2 OR p.agent_id = $2)`,
         [sender.id, recipientId]
       );
       return r.rows.length > 0;
@@ -165,7 +164,7 @@ async function canMessage(sender, recipientId, recipientType) {
         `SELECT 1 FROM tenants t JOIN houses h ON t.house_id = h.id JOIN plots p ON h.plot_id = p.id
          WHERE t.id = $1 AND (
            $2 = p.user_id OR
-           $2 = (SELECT agent_id FROM users WHERE id = p.user_id) OR
+           $2 = p.agent_id OR
            $2 IN (
              SELECT caretaker_id FROM caretaker_plots WHERE plot_id = p.id
              UNION SELECT id FROM users WHERE plot_id = p.id
@@ -239,11 +238,11 @@ router.get('/unread-summary', auth, async (req, res) => {
         WHERE n.created_at > $1
           AND (n.author_id=$2 OR n.target_type='all' OR n.target_type='staff'
             OR (n.target_type='property' AND n.target_id IN (
-              SELECT id FROM plots WHERE user_id IN (SELECT id FROM users WHERE agent_id=$2)
+              SELECT id FROM plots WHERE agent_id=$2
             ))
             OR (n.target_type='unit' AND n.target_id IN (
               SELECT h.id FROM houses h JOIN plots p ON h.plot_id=p.id
-              WHERE p.user_id IN (SELECT id FROM users WHERE agent_id=$2)
+              WHERE p.agent_id=$2
             )))
       `, [lastRead, req.user.id]);
     } else if (req.user.role === 'caretaker') {
@@ -388,11 +387,12 @@ router.get('/contacts', auth, async (req, res) => {
 
     if (req.user.role === 'agent') {
       others = await pool.query(`
-        SELECT id, name, role FROM users WHERE role='landlord' AND agent_id=$1
+        SELECT u.id, u.name, u.role FROM users u WHERE u.role='landlord'
+          AND EXISTS (SELECT 1 FROM plots p WHERE p.user_id=u.id AND p.agent_id=$1)
         UNION
         SELECT u.id, u.name, u.role FROM users u JOIN caretaker_plots cp ON cp.caretaker_id=u.id
-          JOIN plots p ON p.id=cp.plot_id JOIN users landlord ON landlord.id=p.user_id
-          WHERE u.role='caretaker' AND landlord.agent_id=$1
+          JOIN plots p ON p.id=cp.plot_id
+          WHERE u.role='caretaker' AND p.agent_id=$1
       `, [req.user.id]);
       // canMessage() already allows an agent to reach any tenant under one
       // of their assigned landlords (see the agent branch above it) — this
@@ -405,13 +405,12 @@ router.get('/contacts', auth, async (req, res) => {
         FROM tenants t
         JOIN houses h ON t.house_id = h.id
         JOIN plots p ON h.plot_id = p.id
-        JOIN users landlord ON landlord.id = p.user_id
-        WHERE landlord.agent_id = $1
+        WHERE p.agent_id = $1
       `, [req.user.id]);
       others = { rows: [...others.rows, ...tenantContacts.rows] };
     } else if (req.user.role === 'landlord') {
       others = await pool.query(`
-        SELECT id, name, role FROM users WHERE id = (SELECT agent_id FROM users WHERE id=$1)
+        SELECT u.id, u.name, u.role FROM users u WHERE u.id IN (SELECT agent_id FROM plots WHERE user_id=$1 AND agent_id IS NOT NULL)
         UNION
         SELECT u.id, u.name, u.role FROM users u JOIN caretaker_plots cp ON cp.caretaker_id=u.id
           JOIN plots p ON p.id=cp.plot_id WHERE u.role='caretaker' AND p.user_id=$1
@@ -419,7 +418,7 @@ router.get('/contacts', auth, async (req, res) => {
     } else if (req.user.role === 'caretaker') {
       others = await pool.query(`
         SELECT DISTINCT u.id, u.name, u.role FROM plots p
-        JOIN users u ON u.id = p.user_id OR u.id = (SELECT agent_id FROM users WHERE id=p.user_id)
+        JOIN users u ON u.id = p.user_id OR u.id = p.agent_id
         WHERE p.id IN (
           SELECT plot_id FROM caretaker_plots WHERE caretaker_id=$1
           UNION SELECT plot_id FROM users WHERE id=$1 AND plot_id IS NOT NULL
@@ -438,20 +437,15 @@ router.get('/contacts', auth, async (req, res) => {
 // exposed as a list instead of a yes/no check.
 router.get('/contacts/tenant', tenantAuth, async (req, res) => {
   try {
-    // p.agent_id is not a real column — plots never store an agent of their
-    // own, only the landlord's own users.agent_id does (see the comment at
-    // the top of plots.js). This query referenced it anyway, so it has been
-    // throwing a database error on every single call — meaning a tenant
-    // could never open "New Message" and see who they're allowed to write
-    // to; the whole picker was broken. Fixed to look up the landlord's agent
-    // the same way canMessage() and every other scoping query in this file
-    // already does.
+    // A property's agent is plots.agent_id — each property has its own
+    // (or none, when self-managed), independent of the landlord's other
+    // properties.
     const result = await pool.query(
       `SELECT u.id, u.name, u.role FROM tenants t
        JOIN houses h ON t.house_id = h.id
        JOIN plots  p ON h.plot_id  = p.id
        JOIN users  u ON u.id = p.user_id
-         OR u.id = (SELECT agent_id FROM users WHERE id = p.user_id)
+         OR u.id = p.agent_id
          OR u.id IN (
            SELECT caretaker_id FROM caretaker_plots WHERE plot_id = p.id
            UNION SELECT id FROM users WHERE plot_id = p.id
@@ -658,11 +652,11 @@ router.get('/', auth, async (req, res) => {
                LEFT JOIN notice_reads nr ON nr.notice_id=n.id
                WHERE n.author_id=$1 OR n.target_type='all' OR n.target_type='staff'
                  OR (n.target_type='property' AND n.target_id IN (
-                   SELECT id FROM plots WHERE user_id IN (SELECT id FROM users WHERE agent_id=$1)
+                   SELECT id FROM plots WHERE agent_id=$1
                  ))
                  OR (n.target_type='unit' AND n.target_id IN (
                    SELECT h.id FROM houses h JOIN plots p ON h.plot_id=p.id
-                   WHERE p.user_id IN (SELECT id FROM users WHERE agent_id=$1)
+                   WHERE p.agent_id=$1
                  ))
                GROUP BY n.id, u.name ORDER BY n.created_at DESC`;
       params = [req.user.id];
@@ -709,8 +703,8 @@ router.post('/', auth, async (req, res) => {
             [target_id, req.user.id]);
     } else if (req.user.role === 'agent') {
       ownsIt = target_type === 'property'
-        ? await pool.query(`SELECT 1 FROM plots WHERE id = $1 AND user_id IN (SELECT id FROM users WHERE agent_id = $2)`, [target_id, req.user.id])
-        : await pool.query(`SELECT 1 FROM houses h JOIN plots p ON h.plot_id=p.id WHERE h.id = $1 AND p.user_id IN (SELECT id FROM users WHERE agent_id = $2)`, [target_id, req.user.id]);
+        ? await pool.query(`SELECT 1 FROM plots WHERE id = $1 AND agent_id = $2`, [target_id, req.user.id])
+        : await pool.query(`SELECT 1 FROM houses h JOIN plots p ON h.plot_id=p.id WHERE h.id = $1 AND p.agent_id = $2`, [target_id, req.user.id]);
     } else {
       // landlord
       ownsIt = target_type === 'property'

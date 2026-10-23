@@ -69,6 +69,14 @@ export function AuthProvider({ children }) {
       if (!user) return false;
       if (user.permissions?.includes('*')) return true;
 
+      // For a specific property, the backend's fully resolved list wins — it
+      // knows that a landlord's restricted profile applies only to the
+      // properties an agent manages, and their full profile to the ones
+      // they run themselves (role default -> overrides, same as below).
+      if (plotId != null && plotPermissions[plotId]) {
+        return plotPermissions[plotId].includes(permission);
+      }
+
       let allowed = user.permissions?.includes(permission) ?? false;
 
       if (plotId != null && Array.isArray(user.overrides)) {
@@ -81,7 +89,7 @@ export function AuthProvider({ children }) {
 
       return allowed;
     },
-    [user]
+    [user, plotPermissions]
   );
 
   // "Does this user have this permission for AT LEAST ONE property they

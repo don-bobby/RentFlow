@@ -11,12 +11,40 @@
 const pool = require('../database/db');
 
 // Which permissions profile does this (live, DB-loaded) user belong to?
+// For landlords this is only the fallback label — the real profile is
+// decided PER PROPERTY by landlordProfilesFor() below, since a landlord can
+// have one property run by an agent and the rest self-managed.
 function profileFor(user) {
   if (user.role === 'admin' || user.role === 'super_admin') return 'super_admin';
   if (user.role === 'agent') return 'agent';
-  if (user.role === 'landlord') return user.agent_id ? 'landlord_with_agent' : 'landlord_self';
+  if (user.role === 'landlord') return 'landlord_self';
   if (user.role === 'caretaker') return 'caretaker';
   return null; // unknown role — gets no permissions
+}
+
+// Which landlord profile(s) apply. With a plotId that this landlord owns:
+// exactly one — landlord_with_agent if that property has an agent
+// (plots.agent_id), else landlord_self. With no plotId (a general check:
+// nav, /auth/me, un-migrated routes): whatever the landlord's portfolio
+// needs — both, when they have a mix of agent-managed and self-managed
+// properties (so a self-managed property's actions are never hidden just
+// because another property has an agent; per-property checks still apply
+// the right one), otherwise the single matching profile.
+async function landlordProfilesFor(user, plotId) {
+  if (plotId != null) {
+    const r = await pool.query('SELECT agent_id FROM plots WHERE id = $1 AND user_id = $2', [plotId, user.id]);
+    if (r.rows[0]) return [r.rows[0].agent_id ? 'landlord_with_agent' : 'landlord_self'];
+  }
+  const r = await pool.query(
+    `SELECT COUNT(*) FILTER (WHERE agent_id IS NULL)::int AS self_count,
+            COUNT(*) FILTER (WHERE agent_id IS NOT NULL)::int AS managed_count
+     FROM plots WHERE user_id = $1`,
+    [user.id]
+  );
+  const { self_count, managed_count } = r.rows[0];
+  if (managed_count > 0 && self_count > 0) return ['landlord_self', 'landlord_with_agent'];
+  if (managed_count > 0) return ['landlord_with_agent'];
+  return ['landlord_self'];
 }
 
 // Returns { profile, permissions: [...] }. permissions is ['*'] for super_admin.
@@ -37,13 +65,19 @@ function profileFor(user) {
 // rename) always gets everything and is returned before any of this runs —
 // overrides can never apply to those accounts, by design.
 async function getPermissions(user, plotId) {
-  const profile = profileFor(user);
+  let profile = profileFor(user);
   if (profile === 'super_admin') return { profile, permissions: ['*'] };
   if (!profile) return { profile: null, permissions: [] };
 
+  let profiles = [profile];
+  if (user.role === 'landlord') {
+    profiles = await landlordProfilesFor(user, plotId);
+    profile = profiles[0]; // label only; 'landlord_self' first when a landlord has a mix
+  }
+
   const result = await pool.query(
-    `SELECT permission FROM role_permissions WHERE profile = $1 AND allowed = true`,
-    [profile]
+    `SELECT permission FROM role_permissions WHERE profile = ANY($1) AND allowed = true`,
+    [profiles]
   );
   const permissions = new Set(result.rows.map(r => r.permission));
 
@@ -79,11 +113,29 @@ async function getPermissionsForPlots(user, plotIds) {
   if (profile === 'super_admin') return new Map(uniqueIds.map((id) => [id, ['*']]));
   if (!profile) return new Map(uniqueIds.map((id) => [id, []]));
 
-  const roleResult = await pool.query(
-    `SELECT permission FROM role_permissions WHERE profile = $1 AND allowed = true`,
-    [profile]
-  );
-  const basePermissions = roleResult.rows.map((r) => r.permission);
+  // Landlords get a different base profile per property (agent-managed vs
+  // self-managed); everyone else has one profile for all properties.
+  let baseFor; // (plotId) => string[]
+  if (user.role === 'landlord') {
+    const [roleResult, plotRows] = await Promise.all([
+      pool.query(
+        `SELECT profile, permission FROM role_permissions
+         WHERE profile IN ('landlord_self','landlord_with_agent') AND allowed = true`
+      ),
+      pool.query('SELECT id, agent_id FROM plots WHERE user_id = $1', [user.id]),
+    ]);
+    const byProfile = { landlord_self: [], landlord_with_agent: [] };
+    for (const r of roleResult.rows) byProfile[r.profile].push(r.permission);
+    const managed = new Map(plotRows.rows.map((r) => [r.id, !!r.agent_id]));
+    baseFor = (id) => (managed.get(id) ? byProfile.landlord_with_agent : byProfile.landlord_self);
+  } else {
+    const roleResult = await pool.query(
+      `SELECT permission FROM role_permissions WHERE profile = $1 AND allowed = true`,
+      [profile]
+    );
+    const basePermissions = roleResult.rows.map((r) => r.permission);
+    baseFor = () => basePermissions;
+  }
 
   const overridesResult = await pool.query(
     `SELECT plot_id, permission, effect FROM user_permission_overrides WHERE user_id = $1`,
@@ -104,7 +156,7 @@ async function getPermissionsForPlots(user, plotIds) {
 
   const resolved = new Map();
   for (const plotId of uniqueIds) {
-    const set = new Set(basePermissions);
+    const set = new Set(baseFor(plotId));
     globalOverrides.forEach((o) => apply(set, o));
     (byPlot.get(plotId) || []).forEach((o) => apply(set, o));
     resolved.set(plotId, Array.from(set));

@@ -21,9 +21,8 @@ export const getMe    = ()     => API.get('/auth/me');
 export const createUser              = (data)          => API.post('/auth/users', data);
 export const getUsers                = ()               => API.get('/auth/users');
 export const getPendingLandlordsCount = ()              => API.get('/auth/users/pending-landlords-count');
-export const approveUser             = (id, agentId)    => API.patch(`/auth/users/${id}/approve`, { agent_id: agentId || null });
+export const approveUser             = (id)             => API.patch(`/auth/users/${id}/approve`);
 export const rejectUser              = (id)              => API.patch(`/auth/users/${id}/reject`);
-export const setLandlordAgent        = (id, agentId)    => API.patch(`/auth/users/${id}/agent`, { agent_id: agentId || null });
 
 // Roles & Permissions matrix
 export const getRolePermissions    = ()                             => API.get('/auth/role-permissions');
