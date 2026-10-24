@@ -103,6 +103,8 @@ export default function Expenses() {
   // themselves show up in the regular table above with a 🔁 badge.
   const [utilReceipts, setUtilReceipts]     = useState([]); // utility money recovered from tenants
   const [showUtil, setShowUtil]             = useState(false);
+  const [utilPlot, setUtilPlot]             = useState('all');
+  const [utilMonth, setUtilMonth]           = useState('all'); // 'all' or 'YYYY-MM'
   const [recurring, setRecurring]           = useState([]);
   const [showRecurring, setShowRecurring]   = useState(false);
   const [showRecForm, setShowRecForm]       = useState(false);
@@ -283,8 +285,18 @@ export default function Expenses() {
   const filtered = categoryFilter === 'all' ? expenses : expenses.filter(e => e.category === categoryFilter);
   const filteredTotal = filtered.reduce((sum, e) => sum + parseFloat(e.amount || 0), 0);
   const UTILITY_CATS = ['Water', 'Electricity', 'Garbage Collection', 'Utilities'];
-  const utilityCost = expenses.filter(e => UTILITY_CATS.includes(e.category)).reduce((sum, e) => sum + parseFloat(e.amount || 0), 0);
-  const utilityRecovered = utilReceipts.reduce((sum, u) => sum + parseFloat(u.amount || 0), 0);
+  const ym = (d) => String(d || '').slice(0, 7);
+  const inUtilScope = (plotId, date) =>
+    (utilPlot === 'all' || String(plotId) === utilPlot) && (utilMonth === 'all' || ym(date) === utilMonth);
+  const utilExpenses = expenses.filter(e => UTILITY_CATS.includes(e.category) && inUtilScope(e.plot_id, e.expense_date));
+  const utilScoped   = utilReceipts.filter(u => inUtilScope(u.plot_id, u.payment_date));
+  const utilityCost = utilExpenses.reduce((sum, e) => sum + parseFloat(e.amount || 0), 0);
+  const utilityRecovered = utilScoped.reduce((sum, u) => sum + parseFloat(u.amount || 0), 0);
+  const utilPlotOptions = [...new Map([...expenses, ...utilReceipts].filter(x => x.plot_id).map(x => [String(x.plot_id), x.plot_name || `Plot ${x.plot_id}`])).entries()];
+  const utilMonthOptions = [...new Set([
+    ...expenses.filter(e => UTILITY_CATS.includes(e.category)).map(e => ym(e.expense_date)),
+    ...utilReceipts.map(u => ym(u.payment_date)),
+  ].filter(Boolean))].sort().reverse();
   const categoriesPresent = CATEGORIES.filter(c => expenses.some(e => e.category === c));
 
   if (error) return <div style={{ padding: 24, color: 'var(--red, #dc2626)' }}>{error}</div>;
@@ -319,15 +331,25 @@ export default function Expenses() {
         </div>
       </div>
 
-      {!loading && (utilityCost > 0 || utilityRecovered > 0) && (
+      {!loading && (expenses.some(e => UTILITY_CATS.includes(e.category)) || utilReceipts.length > 0) && (
         <div style={{ marginBottom: 20, padding: 16, borderRadius: 12, border: '1px solid var(--border)', background: 'var(--surface)' }}>
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 14 }}>
+            <select value={utilPlot} onChange={e => setUtilPlot(e.target.value)} style={{ padding: '6px 10px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface2)', color: 'var(--text)', fontSize: 12 }}>
+              <option value="all">All properties</option>
+              {utilPlotOptions.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
+            </select>
+            <select value={utilMonth} onChange={e => setUtilMonth(e.target.value)} style={{ padding: '6px 10px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface2)', color: 'var(--text)', fontSize: 12 }}>
+              <option value="all">All months</option>
+              {utilMonthOptions.map(m => <option key={m} value={m}>{new Date(m + '-01').toLocaleString('en-KE', { month: 'long', year: 'numeric' })}</option>)}
+            </select>
+          </div>
           <div style={{ display: 'flex', gap: 28, flexWrap: 'wrap', alignItems: 'center' }}>
             <div><div style={{ fontSize: 12, color: 'var(--muted)' }}>Utility bills paid</div><div style={{ fontWeight: 700, fontSize: 18, color: 'var(--text)' }}>KES {utilityCost.toLocaleString()}</div></div>
             <div><div style={{ fontSize: 12, color: 'var(--muted)' }}>Recovered from tenants</div><div style={{ fontWeight: 700, fontSize: 18, color: 'var(--green, #16a34a)' }}>KES {utilityRecovered.toLocaleString()}</div></div>
             <div><div style={{ fontSize: 12, color: 'var(--muted)' }}>Net utility cost</div><div style={{ fontWeight: 700, fontSize: 18, color: (utilityCost - utilityRecovered) > 0 ? 'var(--red, #dc2626)' : 'var(--green, #16a34a)' }}>KES {(utilityCost - utilityRecovered).toLocaleString()}</div></div>
-            {utilReceipts.length > 0 && (
+            {utilScoped.length > 0 && (
               <button onClick={() => setShowUtil(v => !v)} style={{ marginLeft: 'auto', padding: '8px 14px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface2)', color: 'var(--text)', fontWeight: 600, fontSize: 12, cursor: 'pointer' }}>
-                {showUtil ? 'Hide' : 'View'} tenant receipts ({utilReceipts.length})
+                {showUtil ? 'Hide' : 'View'} tenant receipts ({utilScoped.length})
               </button>
             )}
           </div>
@@ -337,7 +359,7 @@ export default function Expenses() {
                 <thead><tr style={{ textAlign: 'left', color: 'var(--muted)' }}>
                   {['Date', 'Tenant', 'Unit', 'Utility', 'Amount', 'Method'].map(h => <th key={h} style={{ padding: '6px 8px', fontWeight: 600 }}>{h}</th>)}
                 </tr></thead>
-                <tbody>{utilReceipts.map(u => (
+                <tbody>{utilScoped.map(u => (
                   <tr key={u.id} style={{ borderTop: '1px solid var(--border)', color: 'var(--text)' }}>
                     <td style={{ padding: '6px 8px' }}>{String(u.payment_date).slice(0, 10)}</td>
                     <td style={{ padding: '6px 8px' }}>{u.tenant_name}</td>

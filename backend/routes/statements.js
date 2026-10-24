@@ -35,12 +35,17 @@ async function loadStatementData(tenantId) {
      FROM payments WHERE tenant_id = $1 AND status != 'pending' ORDER BY payment_date ASC`,
     [tenantId]
   );
-  return { tenant, payments: paymentsRes.rows };
+  const utilRes = await pool.query(
+    `SELECT utility_type, amount, payment_date, method, reference
+     FROM utility_payments WHERE tenant_id = $1 ORDER BY payment_date ASC, id ASC`,
+    [tenantId]
+  );
+  return { tenant, payments: paymentsRes.rows, utilities: utilRes.rows };
 }
 
 // Draws one tenant's statement onto an already-open PDFDocument.
 // Pass startNewPage=false for the very first tenant in a bulk run.
-function drawStatement(doc, { tenant, payments }, startNewPage = true) {
+function drawStatement(doc, { tenant, payments, utilities = [] }, startNewPage = true) {
   if (startNewPage) doc.addPage();
 
   doc.fontSize(18).text('RentFlow — Tenant Statement', { align: 'left' });
@@ -81,6 +86,35 @@ function drawStatement(doc, { tenant, payments }, startNewPage = true) {
       doc.text(p.receipt_no || '—', colX.ref, y, { continued: true, width: 100 });
       doc.text(forLabel, colX.for, y);
     });
+  }
+
+  // Utilities are tracked apart from rent and never change the balance above.
+  if (utilities.length > 0) {
+    doc.moveDown();
+    doc.fillColor('#000').fontSize(13).text('Utility Payments (separate from rent)', 50, doc.y, { underline: true });
+    doc.moveDown(0.3);
+    const ux = { date: 50, type: 150, amount: 280, method: 380, ref: 470 };
+    doc.fontSize(9).fillColor('#666');
+    const hy = doc.y;
+    doc.text('Date', ux.date, hy, { continued: true, width: 100 });
+    doc.text('Utility', ux.type, hy, { continued: true, width: 130 });
+    doc.text('Amount (KES)', ux.amount, hy, { continued: true, width: 100 });
+    doc.text('Method', ux.method, hy, { continued: true, width: 90 });
+    doc.text('Reference', ux.ref, hy);
+    doc.moveDown(0.2);
+    doc.fillColor('#000').fontSize(9);
+    let total = 0;
+    utilities.forEach(u => {
+      total += parseFloat(u.amount);
+      const y = doc.y;
+      doc.text(new Date(u.payment_date).toLocaleDateString('en-KE'), ux.date, y, { continued: true, width: 100 });
+      doc.text(u.utility_type, ux.type, y, { continued: true, width: 130 });
+      doc.text(parseFloat(u.amount).toLocaleString(), ux.amount, y, { continued: true, width: 100 });
+      doc.text(u.method || '—', ux.method, y, { continued: true, width: 90 });
+      doc.text(u.reference || '—', ux.ref, y);
+    });
+    doc.moveDown(0.3);
+    doc.fontSize(10).text(`Total utilities paid: KES ${total.toLocaleString()}`, 50, doc.y);
   }
 }
 

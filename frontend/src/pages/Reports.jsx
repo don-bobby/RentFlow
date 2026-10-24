@@ -18,6 +18,7 @@ const REPORTS = [
   { id: 'properties',     icon: '🏢', label: 'Property Summary',      desc: 'Plots, units, occupancy overview',     color: 'var(--blue)',    light: 'var(--blue-light)',    permission: 'reports.property_summary' },
   { id: 'occupancy',      icon: '📊', label: 'Occupancy Report',      desc: 'Vacant vs occupied units over time',   color: '#8b5cf6',       light: '#ede9fe',              permission: 'reports.occupancy' },
   { id: 'expenses',       icon: '💸', label: 'Expenses Report',       desc: 'All property expenses by category',   color: '#f97316',       light: '#fff7ed',              permission: 'reports.expenses' },
+  { id: 'utilities',      icon: '💧', label: 'Utility Receipts',      desc: 'Utility money recovered from tenants vs bills paid', color: 'var(--blue)', light: 'var(--blue-light)', permission: 'reports.expenses' },
   { id: 'revenue',        icon: '📈', label: 'Revenue Summary',       desc: 'Monthly and yearly revenue totals',    color: 'var(--green)',   light: 'var(--green-light)',   permission: 'reports.revenue_summary' },
   { id: 'moveins',        icon: '🏠', label: 'Move-in / Move-out',    desc: 'Tenant movement history',              color: 'var(--primary)', light: 'var(--primary-light)', permission: 'reports.move_in_out' },
   { id: 'expiring',       icon: '📅', label: 'Expiring Leases',       desc: 'Tenants with leases 11+ months old',   color: 'var(--amber)',   light: 'var(--amber-light)',   permission: 'reports.expiring_leases' },
@@ -615,6 +616,9 @@ export default function Reports() {
         auditLog = arr(ar.data);
       } catch (e) { auditLog = []; auditDenied = e?.response?.status === 403; } // 403 for non-admins — expected, not an error
 
+      let utilities = [];
+      try { utilities = arr((await API.get('/utilities')).data); } catch { utilities = []; }
+
       let userActivity = [], userActivityDenied = false;
       try {
         const uar = await API.get('/user-activity');
@@ -623,7 +627,7 @@ export default function Reports() {
 
       setData({
         tenants: arr(tr.data), payments: arr(pr.data), houses: arr(hr.data),
-        requests: arr(mr.data), plots: arr(plr.data), expenses: arr(er.data), users, deposits, auditLog, auditDenied, caretakerPlots,
+        requests: arr(mr.data), plots: arr(plr.data), expenses: arr(er.data), utilities, users, deposits, auditLog, auditDenied, caretakerPlots,
         plotPermissions, userActivity, userActivityDenied,
       });
     } catch (e) { console.error(e); }
@@ -710,7 +714,7 @@ export default function Reports() {
   let auditOptions = { actions: [], entities: [], users: [] };
 
   if (data.payments) {
-    const { tenants, payments, houses, requests, plots, expenses, users, deposits, auditLog, caretakerPlots, plotPermissions, userActivity } = data;
+    const { tenants, payments, houses, requests, plots, expenses, utilities = [], users, deposits, auditLog, caretakerPlots, plotPermissions, userActivity } = data;
 
     // Shared lookups for the analytical reports below
     const houseById = Object.fromEntries(houses.map(h => [h.id, h]));
@@ -1223,6 +1227,36 @@ export default function Reports() {
       filtered.forEach(e => { const k = e.category || 'Uncategorised'; byCategory[k] = (byCategory[k] || 0) + parseFloat(e.amount || 0); });
       chart = <HBarChart title="Expenses by category" series={[{ name: 'Expenses', color: 'var(--red)' }]}
         data={Object.entries(byCategory).sort((a, b) => b[1] - a[1]).map(([label, v]) => ({ label, values: [v] }))} format={v => `KES ${v.toLocaleString()}`} />;
+    }
+
+    if (active === 'utilities') {
+      const UTIL_CATS = ['Water', 'Electricity', 'Garbage Collection', 'Utilities'];
+      const visUtil = utilities.filter(u => canForPlot('reports.expenses', u.plot_id, plotPermissions));
+      const fUtil   = filterByPeriod(visUtil, 'payment_date');
+      const bills   = filterByPeriod(expenses.filter(e => UTIL_CATS.includes(e.category) && canForPlot('reports.expenses', e.plot_id, plotPermissions)), 'expense_date');
+      const recovered = fUtil.reduce((s, u) => s + parseFloat(u.amount || 0), 0);
+      const billed    = bills.reduce((s, e) => s + parseFloat(e.amount || 0), 0);
+      columns = ['Date', 'Tenant', 'Property / Unit', 'Utility', 'Amount (KES)', 'Method', 'Reference'];
+      rows    = fUtil.map(u => ({
+        Date: u.payment_date ? new Date(u.payment_date).toLocaleDateString('en-KE') : '—',
+        Tenant: u.tenant_name || '—',
+        'Property / Unit': `${u.plot_name || '—'}${u.unit_number ? ' · ' + u.unit_number : ''}`,
+        Utility: u.utility_type || '—',
+        'Amount (KES)': parseFloat(u.amount || 0).toLocaleString(),
+        Method: u.method || '—',
+        Reference: u.reference || '—',
+      }));
+      summary = [
+        { label: 'Recovered from tenants', value: `KES ${recovered.toLocaleString()}`, color: 'var(--green)' },
+        { label: 'Utility bills paid', value: `KES ${billed.toLocaleString()}`, color: 'var(--red)' },
+        { label: 'Net utility cost', value: `KES ${(billed - recovered).toLocaleString()}`, color: (billed - recovered) > 0 ? 'var(--red)' : 'var(--green)' },
+        { label: 'Receipts', value: fUtil.length, color: 'var(--muted)' },
+      ];
+      title = 'Utility Receipts';
+      const byType = {};
+      fUtil.forEach(u => { const k = u.utility_type || 'Other'; byType[k] = (byType[k] || 0) + parseFloat(u.amount || 0); });
+      chart = <HBarChart title="Recovered by utility" series={[{ name: 'Recovered', color: 'var(--green)' }]}
+        data={Object.entries(byType).sort((a, b) => b[1] - a[1]).map(([label, v]) => ({ label, values: [v] }))} format={v => `KES ${v.toLocaleString()}`} />;
     }
 
     if (active === 'revenue') {
