@@ -65,6 +65,7 @@ export default function Payments() {
   const [saving,         setSaving]         = useState(false);
   const [error,          setError]          = useState('');
   const [filter,         setFilter]         = useState('all');
+  const [plotFilter,     setPlotFilter]     = useState('all'); // 'all' or a plot id — narrows the payments list to one property
   const [tenantFilter,   setTenantFilter]   = useState('all'); // 'all' or a tenant id — narrows the payments list to one tenant
   const [allocatedSort,  setAllocatedSort]  = useState(null); // null (table order) | 'asc' | 'desc' — sorts rows by the "Allocated To" month
   const [utilities,      setUtilities]      = useState([]); // optional utility lines: [{ type, amount }]
@@ -265,14 +266,18 @@ export default function Payments() {
 
   const filtered    = payments
     .filter(p => filter === 'all' || p.status === filter)
+    .filter(p => plotFilter === 'all' || String(p.plot_id) === String(plotFilter))
     .filter(p => tenantFilter === 'all' || String(p.tenant_id) === String(tenantFilter));
   // Tenant options for the filter dropdown: every tenant who actually has a
   // payment record here, not every tenant in the system — a landlord/caretaker
   // with a long tenant roster but few payments shouldn't have to scroll past
   // names with nothing to show. Sorted alphabetically, de-duplicated by id
   // (a tenant can have several payment rows).
+  const paymentPlotOptions = Array.from(
+    new Map(payments.filter(p => p.plot_id).map(p => [String(p.plot_id), p.plot_name || `Property #${p.plot_id}`])).entries()
+  ).sort((a, b) => a[1].localeCompare(b[1]));
   const paymentTenantOptions = Array.from(
-    new Map(payments.filter(p => p.tenant_id).map(p => [p.tenant_id, p.tenant_name])).entries()
+    new Map(payments.filter(p => p.tenant_id && (plotFilter === 'all' || String(p.plot_id) === String(plotFilter))).map(p => [p.tenant_id, p.tenant_name])).entries()
   ).sort((a, b) => (a[1] || '').localeCompare(b[1] || ''));
   // Sortable "Allocated To" column: for_year/for_month combine into one
   // comparable number (year*12+month). A payment with neither (unallocated,
@@ -378,6 +383,17 @@ export default function Payments() {
         {['all','matched','unmatched','review','pending','failed'].map(f => (
           <button key={f} onClick={() => setFilter(f)} style={{ padding: '7px 16px', borderRadius: 99, border: '1px solid var(--border)', background: filter === f ? 'var(--primary, #7c3aed)' : 'var(--surface)', color: filter === f ? '#fff' : 'var(--muted)', fontWeight: 600, fontSize: 13, textTransform: 'capitalize', cursor: 'pointer' }}>{f}</button>
         ))}
+        {paymentPlotOptions.length > 1 && (
+          <select
+            value={plotFilter}
+            onChange={e => { setPlotFilter(e.target.value); setTenantFilter('all'); }}
+            title="Filter by property"
+            style={{ padding: '7px 12px', borderRadius: 99, border: '1px solid var(--border)', background: plotFilter === 'all' ? 'var(--surface)' : 'var(--primary, #7c3aed)', color: plotFilter === 'all' ? 'var(--muted)' : '#fff', fontWeight: 600, fontSize: 13, cursor: 'pointer' }}
+          >
+            <option value="all">All properties</option>
+            {paymentPlotOptions.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
+          </select>
+        )}
         <select
           value={tenantFilter}
           onChange={e => setTenantFilter(e.target.value)}
