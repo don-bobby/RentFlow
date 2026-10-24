@@ -101,6 +101,8 @@ export default function Expenses() {
   // etc.) — a daily backend job turns each active one into a real expense
   // row once a month. This is just template CRUD; the generated expenses
   // themselves show up in the regular table above with a 🔁 badge.
+  const [utilReceipts, setUtilReceipts]     = useState([]); // utility money recovered from tenants
+  const [showUtil, setShowUtil]             = useState(false);
   const [recurring, setRecurring]           = useState([]);
   const [showRecurring, setShowRecurring]   = useState(false);
   const [showRecForm, setShowRecForm]       = useState(false);
@@ -119,6 +121,7 @@ export default function Expenses() {
         const [er, rr, pr, hr] = await Promise.all(requests);
         setExpenses(er.data.data || []);
         setRecurring(rr.data.data || []);
+        try { const ur = await API.get('/utilities'); setUtilReceipts(ur.data.data || []); } catch { setUtilReceipts([]); }
         setPlots(pr ? (Array.isArray(pr.data) ? pr.data : pr.data.data || []) : []);
         setHouses(hr ? (Array.isArray(hr.data) ? hr.data : hr.data.data || []) : []);
       } catch (e) {
@@ -279,6 +282,9 @@ export default function Expenses() {
   const total = expenses.reduce((sum, e) => sum + parseFloat(e.amount || 0), 0);
   const filtered = categoryFilter === 'all' ? expenses : expenses.filter(e => e.category === categoryFilter);
   const filteredTotal = filtered.reduce((sum, e) => sum + parseFloat(e.amount || 0), 0);
+  const UTILITY_CATS = ['Water', 'Electricity', 'Garbage Collection', 'Utilities'];
+  const utilityCost = expenses.filter(e => UTILITY_CATS.includes(e.category)).reduce((sum, e) => sum + parseFloat(e.amount || 0), 0);
+  const utilityRecovered = utilReceipts.reduce((sum, u) => sum + parseFloat(u.amount || 0), 0);
   const categoriesPresent = CATEGORIES.filter(c => expenses.some(e => e.category === c));
 
   if (error) return <div style={{ padding: 24, color: 'var(--red, #dc2626)' }}>{error}</div>;
@@ -312,6 +318,39 @@ export default function Expenses() {
           )}
         </div>
       </div>
+
+      {!loading && (utilityCost > 0 || utilityRecovered > 0) && (
+        <div style={{ marginBottom: 20, padding: 16, borderRadius: 12, border: '1px solid var(--border)', background: 'var(--surface)' }}>
+          <div style={{ display: 'flex', gap: 28, flexWrap: 'wrap', alignItems: 'center' }}>
+            <div><div style={{ fontSize: 12, color: 'var(--muted)' }}>Utility bills paid</div><div style={{ fontWeight: 700, fontSize: 18, color: 'var(--text)' }}>KES {utilityCost.toLocaleString()}</div></div>
+            <div><div style={{ fontSize: 12, color: 'var(--muted)' }}>Recovered from tenants</div><div style={{ fontWeight: 700, fontSize: 18, color: 'var(--green, #16a34a)' }}>KES {utilityRecovered.toLocaleString()}</div></div>
+            <div><div style={{ fontSize: 12, color: 'var(--muted)' }}>Net utility cost</div><div style={{ fontWeight: 700, fontSize: 18, color: (utilityCost - utilityRecovered) > 0 ? 'var(--red, #dc2626)' : 'var(--green, #16a34a)' }}>KES {(utilityCost - utilityRecovered).toLocaleString()}</div></div>
+            {utilReceipts.length > 0 && (
+              <button onClick={() => setShowUtil(v => !v)} style={{ marginLeft: 'auto', padding: '8px 14px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface2)', color: 'var(--text)', fontWeight: 600, fontSize: 12, cursor: 'pointer' }}>
+                {showUtil ? 'Hide' : 'View'} tenant receipts ({utilReceipts.length})
+              </button>
+            )}
+          </div>
+          {showUtil && (
+            <div style={{ marginTop: 14, overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                <thead><tr style={{ textAlign: 'left', color: 'var(--muted)' }}>
+                  {['Date', 'Tenant', 'Unit', 'Utility', 'Amount', 'Method'].map(h => <th key={h} style={{ padding: '6px 8px', fontWeight: 600 }}>{h}</th>)}
+                </tr></thead>
+                <tbody>{utilReceipts.map(u => (
+                  <tr key={u.id} style={{ borderTop: '1px solid var(--border)', color: 'var(--text)' }}>
+                    <td style={{ padding: '6px 8px' }}>{String(u.payment_date).slice(0, 10)}</td>
+                    <td style={{ padding: '6px 8px' }}>{u.tenant_name}</td>
+                    <td style={{ padding: '6px 8px' }}>{u.plot_name}{u.unit_number ? ` · ${u.unit_number}` : ''}</td>
+                    <td style={{ padding: '6px 8px' }}>{u.utility_type}</td>
+                    <td style={{ padding: '6px 8px', fontWeight: 600 }}>KES {parseFloat(u.amount).toLocaleString()}</td>
+                    <td style={{ padding: '6px 8px' }}>{u.method || '—'}</td>
+                  </tr>))}</tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
 
       {!loading && categoriesPresent.length > 1 && (
         <div style={{ display: 'flex', gap: 8, marginBottom: 20, flexWrap: 'wrap' }}>

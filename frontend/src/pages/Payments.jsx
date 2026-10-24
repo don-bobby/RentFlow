@@ -67,6 +67,7 @@ export default function Payments() {
   const [filter,         setFilter]         = useState('all');
   const [tenantFilter,   setTenantFilter]   = useState('all'); // 'all' or a tenant id — narrows the payments list to one tenant
   const [allocatedSort,  setAllocatedSort]  = useState(null); // null (table order) | 'asc' | 'desc' — sorts rows by the "Allocated To" month
+  const [utilities,      setUtilities]      = useState([]); // optional utility lines: [{ type, amount }]
   const [form,           setForm]           = useState({
     tenant_id: '', amount: '', payment_date: '', payment_method: 'mpesa', reference_number: '', notes: '',
   });
@@ -97,7 +98,19 @@ export default function Payments() {
     setSaving(true); setError('');
     try {
       const tenant = tenants.find(t => String(t.id) === String(form.tenant_id));
-      await API.post('/payments', { ...form, unit_id: tenant?.house_id });
+      const utilItems = utilities
+        .filter(u => parseFloat(u.amount) > 0)
+        .map(u => ({ type: u.type, amount: parseFloat(u.amount) }));
+      const hasRent = parseFloat(form.amount) > 0;
+      if (!hasRent && utilItems.length === 0) { setError('Enter a rent amount or a utility amount.'); setSaving(false); return; }
+      if (hasRent) await API.post('/payments', { ...form, unit_id: tenant?.house_id });
+      if (utilItems.length) {
+        await API.post('/utilities', {
+          tenant_id: form.tenant_id, payment_date: form.payment_date, method: form.payment_method,
+          reference: form.reference_number, notes: form.notes, items: utilItems,
+        });
+      }
+      setUtilities([]);
       await load();
       setModal(false);
       setArrears(null);
@@ -743,8 +756,32 @@ export default function Payments() {
               <Field label="Notes (optional)"     value={form.notes}            onChange={v => setForm(f=>({...f,notes:v}))}            placeholder="Optional" />
             </div>
 
+            {/* Optional utilities — tracked separately, never reduce rent arrears */}
+            <div style={{ marginTop: 16, padding: 14, borderRadius: 10, border: '1px dashed var(--border)', background: 'var(--surface2)' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div>
+                  <div style={{ fontWeight: 700, fontSize: 13, color: 'var(--text)' }}>Utilities (optional)</div>
+                  <div style={{ fontSize: 11, color: 'var(--muted)' }}>Water, electricity, garbage… recorded separately from rent and shown on Expenses as recovered.</div>
+                </div>
+                <button type="button" onClick={() => setUtilities(u => [...u, { type: 'Water', amount: '' }])}
+                  style={{ padding: '6px 12px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontWeight: 600, fontSize: 12, cursor: 'pointer' }}>+ Add</button>
+              </div>
+              {utilities.map((u, i) => (
+                <div key={i} style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+                  <select value={u.type} onChange={e => setUtilities(list => list.map((x, j) => j === i ? { ...x, type: e.target.value } : x))} style={{ ...inputStyle, flex: 1 }}>
+                    {['Water', 'Electricity', 'Garbage Collection', 'Other'].map(t => <option key={t}>{t}</option>)}
+                  </select>
+                  <input type="number" min="0" placeholder="Amount" value={u.amount}
+                    onChange={e => setUtilities(list => list.map((x, j) => j === i ? { ...x, amount: e.target.value } : x))}
+                    style={{ ...inputStyle, flex: 1 }} />
+                  <button type="button" onClick={() => setUtilities(list => list.filter((_, j) => j !== i))}
+                    style={{ padding: '0 12px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--red, #dc2626)', cursor: 'pointer', fontWeight: 700 }}>✕</button>
+                </div>
+              ))}
+            </div>
+
             <div style={{ display: 'flex', gap: 10, marginTop: 24, justifyContent: 'flex-end' }}>
-              <button onClick={() => { setModal(false); setArrears(null); }} style={{ padding: '10px 20px', borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface)', fontWeight: 600, fontSize: 14, cursor: 'pointer', color: 'var(--text)' }}>Cancel</button>
+              <button onClick={() => { setModal(false); setArrears(null); setUtilities([]); }} style={{ padding: '10px 20px', borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface)', fontWeight: 600, fontSize: 14, cursor: 'pointer', color: 'var(--text)' }}>Cancel</button>
               <button onClick={handleSave} disabled={saving} style={{ padding: '10px 20px', borderRadius: 10, border: 'none', background: 'var(--primary, #7c3aed)', color: '#fff', fontWeight: 600, fontSize: 14, cursor: 'pointer' }}>
                 {saving ? 'Saving...' : 'Record'}
               </button>
