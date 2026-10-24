@@ -717,13 +717,14 @@ export default function Reports() {
     } catch (e) { console.error(e); alert('Could not generate statement.'); }
   }
 
+  const [ownerPlot, setOwnerPlot] = useState('all');
   const [ownerMonth, setOwnerMonth] = useState(() => { const d = new Date(); d.setMonth(d.getMonth() - 1); return d.toISOString().slice(0, 7); });
   async function downloadOwnerStatement() {
     try {
-      const res = await API.get(`/statements/landlord?month=${ownerMonth}`, { responseType: 'blob' });
+      const res = await API.get(`/statements/landlord?month=${ownerMonth}${ownerPlot !== 'all' ? `&plot_id=${ownerPlot}` : ''}`, { responseType: 'blob' });
       const url = URL.createObjectURL(new Blob([res.data], { type: 'application/pdf' }));
       const a = document.createElement('a');
-      a.href = url; a.download = `owner_statement_${ownerMonth}.pdf`; a.click();
+      a.href = url; a.download = `owner_statement_${ownerPlot !== 'all' ? ((data?.plots || []).find(pl => String(pl.id) === String(ownerPlot))?.name || 'property').replace(/\s+/g, '_') + '_' : ''}${ownerMonth}.pdf`; a.click();
       URL.revokeObjectURL(url);
     } catch (e) { console.error(e); alert('Could not generate the owner statement (you may not have access to financial reports for these properties).'); }
   }
@@ -1181,7 +1182,7 @@ export default function Reports() {
     if (active === 'ownerstatement') {
       const inMonth = (d) => String(d || '').slice(0, 7) === ownerMonth;
       const okPay = (p) => p.status !== 'failed' && p.status !== 'pending' && p.method !== 'balance_charge';
-      const visPlots = plots.filter(pl => canForPlot('reports.revenue_summary', pl.id, plotPermissions));
+      const visPlots = plots.filter(pl => canForPlot('reports.revenue_summary', pl.id, plotPermissions) && (ownerPlot === 'all' || String(pl.id) === String(ownerPlot)));
       columns = ['Property', 'Rent Collected (KES)', 'Utilities Recovered (KES)', 'Expenses (KES)', 'Net (KES)'];
       rows = visPlots.map(pl => {
         const rent = payments.filter(p => p.plot_id === pl.id && okPay(p) && inMonth(p.payment_date)).reduce((a, p) => a + parseFloat(p.amount || 0), 0);
@@ -1197,7 +1198,7 @@ export default function Reports() {
         { label: 'Net', value: `KES ${(tot('_rent') + tot('_util') - tot('_exp')).toLocaleString()}`, color: 'var(--primary)' },
       ];
       title = `Owner Statement - ${new Date(ownerMonth + '-01').toLocaleString('en-KE', { month: 'long', year: 'numeric' })}`;
-      note = 'Pick the month beside the button, then press "Owner statement (PDF)" for the full one-page-per-property statement.';
+      note = 'Pick a property and month beside the button, then press "Owner statement (PDF)" for the full one-page-per-property statement.';
     }
 
     if (active === 'arrearsrisk') {
@@ -2049,6 +2050,12 @@ export default function Reports() {
 
               {['ownerstatement', 'revenue', 'profitloss', 'properties', 'expenses', 'utilities'].includes(active) && (
                 <span style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
+                  {(data?.plots || []).length > 1 && (
+                    <select value={ownerPlot} onChange={e => setOwnerPlot(e.target.value)} className="rp-select" title="Property for the owner statement">
+                      <option value="all">All properties</option>
+                      {(data?.plots || []).filter(pl => canForPlot('reports.revenue_summary', pl.id, data?.plotPermissions)).map(pl => <option key={pl.id} value={pl.id}>{pl.name}</option>)}
+                    </select>
+                  )}
                   <input type="month" value={ownerMonth} onChange={e => setOwnerMonth(e.target.value)} className="rp-select" title="Statement month" />
                   <button type="button" className="rp-btn" onClick={downloadOwnerStatement}>🏢 Owner statement (PDF)</button>
                 </span>
