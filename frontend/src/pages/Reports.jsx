@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import { exportReportPdf } from '../utils/pdfReport';
 import API from '../services/api';
 import { useAuth } from '../context/AuthContext';
 
@@ -666,6 +667,22 @@ export default function Reports() {
         return true;
       }
       return true; // 'all'
+    });
+  }
+
+  function periodText() {
+    if (NO_PERIOD_FILTER.includes(active)) return 'Current snapshot';
+    const mn = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+    if (filters.period === 'month') return `${mn[(filters.month || 1) - 1]} ${filters.year}`;
+    if (filters.period === 'year')  return `Year ${filters.year}`;
+    if (filters.period === 'range') return `${filters.fromDate || 'start'} to ${filters.toDate || 'today'}`;
+    return 'All time';
+  }
+
+  function downloadPDF(cols, rowsToExport, summaryItems, reportTitle) {
+    exportReportPdf({
+      title: reportTitle || 'Report', columns: cols, rows: rowsToExport, summary: summaryItems,
+      periodLabel: periodText(), filename: active, generatedBy: me?.name,
     });
   }
 
@@ -2014,7 +2031,8 @@ export default function Reports() {
               )}
 
               {/* Print / Save as PDF — browsers' print dialog offers "Save as PDF" */}
-              <button type="button" className="rp-btn" onClick={() => window.print()}>🖨️ Print / Save PDF</button>
+              <button type="button" className="rp-btn" onClick={() => downloadPDF(columns, visibleRows, summary, title)} disabled={!columns.length}>📄 Download PDF</button>
+              <button type="button" className="rp-btn" onClick={() => window.print()} title="Browser print of the on-screen page">🖨️ Print</button>
 
               {/* Download button */}
               <button type="button" className="rp-btn rp-btn-primary" onClick={() => downloadCSV(visibleRows, active)} disabled={!visibleRows.length}>
