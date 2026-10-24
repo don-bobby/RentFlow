@@ -683,6 +683,50 @@ export default function Dashboard() {
         </button>
       </div>
 
+      {/* Daily briefing — what needs attention today, each item links to where to act */}
+      {(() => {
+        const today = new Date();
+        const dayOfMonth = today.getDate();
+        const isSameDay = (d) => { const x = new Date(d); return x.toDateString() === today.toDateString(); };
+        const okPay = (p) => p.status !== 'failed' && p.status !== 'pending';
+        const paidToday = payments.filter(p => okPay(p) && p.payment_date && isSameDay(p.payment_date));
+        const paidTodayTotal = paidToday.reduce((a, p) => a + parseFloat(p.amount || 0), 0);
+        const dueSoon = unpaidTenants.filter(t => {
+          const due = Math.min(28, parseInt(t.rent_due_day) || 1);
+          return due >= dayOfMonth && due - dayOfMonth <= 3;
+        });
+        const overdue = unpaidTenants.filter(t => (Math.min(28, parseInt(t.rent_due_day) || 1)) < dayOfMonth);
+        const staleMaint = data.requests.filter(r => r.status !== 'completed' && (today - new Date(r.reported_at)) / 86400000 > 7);
+        const needsMatching = payments.filter(p => p.status === 'unmatched' || p.status === 'review');
+        const items = [
+          { icon: '💰', text: `${paidToday.length} payment${paidToday.length !== 1 ? 's' : ''} received today`, sub: paidToday.length ? `KES ${paidTodayTotal.toLocaleString()}` : null, to: '/payments', show: true, tone: 'green' },
+          { icon: '⏰', text: `${dueSoon.length} tenant${dueSoon.length !== 1 ? 's' : ''} with rent due in the next 3 days`, to: '/tenants', show: dueSoon.length > 0, tone: 'amber' },
+          { icon: '⚠️', text: `${overdue.length} tenant${overdue.length !== 1 ? 's' : ''} past their due day with a balance`, sub: `KES ${overdue.reduce((a, t) => a + parseFloat(t.balance || 0), 0).toLocaleString()} owed`, to: '/reports', show: overdue.length > 0, tone: 'red' },
+          { icon: '🔀', text: `${needsMatching.length} M-Pesa payment${needsMatching.length !== 1 ? 's' : ''} need matching`, to: '/payments', show: needsMatching.length > 0, tone: 'red' },
+          { icon: '📅', text: `${expiringLeases.length} lease${expiringLeases.length !== 1 ? 's' : ''} at 11+ months`, to: '/reports', show: expiringLeases.length > 0, tone: 'amber' },
+          { icon: '🔧', text: `${staleMaint.length} maintenance request${staleMaint.length !== 1 ? 's' : ''} open for over a week`, to: '/maintenance', show: staleMaint.length > 0, tone: 'red' },
+          { icon: '🏠', text: `${vacantHouses.length} vacant unit${vacantHouses.length !== 1 ? 's' : ''}`, to: '/properties', show: vacantHouses.length > 0, tone: 'muted' },
+        ].filter(i => i.show);
+        const hour = today.getHours();
+        const greet = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
+        const toneColor = { green: 'var(--green, #16a34a)', amber: 'var(--amber, #d97706)', red: 'var(--red, #dc2626)', muted: 'var(--muted)' };
+        return (
+          <div style={{ marginBottom: 20, padding: 18, borderRadius: 14, border: '1px solid var(--border)', background: 'var(--surface)', boxShadow: 'var(--shadow)' }}>
+            <div style={{ fontWeight: 700, fontSize: 16, color: 'var(--text)', marginBottom: 2 }}>{greet}{me?.name ? `, ${String(me.name).split(' ')[0]}` : ''} 👋</div>
+            <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 12 }}>Today's briefing — {today.toLocaleDateString('en-KE', { weekday: 'long', day: 'numeric', month: 'long' })}</div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
+              {items.map((i, k) => (
+                <button key={k} onClick={() => navigate(i.to)} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '9px 14px', borderRadius: 10, border: '1px solid var(--border)', borderLeft: `4px solid ${toneColor[i.tone]}`, background: 'var(--surface2)', color: 'var(--text)', fontSize: 13, cursor: 'pointer', textAlign: 'left' }}>
+                  <span>{i.icon}</span>
+                  <span><span style={{ fontWeight: 600 }}>{i.text}</span>{i.sub && <span style={{ color: 'var(--muted)' }}> · {i.sub}</span>}</span>
+                </button>
+              ))}
+              {items.length === 0 && <span style={{ color: 'var(--muted)', fontSize: 13 }}>All quiet — nothing needs attention right now. 🎉</span>}
+            </div>
+          </div>
+        );
+      })()}
+
       {/* Stats Grid + Property Map */}
       <div style={{ display: 'flex', gap: 16, marginBottom: 28, alignItems: 'stretch', flexWrap: 'wrap' }}>
         <div style={{ flex: '1 1 600px', display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 14 }}>

@@ -14,6 +14,8 @@ const REPORTS = [
   { id: 'paymenthistory', icon: '🧾', label: 'Payment History',       desc: 'One tenant\'s full rent + deposit timeline', color: 'var(--primary)', light: 'var(--primary-light)', permission: 'reports.payment_collection' },
   { id: 'unpaid',         icon: '⚠️', label: 'Unpaid Rent',           desc: 'Outstanding balances, with aging',     color: 'var(--red)',     light: 'var(--red-light)',     permission: 'reports.unpaid_rent' },
   { id: 'tenants',        icon: '👥', label: 'Tenant List',           desc: 'All active and inactive tenants',      color: 'var(--primary)', light: 'var(--primary-light)', permission: 'reports.tenant_list' },
+  { id: 'arrearsrisk',    icon: '🚨', label: 'Arrears Aging & Risk',  desc: 'Who owes, how long, and who is likely to fall behind', color: 'var(--red)', light: 'var(--red-light)', permission: 'reports.unpaid_rent' },
+  { id: 'maintperf',      icon: '🛠️', label: 'Maintenance Performance', desc: 'Resolution time, cost and repeat issues per property', color: 'var(--amber)', light: 'var(--amber-light)', permission: 'reports.maintenance' },
   { id: 'maintenance',    icon: '🔧', label: 'Maintenance Records',   desc: 'All maintenance requests by status',   color: 'var(--amber)',   light: 'var(--amber-light)',   permission: 'reports.maintenance' },
   { id: 'properties',     icon: '🏢', label: 'Property Summary',      desc: 'Plots, units, occupancy overview',     color: 'var(--blue)',    light: 'var(--blue-light)',    permission: 'reports.property_summary' },
   { id: 'occupancy',      icon: '📊', label: 'Occupancy Report',      desc: 'Vacant vs occupied units over time',   color: '#8b5cf6',       light: '#ede9fe',              permission: 'reports.occupancy' },
@@ -45,7 +47,7 @@ function getThisMonth() { return new Date().getMonth() + 1; }
 // Reports that don't use the period/month selectors at all — they're either
 // current-state snapshots (rentroll, performance, tenure) or have their own
 // dedicated month/year controls (comparison).
-const NO_PERIOD_FILTER = ['properties', 'occupancy', 'expiring', 'revenue', 'rentroll', 'performance', 'tenure', 'comparison', 'depositledger', 'audittrail', 'useractivity', 'collection', 'agentscore', 'vacancyloss', 'dataquality', 'paymenthistory', 'assignments'];
+const NO_PERIOD_FILTER = ['properties', 'occupancy', 'expiring', 'revenue', 'rentroll', 'performance', 'tenure', 'comparison', 'depositledger', 'audittrail', 'useractivity', 'collection', 'agentscore', 'vacancyloss', 'dataquality', 'paymenthistory', 'arrearsrisk', 'assignments'];
 
 function daysBetween(a, b) { return Math.floor((a - b) / (1000 * 60 * 60 * 24)); }
 
@@ -616,6 +618,8 @@ export default function Reports() {
         auditLog = arr(ar.data);
       } catch (e) { auditLog = []; auditDenied = e?.response?.status === 403; } // 403 for non-admins — expected, not an error
 
+      let riskData = [];
+      try { riskData = arr((await API.get('/tenants/arrears-risk')).data); } catch { riskData = []; }
       let utilities = [];
       try { utilities = arr((await API.get('/utilities')).data); } catch { utilities = []; }
 
@@ -627,7 +631,7 @@ export default function Reports() {
 
       setData({
         tenants: arr(tr.data), payments: arr(pr.data), houses: arr(hr.data),
-        requests: arr(mr.data), plots: arr(plr.data), expenses: arr(er.data), utilities, users, deposits, auditLog, auditDenied, caretakerPlots,
+        requests: arr(mr.data), plots: arr(plr.data), expenses: arr(er.data), utilities, riskData, users, deposits, auditLog, auditDenied, caretakerPlots,
         plotPermissions, userActivity, userActivityDenied,
       });
     } catch (e) { console.error(e); }
@@ -694,6 +698,17 @@ export default function Reports() {
     } catch (e) { console.error(e); alert('Could not generate statement.'); }
   }
 
+  const [ownerMonth, setOwnerMonth] = useState(() => { const d = new Date(); d.setMonth(d.getMonth() - 1); return d.toISOString().slice(0, 7); });
+  async function downloadOwnerStatement() {
+    try {
+      const res = await API.get(`/statements/landlord?month=${ownerMonth}`, { responseType: 'blob' });
+      const url = URL.createObjectURL(new Blob([res.data], { type: 'application/pdf' }));
+      const a = document.createElement('a');
+      a.href = url; a.download = `owner_statement_${ownerMonth}.pdf`; a.click();
+      URL.revokeObjectURL(url);
+    } catch (e) { console.error(e); alert('Could not generate the owner statement (you may not have access to financial reports for these properties).'); }
+  }
+
   async function downloadAllStatements() {
     try {
       const res = await API.get('/statements/bulk/all.zip', { responseType: 'blob' });
@@ -714,7 +729,7 @@ export default function Reports() {
   let auditOptions = { actions: [], entities: [], users: [] };
 
   if (data.payments) {
-    const { tenants, payments, houses, requests, plots, expenses, utilities = [], users, deposits, auditLog, caretakerPlots, plotPermissions, userActivity } = data;
+    const { tenants, payments, houses, requests, plots, expenses, utilities = [], riskData = [], users, deposits, auditLog, caretakerPlots, plotPermissions, userActivity } = data;
 
     // Shared lookups for the analytical reports below
     const houseById = Object.fromEntries(houses.map(h => [h.id, h]));
@@ -1142,6 +1157,75 @@ export default function Reports() {
       }));
       summary = [{ label: 'Total', value: filtered.length, color: 'var(--amber)' }, { label: 'Pending', value: filtered.filter(r=>r.status==='pending').length, color: 'var(--red)' }, { label: 'Completed', value: filtered.filter(r=>r.status==='completed').length, color: 'var(--green)' }];
       title = 'Maintenance Records Report';
+    }
+
+    if (active === 'arrearsrisk') {
+      const vis = riskData.filter(t => canForPlot('reports.unpaid_rent', t.plot_id, plotPermissions));
+      const LV = { Critical: '🔴 Critical', High: '🟠 High', Medium: '🟡 Medium', Low: '🟢 Low' };
+      const bucket = d => d <= 30 ? '0–30 days' : d <= 60 ? '31–60 days' : d <= 90 ? '61–90 days' : '90+ days';
+      const owing = vis.filter(t => t.balance > 0);
+      columns = ['Tenant', 'Phone', 'Property / Unit', 'Balance (KES)', 'Months Owed', 'Oldest Unpaid', 'Days Overdue', 'Aging', 'Late Payments (last 6)', 'Risk Score', 'Risk'];
+      rows = vis.map(t => ({
+        Tenant: t.full_name, Phone: t.phone || '—',
+        'Property / Unit': `${t.plot_name || '—'}${t.unit_number ? ' · ' + t.unit_number : ''}`,
+        'Balance (KES)': t.balance.toLocaleString(), 'Months Owed': t.months_owed,
+        'Oldest Unpaid': t.oldest_label || '—', 'Days Overdue': t.balance > 0 ? t.oldest_days : '—',
+        Aging: t.balance > 0 ? bucket(t.oldest_days) : '—',
+        'Late Payments (last 6)': t.paid_months_checked ? `${t.late_months}/${t.paid_months_checked}${t.late_months ? ` (avg ${t.avg_days_late}d late)` : ''}` : '—',
+        'Risk Score': t.risk_score, Risk: LV[t.risk_level] || t.risk_level,
+      }));
+      const sum = (arr2) => arr2.reduce((x, t) => x + t.balance, 0);
+      summary = [
+        { label: 'Tenants Owing', value: owing.length, color: 'var(--red)' },
+        { label: 'Total Arrears', value: `KES ${sum(owing).toLocaleString()}`, color: 'var(--red)' },
+        { label: 'Critical / High risk', value: vis.filter(t => ['Critical', 'High'].includes(t.risk_level)).length, color: 'var(--amber)' },
+        { label: '90+ days owed', value: owing.filter(t => t.oldest_days > 90).length, color: 'var(--red)' },
+      ];
+      title = 'Arrears Aging & Risk';
+      const buckets = ['0–30 days', '31–60 days', '61–90 days', '90+ days'];
+      chart = <HBarChart title="Arrears by age (KES)" series={[{ name: 'Owed', color: 'var(--red)' }]}
+        data={buckets.map(b => ({ label: b, values: [sum(owing.filter(t => bucket(t.oldest_days) === b))] }))} format={v => `KES ${v.toLocaleString()}`} />;
+    }
+
+    if (active === 'maintperf') {
+      const vis = requests.filter(r => canForPlot('reports.maintenance', r.plot_id, plotPermissions));
+      const fr = filterByPeriod(vis, 'reported_at');
+      const plotName = Object.fromEntries(plots.map(p => [p.id, p.name]));
+      const costByReq = {};
+      expenses.forEach(e => { if (e.maintenance_request_id) costByReq[e.maintenance_request_id] = (costByReq[e.maintenance_request_id] || 0) + parseFloat(e.amount || 0); });
+      const now = new Date();
+      const norm = r => `${r.house_id}|${String(r.issue || '').toLowerCase().replace(/[^a-z ]/g, '').trim().split(/\s+/).slice(0, 3).join(' ')}`;
+      const counts = {};
+      fr.forEach(r => { const k = norm(r); counts[k] = (counts[k] || 0) + 1; });
+      const groups = {};
+      fr.forEach(r => {
+        const g = (groups[r.plot_id] ||= { name: plotName[r.plot_id] || `Plot ${r.plot_id}`, total: 0, done: 0, days: [], open7: 0, urgent: 0, cost: 0, repeats: 0 });
+        g.total++;
+        if (r.status === 'completed') { g.done++; if (r.resolved_at) g.days.push((new Date(r.resolved_at) - new Date(r.reported_at)) / 86400000); }
+        else if ((now - new Date(r.reported_at)) / 86400000 > 7) g.open7++;
+        if (['high', 'urgent'].includes(String(r.priority).toLowerCase()) && r.status !== 'completed') g.urgent++;
+        g.cost += costByReq[r.id] || 0;
+        if (counts[norm(r)] > 1) g.repeats++;
+      });
+      const list = Object.values(groups).sort((a, b) => b.total - a.total);
+      const avg = a => a.length ? a.reduce((x, y) => x + y, 0) / a.length : null;
+      columns = ['Property', 'Requests', 'Completed', 'Completion %', 'Avg Days to Resolve', 'Open > 7 days', 'Urgent Open', 'Repeat Issues', 'Cost (KES)'];
+      rows = list.map(g => ({
+        Property: g.name, Requests: g.total, Completed: g.done,
+        'Completion %': g.total ? `${Math.round((g.done / g.total) * 100)}%` : '—',
+        'Avg Days to Resolve': avg(g.days) != null ? avg(g.days).toFixed(1) : '—',
+        'Open > 7 days': g.open7, 'Urgent Open': g.urgent, 'Repeat Issues': g.repeats, 'Cost (KES)': g.cost.toLocaleString(),
+      }));
+      const allDays = list.flatMap(g => g.days);
+      summary = [
+        { label: 'Requests', value: fr.length, color: 'var(--amber)' },
+        { label: 'Avg days to resolve', value: avg(allDays) != null ? avg(allDays).toFixed(1) : '—', color: 'var(--green)' },
+        { label: 'Open > 7 days', value: list.reduce((x, g) => x + g.open7, 0), color: 'var(--red)' },
+        { label: 'Repair cost', value: `KES ${list.reduce((x, g) => x + g.cost, 0).toLocaleString()}`, color: 'var(--red)' },
+      ];
+      title = 'Maintenance Performance';
+      chart = <HBarChart title="Average days to resolve" series={[{ name: 'Days', color: 'var(--amber)' }]}
+        data={list.filter(g => g.days.length).map(g => ({ label: g.name, values: [Number(avg(g.days).toFixed(1))] }))} format={v => `${v} days`} />;
     }
 
     if (active === 'properties') {
@@ -1920,6 +2004,13 @@ export default function Reports() {
               {/* Bulk tenant statements — only where it's meaningful */}
               {active === 'rentroll' && (
                 <button type="button" className="rp-btn" onClick={downloadAllStatements}>📄 All statements (ZIP)</button>
+              )}
+
+              {['revenue', 'profitloss', 'properties', 'expenses', 'utilities'].includes(active) && (
+                <span style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
+                  <input type="month" value={ownerMonth} onChange={e => setOwnerMonth(e.target.value)} className="rp-select" title="Statement month" />
+                  <button type="button" className="rp-btn" onClick={downloadOwnerStatement}>🏢 Owner statement (PDF)</button>
+                </span>
               )}
 
               {/* Print / Save as PDF — browsers' print dialog offers "Save as PDF" */}

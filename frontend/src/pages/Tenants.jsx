@@ -132,6 +132,7 @@ export default function Tenants() {
   const canAddGlobally = can('tenants.create');
   const isDark    = useIsDarkMode();
   const location  = useLocation();
+  useEffect(() => { if (location.state?.search) setSearch(location.state.search); }, [location.state]); // from Ctrl+K quick search
   const navigate  = useNavigate();
 
   async function load() {

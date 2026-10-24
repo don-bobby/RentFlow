@@ -3,6 +3,7 @@ import { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import API, { getPendingLandlordsCount } from '../services/api';
 import { useAuth } from '../context/AuthContext';
+import QuickSearch from './QuickSearch';
 
 // ── Responsive hook ───────────────────────────────────────────────────────────
 function useBreakpoint() {
@@ -403,6 +404,7 @@ export default function Layout() {
               <>
                 <div style={{ fontFamily: 'Space Grotesk', fontWeight: 600, fontSize: 15, color: theme === 'dark' ? 'var(--blue, #2563eb)' : 'var(--muted)' }}>Kenya Rental Management</div>
                 <div style={{ fontSize: 12, color: theme === 'dark' ? 'var(--blue, #2563eb)' : 'var(--muted)', fontFamily: 'monospace', background: 'var(--surface2)', padding: '4px 10px', borderRadius: 8, border: '1px solid var(--border)' }}>{clock}</div>
+                <button type="button" onClick={() => window.dispatchEvent(new Event('open-quick-search'))} title="Quick search (Ctrl+K)" style={{ fontSize: 12, color: 'var(--muted)', background: 'var(--surface2)', padding: '4px 10px', borderRadius: 8, border: '1px solid var(--border)', cursor: 'pointer' }}>🔍 Search <span style={{ opacity: 0.6 }}>Ctrl K</span></button>
               </>
             )}
             {isMobile && <span style={{ fontFamily: 'Space Grotesk', fontWeight: 700, fontSize: 16, color: 'var(--text)' }}>RentFlow</span>}
@@ -520,6 +522,7 @@ export default function Layout() {
         {/* ── Page content ── */}
         <div style={{ flex: 1, padding: isMobile ? '16px 14px calc(84px + env(safe-area-inset-bottom, 0px))' : 28, overflow: 'auto' }}>
           <Outlet />
+          <QuickSearch />
         </div>
       </main>
 

@@ -1,5 +1,5 @@
 const express = require('express');
-const { computeLedger, loadPaidMaps } = require('../utils/rentLedger');
+const { computeLedger, loadPaidMaps, VALID_PAYMENT_SQL } = require('../utils/rentLedger');
 const router  = express.Router();
 const pool    = require('../database/db');
 const { logAudit, diff } = require('../utils/audit');
@@ -118,6 +118,79 @@ router.get('/', staffAuth, async (req, res) => {
     const data = await stripSensitiveFields(req, visibleRows);
     res.json({ success: true, data });
   } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// GET /api/tenants/arrears-risk — per-tenant arrears aging + payment-behaviour
+// risk score, built on the shared rent ledger. Must be BEFORE /:id.
+// Score 0-100: months owed (max 40), age of the oldest unpaid month (max 30),
+// share of the last 6 paid months that were paid >5 days after the due day
+// (max 20), partial-payment months (max 10).
+router.get('/arrears-risk', staffAuth, async (req, res) => {
+  try {
+    const visible = await getVisiblePlotIds(req.user);
+    if (visible !== 'ALL' && visible.length === 0) return res.json({ success: true, data: [] });
+    const r = await pool.query(
+      `SELECT t.id, t.full_name, t.phone, t.move_in_date, t.rent_due_day, h.unit_number, h.rent_amount, h.plot_id, p.name AS plot_name
+       FROM tenants t
+       JOIN houses h ON t.house_id = h.id
+       LEFT JOIN plots p ON h.plot_id = p.id
+       WHERE t.is_active = true ${visible === 'ALL' ? '' : 'AND h.plot_id = ANY($1)'}`,
+      visible === 'ALL' ? [] : [visible]
+    );
+    const rows = await filterRowsByPermission(req.user, r.rows, 'tenants.view', (row) => row.plot_id);
+    const ids = rows.map(x => x.id);
+    if (!ids.length) return res.json({ success: true, data: [] });
+
+    const paidMaps = await loadPaidMaps(pool, ids);
+    // Last valid payment date per tenant-month, to judge lateness.
+    const last = await pool.query(
+      `SELECT tenant_id,
+              COALESCE(for_year,  EXTRACT(YEAR  FROM payment_date)::int) AS y,
+              COALESCE(for_month, EXTRACT(MONTH FROM payment_date)::int) AS m,
+              MAX(payment_date) AS last_date
+       FROM payments
+       WHERE tenant_id = ANY($1) AND ${VALID_PAYMENT_SQL}
+       GROUP BY tenant_id, y, m`, [ids]);
+    const lastMap = {};
+    for (const x of last.rows) (lastMap[x.tenant_id] ||= {})[`${x.y}-${x.m}`] = new Date(x.last_date);
+
+    const now = new Date();
+    const out = rows.map(t => {
+      const paidMap = paidMaps[t.id] || {};
+      const { unpaidMonths, totalOwed } = computeLedger({ rent: t.rent_amount, moveInDate: t.move_in_date, paidMap, now });
+      const dueDay = Math.min(28, Math.max(1, parseInt(t.rent_due_day) || 1));
+      let oldestDays = 0;
+      if (unpaidMonths.length) {
+        const o = unpaidMonths[0];
+        oldestDays = Math.max(0, Math.floor((now - new Date(o.year, o.month - 1, dueDay)) / 86400000));
+      }
+      // Lateness over the last 6 fully paid months
+      const rent = parseFloat(t.rent_amount || 0);
+      const paidMonths = Object.keys(paidMap).filter(k => paidMap[k] >= rent && rent > 0).sort((a, b) => {
+        const [ay, am] = a.split('-').map(Number), [by, bm] = b.split('-').map(Number); return (ay * 12 + am) - (by * 12 + bm);
+      }).slice(-6);
+      let lateCount = 0, lateDaysSum = 0;
+      for (const k of paidMonths) {
+        const [y, m] = k.split('-').map(Number);
+        const lastDate = lastMap[t.id]?.[k];
+        if (!lastDate) continue;
+        const late = Math.floor((lastDate - new Date(y, m - 1, dueDay)) / 86400000);
+        if (late > 5) { lateCount++; lateDaysSum += late; }
+      }
+      const lateShare = paidMonths.length ? lateCount / paidMonths.length : 0;
+      const partialMonths = unpaidMonths.filter(u => u.partial).length;
+      const score = Math.round(Math.min(40, unpaidMonths.length * 13) + Math.min(30, oldestDays / 3) + lateShare * 20 + Math.min(10, partialMonths * 5));
+      const level = totalOwed === 0 && score < 25 ? 'Low' : score >= 75 ? 'Critical' : score >= 50 ? 'High' : score >= 25 ? 'Medium' : 'Low';
+      return {
+        id: t.id, full_name: t.full_name, phone: t.phone, unit_number: t.unit_number, plot_id: t.plot_id, plot_name: t.plot_name,
+        rent_amount: rent, balance: totalOwed, months_owed: unpaidMonths.length, oldest_days: oldestDays,
+        oldest_label: unpaidMonths[0]?.label || null, paid_months_checked: paidMonths.length, late_months: lateCount,
+        avg_days_late: lateCount ? Math.round(lateDaysSum / lateCount) : 0, partial_months: partialMonths, risk_score: score, risk_level: level,
+      };
+    });
+    out.sort((a, b) => b.risk_score - a.risk_score);
+    res.json({ success: true, data: out });
+  } catch (err) { console.error(err); res.status(500).json({ error: err.message }); }
 });
 
 // GET unpaid months — must be BEFORE /:id to avoid route conflict

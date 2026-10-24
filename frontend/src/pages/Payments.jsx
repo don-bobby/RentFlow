@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import { useLocation } from 'react-router-dom';
 import { createPortal } from 'react-dom';
 import API, { getUnmatchedPayments, matchPayment, deletePayment } from '../services/api';
 import { useAuth } from '../context/AuthContext';
@@ -65,6 +66,7 @@ export default function Payments() {
   const [saving,         setSaving]         = useState(false);
   const [error,          setError]          = useState('');
   const [filter,         setFilter]         = useState('all');
+  const location = useLocation();
   const [plotFilter,     setPlotFilter]     = useState('all'); // 'all' or a plot id — narrows the payments list to one property
   const [tenantFilter,   setTenantFilter]   = useState('all'); // 'all' or a tenant id — narrows the payments list to one tenant
   const [allocatedSort,  setAllocatedSort]  = useState(null); // null (table order) | 'asc' | 'desc' — sorts rows by the "Allocated To" month
@@ -264,6 +266,7 @@ export default function Payments() {
     }, 5000);
   }
 
+  useEffect(() => { if (location.state?.tenantId) setTenantFilter(String(location.state.tenantId)); }, [location.state]); // from Ctrl+K quick search
   const filtered    = payments
     .filter(p => filter === 'all' || p.status === filter)
     .filter(p => plotFilter === 'all' || String(p.plot_id) === String(plotFilter))
