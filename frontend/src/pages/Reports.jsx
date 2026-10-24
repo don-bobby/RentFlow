@@ -15,6 +15,7 @@ const REPORTS = [
   { id: 'paymenthistory', icon: '🧾', label: 'Payment History',       desc: 'One tenant\'s full rent + deposit timeline', color: 'var(--primary)', light: 'var(--primary-light)', permission: 'reports.payment_collection' },
   { id: 'unpaid',         icon: '⚠️', label: 'Unpaid Rent',           desc: 'Outstanding balances, with aging',     color: 'var(--red)',     light: 'var(--red-light)',     permission: 'reports.unpaid_rent' },
   { id: 'tenants',        icon: '👥', label: 'Tenant List',           desc: 'All active and inactive tenants',      color: 'var(--primary)', light: 'var(--primary-light)', permission: 'reports.tenant_list' },
+  { id: 'ownerstatement', icon: '🏢', label: 'Owner Statement',       desc: 'Monthly income, expenses and net per property, as a PDF', color: 'var(--primary)', light: 'var(--primary-light)', permission: 'reports.revenue_summary' },
   { id: 'arrearsrisk',    icon: '🚨', label: 'Arrears Aging & Risk',  desc: 'Who owes, how long, and who is likely to fall behind', color: 'var(--red)', light: 'var(--red-light)', permission: 'reports.unpaid_rent' },
   { id: 'maintperf',      icon: '🛠️', label: 'Maintenance Performance', desc: 'Resolution time, cost and repeat issues per property', color: 'var(--amber)', light: 'var(--amber-light)', permission: 'reports.maintenance' },
   { id: 'maintenance',    icon: '🔧', label: 'Maintenance Records',   desc: 'All maintenance requests by status',   color: 'var(--amber)',   light: 'var(--amber-light)',   permission: 'reports.maintenance' },
@@ -48,7 +49,7 @@ function getThisMonth() { return new Date().getMonth() + 1; }
 // Reports that don't use the period/month selectors at all — they're either
 // current-state snapshots (rentroll, performance, tenure) or have their own
 // dedicated month/year controls (comparison).
-const NO_PERIOD_FILTER = ['properties', 'occupancy', 'expiring', 'revenue', 'rentroll', 'performance', 'tenure', 'comparison', 'depositledger', 'audittrail', 'useractivity', 'collection', 'agentscore', 'vacancyloss', 'dataquality', 'paymenthistory', 'arrearsrisk', 'assignments'];
+const NO_PERIOD_FILTER = ['properties', 'occupancy', 'expiring', 'revenue', 'rentroll', 'performance', 'tenure', 'comparison', 'depositledger', 'audittrail', 'useractivity', 'collection', 'agentscore', 'vacancyloss', 'dataquality', 'paymenthistory', 'arrearsrisk', 'ownerstatement', 'assignments'];
 
 function daysBetween(a, b) { return Math.floor((a - b) / (1000 * 60 * 60 * 24)); }
 
@@ -1177,6 +1178,28 @@ export default function Reports() {
       title = 'Maintenance Records Report';
     }
 
+    if (active === 'ownerstatement') {
+      const inMonth = (d) => String(d || '').slice(0, 7) === ownerMonth;
+      const okPay = (p) => p.status !== 'failed' && p.status !== 'pending' && p.method !== 'balance_charge';
+      const visPlots = plots.filter(pl => canForPlot('reports.revenue_summary', pl.id, plotPermissions));
+      columns = ['Property', 'Rent Collected (KES)', 'Utilities Recovered (KES)', 'Expenses (KES)', 'Net (KES)'];
+      rows = visPlots.map(pl => {
+        const rent = payments.filter(p => p.plot_id === pl.id && okPay(p) && inMonth(p.payment_date)).reduce((a, p) => a + parseFloat(p.amount || 0), 0);
+        const util = utilities.filter(u => u.plot_id === pl.id && inMonth(u.payment_date)).reduce((a, u) => a + parseFloat(u.amount || 0), 0);
+        const exp  = expenses.filter(e => e.plot_id === pl.id && inMonth(e.expense_date) && e.status !== 'pending').reduce((a, e) => a + parseFloat(e.amount || 0), 0);
+        return { Property: pl.name, 'Rent Collected (KES)': rent.toLocaleString(), 'Utilities Recovered (KES)': util.toLocaleString(), 'Expenses (KES)': exp.toLocaleString(), 'Net (KES)': (rent + util - exp).toLocaleString(), _rent: rent, _util: util, _exp: exp };
+      });
+      const tot = (k) => rows.reduce((a, r) => a + r[k], 0);
+      summary = [
+        { label: 'Rent collected', value: `KES ${tot('_rent').toLocaleString()}`, color: 'var(--green)' },
+        { label: 'Utilities recovered', value: `KES ${tot('_util').toLocaleString()}`, color: 'var(--blue)' },
+        { label: 'Expenses', value: `KES ${tot('_exp').toLocaleString()}`, color: 'var(--red)' },
+        { label: 'Net', value: `KES ${(tot('_rent') + tot('_util') - tot('_exp')).toLocaleString()}`, color: 'var(--primary)' },
+      ];
+      title = `Owner Statement - ${new Date(ownerMonth + '-01').toLocaleString('en-KE', { month: 'long', year: 'numeric' })}`;
+      note = 'Pick the month beside the button, then press "Owner statement (PDF)" for the full one-page-per-property statement.';
+    }
+
     if (active === 'arrearsrisk') {
       const vis = riskData.filter(t => canForPlot('reports.unpaid_rent', t.plot_id, plotPermissions));
       const LV = { Critical: '🔴 Critical', High: '🟠 High', Medium: '🟡 Medium', Low: '🟢 Low' };
@@ -2024,7 +2047,7 @@ export default function Reports() {
                 <button type="button" className="rp-btn" onClick={downloadAllStatements}>📄 All statements (ZIP)</button>
               )}
 
-              {['revenue', 'profitloss', 'properties', 'expenses', 'utilities'].includes(active) && (
+              {['ownerstatement', 'revenue', 'profitloss', 'properties', 'expenses', 'utilities'].includes(active) && (
                 <span style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
                   <input type="month" value={ownerMonth} onChange={e => setOwnerMonth(e.target.value)} className="rp-select" title="Statement month" />
                   <button type="button" className="rp-btn" onClick={downloadOwnerStatement}>🏢 Owner statement (PDF)</button>
