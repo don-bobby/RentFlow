@@ -279,7 +279,8 @@ const STYLES = `
 
 /* Printing: always black on white, no shadows, no UI chrome */
 @media print {
-  .no-print { display: none !important; }
+  .no-print, .app-chrome { display: none !important; }
+  body, html, #root { background: #fff !important; }
   :root .rp-page, :root[data-theme] .rp-page {
     --rp-text: #111; --rp-muted: #555; --rp-surface: #fff; --rp-surface2: #f3f4f6; --rp-border: #d1d5db;
     --rp-primary: #6d28d9; --rp-green: #15803d; --rp-red: #b91c1c; --rp-blue: #1d4ed8; --rp-amber: #b45309; --rp-shadow: none;

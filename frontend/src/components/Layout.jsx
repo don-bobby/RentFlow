@@ -326,7 +326,7 @@ export default function Layout() {
 
       {/* ── Sidebar (desktop always visible, mobile = drawer) ── */}
       {(!isMobile || sidebarOpen) && (
-        <aside style={{
+        <aside className="app-chrome" style={{
           width: isMobile ? 260 : collapsed ? 64 : 212,
           minHeight: '100vh',
           background: '#0f1117',
@@ -387,7 +387,7 @@ export default function Layout() {
             Kept below 200, since this file's own modals/full panels
             (ModalWrapper, chats full panel, notifications panel) use
             zIndex: 200 and must stay above the header, not below it. */}
-        <header style={{ padding: isMobile ? '0 14px' : '0 24px', height: 60, display: 'flex', alignItems: 'center', justifyContent: 'space-between', position: 'sticky', top: 0, zIndex: 100 }}>
+        <header className="app-chrome" style={{ padding: isMobile ? '0 14px' : '0 24px', height: 60, display: 'flex', alignItems: 'center', justifyContent: 'space-between', position: 'sticky', top: 0, zIndex: 100 }}>
           <div aria-hidden="true" style={{
             position: 'absolute', inset: 0, zIndex: -1, pointerEvents: 'none',
             background: theme === 'dark' ? 'rgba(26,29,39,0.62)' : 'rgba(255,255,255,0.62)',
@@ -528,7 +528,7 @@ export default function Layout() {
 
       {/* ── Bottom nav (mobile only) ── */}
       {isMobile && (
-        <nav style={{ position: 'fixed', bottom: 0, left: 0, right: 0, height: 64, background: 'rgba(15,17,23,0.82)', WebkitBackdropFilter: 'blur(14px)', backdropFilter: 'blur(14px)', borderTop: '1px solid rgba(255,255,255,0.08)', display: 'flex', alignItems: 'center', justifyContent: 'space-around', zIndex: 30, paddingBottom: 'env(safe-area-inset-bottom)' }}>
+        <nav className="app-chrome" style={{ position: 'fixed', bottom: 0, left: 0, right: 0, height: 64, background: 'rgba(15,17,23,0.82)', WebkitBackdropFilter: 'blur(14px)', backdropFilter: 'blur(14px)', borderTop: '1px solid rgba(255,255,255,0.08)', display: 'flex', alignItems: 'center', justifyContent: 'space-around', zIndex: 30, paddingBottom: 'env(safe-area-inset-bottom)' }}>
           {bottomNav.map(({ to, icon, label }) => (
             <NavLink key={to} to={to} end={to === '/'}
               style={({ isActive }) => ({ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3, padding: '8px 12px', borderRadius: 10, color: isActive ? '#818cf8' : 'rgba(255,255,255,0.45)', textDecoration: 'none', minWidth: 56, position: 'relative' })}>
