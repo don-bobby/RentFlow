@@ -36,6 +36,44 @@ function useIsDarkMode() {
 
 const BASE = process.env.REACT_APP_API_URL || 'http://localhost:5000/api';
 
+// Row "⋯" menu. Position is computed from the button and rendered fixed so
+// the table's overflow never clips it. Items: { label, onClick, danger?, divider? }
+function RowMenu({ id, openMenu, setOpenMenu, items }) {
+  const btnRef = useRef(null);
+  const [pos, setPos] = useState({ top: 0, left: 0 });
+  const isOpen = openMenu === id;
+  function toggle(e) {
+    e.stopPropagation();
+    if (!isOpen && btnRef.current) {
+      const r = btnRef.current.getBoundingClientRect();
+      const menuH = items.length * 40 + 8;
+      const top = r.bottom + 6 + menuH > window.innerHeight ? Math.max(8, r.top - 6 - menuH) : r.bottom + 6;
+      setPos({ top, left: r.right });
+    }
+    setOpenMenu(isOpen ? null : id);
+  }
+  return (
+    <div style={{ display: 'inline-block' }}>
+      <button ref={btnRef} onClick={toggle} title="More actions" aria-label="More actions"
+        style={{ width: 32, height: 32, borderRadius: 8, border: '1px solid var(--border)', background: isOpen ? 'var(--surface2)' : 'var(--surface)', color: 'var(--text)', fontSize: 18, lineHeight: 1, cursor: 'pointer', fontWeight: 700 }}>⋯</button>
+      {isOpen && (
+        <div onClick={e => e.stopPropagation()} style={{ position: 'fixed', top: pos.top, left: pos.left, transform: 'translateX(-100%)', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, boxShadow: 'var(--shadow-lg)', minWidth: 190, zIndex: 500, overflow: 'hidden', padding: '4px 0' }}>
+          {items.map((it, i) => it.divider ? (
+            <div key={i} style={{ height: 1, background: 'var(--border)', margin: '4px 0' }} />
+          ) : (
+            <button key={i} onClick={() => { setOpenMenu(null); it.onClick(); }}
+              onMouseEnter={e => e.currentTarget.style.background = 'var(--surface2)'}
+              onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+              style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%', padding: '9px 14px', border: 'none', background: 'transparent', fontSize: 13, fontWeight: it.danger ? 700 : 500, color: it.danger ? 'var(--red, #dc2626)' : 'var(--text)', cursor: 'pointer', textAlign: 'left' }}>
+              <span style={{ width: 18, textAlign: 'center' }}>{it.icon}</span>{it.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function Payments() {
   const { can } = useAuth();
   const [payments,       setPayments]       = useState([]);
@@ -45,6 +83,8 @@ export default function Payments() {
   const [matchPicks,     setMatchPicks]     = useState({}); // { [paymentId]: tenantId }
   const [matching,       setMatching]       = useState(null); // payment id currently being matched
   const [deleting,       setDeleting]       = useState(null); // payment id currently being deleted
+  const [openMenu,       setOpenMenu]       = useState(null);
+  const [toast,          setToast]          = useState('');
   const [receiptModal,   setReceiptModal]   = useState(null); // payment object, or null
   const [receiptData,    setReceiptData]    = useState(null); // full receipt (all months + utilities), loaded from the server
   const [allocateModal,  setAllocateModal]  = useState(null); // payment object, or null
@@ -97,6 +137,32 @@ export default function Payments() {
       .catch(() => { /* falls back to the single payment row */ });
     return () => { cancelled = true; };
   }, [receiptModal]);
+
+  useEffect(() => {
+    const close = () => setOpenMenu(null);
+    window.addEventListener('click', close);
+    window.addEventListener('scroll', close, true);
+    return () => { window.removeEventListener('click', close); window.removeEventListener('scroll', close, true); };
+  }, []);
+
+  function flash(msg) { setToast(msg); setTimeout(() => setToast(''), 2200); }
+
+  function copyRef(p) {
+    const ref = p.receipt_no || p.transaction_id;
+    if (!ref) return;
+    (navigator.clipboard?.writeText(String(ref)) || Promise.reject()).then(() => flash('Reference copied'), () => flash('Could not copy'));
+  }
+
+  function whatsappReceipt(p) {
+    const t = tenants.find(x => x.id === p.tenant_id);
+    let phone = String(t?.phone || '').replace(/[^\d]/g, '');
+    if (phone.startsWith('0')) phone = '254' + phone.slice(1);
+    else if (phone.startsWith('7') || phone.startsWith('1')) phone = '254' + phone;
+    if (!phone) { flash('No phone number on file'); return; }
+    const forTxt = p.for_year && p.for_month ? ` for ${new Date(p.for_year, p.for_month - 1, 1).toLocaleString('en-KE', { month: 'long', year: 'numeric' })}` : '';
+    const msg = `Hello ${p.tenant_name || ''}, we have received your payment of KES ${parseFloat(p.amount).toLocaleString()}${forTxt} on ${new Date(p.payment_date).toLocaleDateString('en-KE')}${p.receipt_no ? ` (Ref: ${p.receipt_no})` : ''}. Thank you!${p.plot_name ? ` — ${p.plot_name}` : ''}`;
+    window.open(`https://wa.me/${phone}?text=${encodeURIComponent(msg)}`, '_blank', 'noopener');
+  }
 
   async function loadArrears(tenantId) {
     if (!tenantId) { setArrears(null); return; }
@@ -503,24 +569,27 @@ export default function Payments() {
                     <span style={{ background: statusBg[p.status] || 'var(--surface2)', color: statusColor[p.status] || 'var(--muted)', padding: '3px 10px', borderRadius: 99, fontSize: 12, fontWeight: 600 }}>{p.status}</span>
                   </td>
                   <td style={{ padding: '12px 16px', color: 'var(--muted)', fontSize: 13, fontWeight: 700 }}>{new Date(p.payment_date).toLocaleDateString('en-KE')}</td>
-                  <td style={{ padding: '12px 16px', display: 'flex', gap: 6 }}>
-                    {p.status === 'matched' && (
-                      <button
-                        onClick={() => setReceiptModal(p)}
-                        title="View / print receipt"
-                        style={{ padding: '5px 10px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--surface2)', fontSize: 12, fontWeight: 600, cursor: 'pointer', color: 'var(--green, #16a34a)' }}>
-                        🧾
-                      </button>
-                    )}
-                    {can('payments.delete', p.plot_id) && (
-                      <button
-                        onClick={() => handleDelete(p)}
-                        disabled={deleting === p.id}
-                        title="Delete this payment"
-                        style={{ padding: '5px 10px', borderRadius: 6, border: '1px solid var(--red, #dc2626)', background: 'var(--surface2)', fontSize: 12, fontWeight: 600, cursor: deleting === p.id ? 'default' : 'pointer', color: 'var(--red, #dc2626)', opacity: deleting === p.id ? 0.5 : 1 }}>
-                        🗑️
-                      </button>
-                    )}
+                  <td style={{ padding: '12px 16px' }}>
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                      {p.status === 'matched' && (
+                        <button
+                          onClick={() => setReceiptModal(p)}
+                          title="View / print receipt"
+                          style={{ padding: '6px 12px', height: 32, borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', fontSize: 12, fontWeight: 600, cursor: 'pointer', color: 'var(--text)', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                          <span style={{ color: 'var(--green, #16a34a)' }}>🧾</span> Receipt
+                        </button>
+                      )}
+                      {(() => {
+                        const items = [];
+                        if (p.status === 'matched' && p.tenant_id) items.push({ icon: '💬', label: 'Send via WhatsApp', onClick: () => whatsappReceipt(p) });
+                        if (p.receipt_no || p.transaction_id) items.push({ icon: '📋', label: 'Copy reference', onClick: () => copyRef(p) });
+                        if (can('payments.delete', p.plot_id)) {
+                          if (items.length) items.push({ divider: true });
+                          items.push({ icon: '🗑️', label: deleting === p.id ? 'Deleting…' : 'Delete payment', danger: true, onClick: () => handleDelete(p) });
+                        }
+                        return items.length ? <RowMenu id={p.id} openMenu={openMenu} setOpenMenu={setOpenMenu} items={items} /> : null;
+                      })()}
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -852,6 +921,8 @@ export default function Payments() {
           </div>
         </div>
       )}
+
+      {toast && <div style={{ position: 'fixed', bottom: 28, left: '50%', transform: 'translateX(-50%)', background: '#111827', color: '#fff', padding: '10px 18px', borderRadius: 10, fontSize: 13, fontWeight: 600, zIndex: 600, boxShadow: 'var(--shadow-lg)' }}>{toast}</div>}
 
       {/* ── Receipt Modal ──────────────────────────────────────── */}
       {receiptModal && createPortal((() => {
