@@ -46,6 +46,7 @@ export default function Payments() {
   const [matching,       setMatching]       = useState(null); // payment id currently being matched
   const [deleting,       setDeleting]       = useState(null); // payment id currently being deleted
   const [receiptModal,   setReceiptModal]   = useState(null); // payment object, or null
+  const [receiptData,    setReceiptData]    = useState(null); // full receipt (all months + utilities), loaded from the server
   const [allocateModal,  setAllocateModal]  = useState(null); // payment object, or null
   const [allocateYear,   setAllocateYear]   = useState(new Date().getFullYear());
   const [allocateMonth,  setAllocateMonth]  = useState(new Date().getMonth() + 1);
@@ -86,6 +87,16 @@ export default function Payments() {
   }
 
   useEffect(() => { load(); }, []);
+
+  useEffect(() => {
+    setReceiptData(null);
+    if (!receiptModal) return;
+    let cancelled = false;
+    API.get(`/payments/receipt/${receiptModal.id}`)
+      .then(res => { if (!cancelled) setReceiptData(res.data.data); })
+      .catch(() => { /* falls back to the single payment row */ });
+    return () => { cancelled = true; };
+  }, [receiptModal]);
 
   async function loadArrears(tenantId) {
     if (!tenantId) { setArrears(null); return; }
@@ -843,52 +854,110 @@ export default function Payments() {
       )}
 
       {/* ── Receipt Modal ──────────────────────────────────────── */}
-      {receiptModal && createPortal(
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, padding: 20 }}>
-          <div className="pm-receipt" style={{ background: '#fff', color: '#1a1a1a', borderRadius: 16, padding: 32, width: '100%', maxWidth: 420, boxShadow: 'var(--shadow-lg)' }}>
-            <div className="pm-no-print" style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: -8 }}>
-              <button onClick={() => setReceiptModal(null)} style={{ width: 30, height: 30, borderRadius: '50%', border: 'none', background: '#f3f4f6', cursor: 'pointer', fontSize: 16, color: '#6b7280' }}>×</button>
-            </div>
+      {receiptModal && createPortal((() => {
+        const r  = receiptData;
+        const pm = r?.payment || receiptModal;
+        const kes = (n) => `KES ${parseFloat(n || 0).toLocaleString()}`;
+        const rentLines = r?.rent_lines?.length ? r.rent_lines : [{ id: receiptModal.id, amount: parseFloat(receiptModal.amount), for_year: receiptModal.for_year, for_month: receiptModal.for_month }];
+        const utilLines = r?.utility_lines || [];
+        const rentTotal = r ? r.rent_total : parseFloat(receiptModal.amount);
+        const grand     = r ? r.grand_total : rentTotal;
+        const receiptNo = r?.receipt_number || `RF-${String(receiptModal.id).padStart(6, '0')}`;
+        const dateStr   = pm.payment_date ? new Date(pm.payment_date).toLocaleDateString('en-KE', { year: 'numeric', month: 'long', day: 'numeric' }) : '—';
+        const row = (label, value) => (
+          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, fontSize: 13, padding: '4px 0' }}>
+            <span style={{ color: '#6b7280' }}>{label}</span>
+            <span style={{ fontWeight: 600, textAlign: 'right' }}>{value}</span>
+          </div>
+        );
+        return (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, padding: 20, overflowY: 'auto' }}>
+          <div className="pm-receipt" style={{ background: '#fff', color: '#1a1a1a', borderRadius: 16, width: '100%', maxWidth: 460, boxShadow: 'var(--shadow-lg)', overflow: 'hidden', position: 'relative' }}>
+            <button className="pm-no-print" onClick={() => setReceiptModal(null)} style={{ position: 'absolute', top: 12, right: 12, width: 30, height: 30, borderRadius: '50%', border: 'none', background: 'rgba(255,255,255,0.25)', cursor: 'pointer', fontSize: 16, color: '#fff' }}>×</button>
 
-            <div style={{ textAlign: 'center', marginBottom: 20 }}>
-              <div style={{ fontSize: 28, marginBottom: 4 }}>🏠</div>
-              <div style={{ fontFamily: 'Space Grotesk, sans-serif', fontWeight: 800, fontSize: 18 }}>RentFlow</div>
-              <div style={{ fontSize: 12, color: '#6b7280', marginTop: 2 }}>Payment Receipt</div>
-            </div>
-
-            <div style={{ borderTop: '2px dashed #d1d5db', borderBottom: '2px dashed #d1d5db', padding: '16px 0', marginBottom: 16 }}>
-              <div style={{ textAlign: 'center', marginBottom: 14 }}>
-                <div style={{ fontSize: 11, color: '#6b7280', textTransform: 'uppercase', letterSpacing: 0.5 }}>Amount Paid</div>
-                <div style={{ fontSize: 28, fontWeight: 800, color: '#16a34a' }}>KES {parseFloat(receiptModal.amount).toLocaleString()}</div>
-              </div>
-              {[
-                ['Tenant', receiptModal.tenant_name || '—'],
-                ['Unit', receiptModal.unit_number ? `Unit ${receiptModal.unit_number}` : '—'],
-                ['Property', receiptModal.plot_name || '—'],
-                ['Method', (receiptModal.method || 'mpesa').toUpperCase()],
-                ['Receipt / Ref', receiptModal.receipt_no || receiptModal.transaction_id || '—'],
-                ['Date', receiptModal.payment_date ? new Date(receiptModal.payment_date).toLocaleDateString('en-KE', { year: 'numeric', month: 'long', day: 'numeric' }) : '—'],
-                ...(receiptModal.for_year && receiptModal.for_month ? [['Allocated To', monthName(receiptModal.for_year, receiptModal.for_month)]] : []),
-              ].map(([label, value]) => (
-                <div key={label} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, padding: '5px 0' }}>
-                  <span style={{ color: '#6b7280' }}>{label}</span>
-                  <span style={{ fontWeight: 600 }}>{value}</span>
+            {/* Header */}
+            <div style={{ background: 'linear-gradient(135deg, #5b21b6, #7c3aed)', color: '#fff', padding: '22px 28px', WebkitPrintColorAdjust: 'exact', printColorAdjust: 'exact' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <span style={{ fontSize: 26 }}>🏠</span>
+                <div>
+                  <div style={{ fontFamily: 'Space Grotesk, sans-serif', fontWeight: 800, fontSize: 20, letterSpacing: 0.3 }}>RentFlow</div>
+                  <div style={{ fontSize: 11, opacity: 0.85, textTransform: 'uppercase', letterSpacing: 1.2 }}>Official Payment Receipt</div>
                 </div>
-              ))}
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 16, fontSize: 12 }}>
+                <div><div style={{ opacity: 0.75 }}>Receipt No.</div><div style={{ fontWeight: 700, fontSize: 14 }}>{receiptNo}</div></div>
+                <div style={{ textAlign: 'right' }}><div style={{ opacity: 0.75 }}>Date</div><div style={{ fontWeight: 700, fontSize: 14 }}>{dateStr}</div></div>
+              </div>
             </div>
 
-            <div style={{ textAlign: 'center', fontSize: 11, color: '#9ca3af', marginBottom: 20 }}>
-              Receipt #{receiptModal.id} · Generated {new Date().toLocaleDateString('en-KE')}
-            </div>
+            <div style={{ padding: '22px 28px 24px' }}>
+              {/* Amount */}
+              <div style={{ textAlign: 'center', marginBottom: 18 }}>
+                <span style={{ display: 'inline-block', padding: '2px 12px', borderRadius: 99, background: '#dcfce7', color: '#15803d', fontSize: 11, fontWeight: 700, letterSpacing: 1, marginBottom: 6 }}>✓ PAID</span>
+                <div style={{ fontSize: 30, fontWeight: 800, color: '#16a34a' }}>{kes(grand)}</div>
+              </div>
 
-            <div className="pm-no-print" style={{ display: 'flex', gap: 10, justifyContent: 'center' }}>
-              <button onClick={() => setReceiptModal(null)} style={{ padding: '10px 20px', borderRadius: 10, border: '1px solid #d1d5db', background: '#fff', fontWeight: 600, fontSize: 14, cursor: 'pointer', color: '#1a1a1a' }}>Close</button>
-              <button onClick={() => window.print()} style={{ padding: '10px 20px', borderRadius: 10, border: 'none', background: '#7c3aed', color: '#fff', fontWeight: 700, fontSize: 14, cursor: 'pointer' }}>
-                🖨️ Print Receipt
-              </button>
+              {/* Parties */}
+              <div style={{ background: '#f9fafb', borderRadius: 10, padding: '10px 14px', marginBottom: 14 }}>
+                {row('Received from', pm.tenant_name || '—')}
+                {row('Unit', pm.unit_number ? `Unit ${pm.unit_number}` : '—')}
+                {row('Property', pm.plot_name || '—')}
+                {row('Method', (pm.method || 'mpesa').replace('_', ' ').toUpperCase())}
+                {row('Reference', pm.reference || pm.receipt_no || receiptModal.transaction_id || '—')}
+              </div>
+
+              {/* Line items */}
+              <div style={{ fontSize: 11, color: '#6b7280', textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 4 }}>Details</div>
+              <div style={{ borderTop: '1px solid #e5e7eb' }}>
+                {rentLines.map(l => (
+                  <div key={l.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, padding: '7px 0', borderBottom: '1px solid #f3f4f6' }}>
+                    <span>Rent{l.for_year && l.for_month ? ` — ${monthName(l.for_year, l.for_month)}` : ''}</span>
+                    <span style={{ fontWeight: 600 }}>{kes(l.amount)}</span>
+                  </div>
+                ))}
+                {utilLines.map((u, i) => (
+                  <div key={`u${i}`} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, padding: '7px 0', borderBottom: '1px solid #f3f4f6' }}>
+                    <span>Utilities — {u.type}</span>
+                    <span style={{ fontWeight: 600 }}>{kes(u.amount)}</span>
+                  </div>
+                ))}
+                {utilLines.length > 0 && (
+                  <>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: '#6b7280', padding: '6px 0 0' }}><span>Rent subtotal</span><span>{kes(rentTotal)}</span></div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: '#6b7280', padding: '2px 0' }}><span>Utilities subtotal</span><span>{kes(r?.utility_total)}</span></div>
+                  </>
+                )}
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 15, fontWeight: 800, padding: '10px 0 2px' }}>
+                  <span>Total paid</span><span style={{ color: '#16a34a' }}>{kes(grand)}</span>
+                </div>
+              </div>
+
+              {r?.balance_after != null && (
+                <div style={{ marginTop: 10, padding: '8px 12px', borderRadius: 8, fontSize: 12, background: r.balance_after > 0 ? '#fef2f2' : '#f0fdf4', color: r.balance_after > 0 ? '#b91c1c' : '#15803d', display: 'flex', justifyContent: 'space-between' }}>
+                  <span>Rent balance after this payment</span><strong>{r.balance_after > 0 ? kes(r.balance_after) : 'Fully paid up'}</strong>
+                </div>
+              )}
+
+              {/* Footer */}
+              <div style={{ borderTop: '2px dashed #d1d5db', marginTop: 20, paddingTop: 14, textAlign: 'center' }}>
+                <div style={{ fontSize: 13, fontWeight: 600, color: '#374151' }}>Thank you for your payment!</div>
+                <div style={{ fontSize: 10.5, color: '#9ca3af', marginTop: 4, lineHeight: 1.5 }}>
+                  This is a computer-generated receipt and is valid without a signature.<br />
+                  {receiptNo} · Generated {new Date().toLocaleString('en-KE', { dateStyle: 'medium', timeStyle: 'short' })}
+                </div>
+              </div>
+
+              <div className="pm-no-print" style={{ display: 'flex', gap: 10, justifyContent: 'center', marginTop: 20 }}>
+                <button onClick={() => setReceiptModal(null)} style={{ padding: '10px 20px', borderRadius: 10, border: '1px solid #d1d5db', background: '#fff', fontWeight: 600, fontSize: 14, cursor: 'pointer', color: '#1a1a1a' }}>Close</button>
+                <button onClick={() => window.print()} style={{ padding: '10px 20px', borderRadius: 10, border: 'none', background: '#7c3aed', color: '#fff', fontWeight: 700, fontSize: 14, cursor: 'pointer' }}>
+                  🖨️ Print Receipt
+                </button>
+              </div>
             </div>
           </div>
-        </div>,
+        </div>
+        );
+      })(),
         document.body
       )}
     </div>

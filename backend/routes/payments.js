@@ -5,7 +5,7 @@ const { getVisiblePlotIds } = require('../middleware/scope');
 const { authMiddleware: staffAuth } = require('../middleware/auth');
 const { requirePermission, getPermissions, filterRowsByPermission } = require('../middleware/permissions');
 const { logAudit } = require('../utils/audit');
-const { refreshTenantBalance, VALID_PAYMENT_SQL } = require('../utils/rentLedger');
+const { refreshTenantBalance, computeLedger, loadPaidMaps, VALID_PAYMENT_SQL } = require('../utils/rentLedger');
 
 // GET all payments — admin/super_admin see all, agent sees their landlords',
 // landlord sees own, caretaker sees assigned (scoping lives in one place now)
@@ -79,6 +79,75 @@ router.get('/:id', staffAuth, async (req, res) => {
 // Was gated by requirePermission('payments.view') as middleware, before the
 // tenant's property was known — same problem as GET /:id above. Permission
 // check moved down to right after the tenant (and plot) is loaded.
+// GET /api/payments/receipt/:id — everything for ONE receipt: the clicked
+// payment plus every sibling row from the same transaction (a lump sum is
+// split into one row per month), any utilities paid with it, and the
+// tenant's rent balance today. Utilities are matched on tenant + date +
+// reference, the same keys they were saved with.
+router.get('/receipt/:id', staffAuth, async (req, res) => {
+  try {
+    const base = await pool.query(
+      `SELECT p.*, h.plot_id, h.unit_number, h.rent_amount, pl.name AS plot_name, pl.location AS plot_location,
+              t.full_name AS tenant_name, t.phone AS tenant_phone, t.move_in_date
+       FROM payments p
+       LEFT JOIN tenants t ON p.tenant_id = t.id
+       LEFT JOIN houses  h ON p.house_id  = h.id
+       LEFT JOIN plots  pl ON h.plot_id   = pl.id
+       WHERE p.id = $1`, [req.params.id]);
+    const pay = base.rows[0];
+    if (!pay) return res.status(404).json({ error: 'Payment not found' });
+
+    const { permissions } = await getPermissions(req.user, pay.plot_id);
+    if (!permissions.includes('*') && !permissions.includes('payments.view')) {
+      return res.status(403).json({ error: 'Missing permission: payments.view' });
+    }
+    if (!['admin', 'super_admin'].includes(req.user.role)) {
+      const visible = await getVisiblePlotIds(req.user);
+      if (!(visible === 'ALL' || (pay.plot_id != null && visible.includes(pay.plot_id)))) {
+        return res.status(403).json({ error: 'Access denied' });
+      }
+    }
+
+    let siblings = [pay], utilities = [], balance = null;
+    if (pay.tenant_id) {
+      const sib = await pool.query(
+        `SELECT id, amount, COALESCE(amount_allocated, amount) AS allocated, for_year, for_month
+         FROM payments
+         WHERE tenant_id = $1 AND payment_date = (SELECT payment_date FROM payments WHERE id = $2)
+           AND COALESCE(receipt_no,'') = COALESCE($3,'')
+           AND COALESCE(method,'') = COALESCE($4,'') AND status = 'matched'
+         ORDER BY for_year NULLS LAST, for_month NULLS LAST, id`,
+        [pay.tenant_id, pay.id, pay.receipt_no, pay.method]);
+      if (sib.rows.length) siblings = sib.rows;
+      const ut = await pool.query(
+        `SELECT utility_type, amount FROM utility_payments
+         WHERE tenant_id = $1 AND payment_date = (SELECT payment_date::date FROM payments WHERE id = $2)
+           AND COALESCE(reference,'') = COALESCE($3,'')
+         ORDER BY id`,
+        [pay.tenant_id, pay.id, pay.receipt_no]);
+      utilities = ut.rows;
+      if (pay.rent_amount && pay.move_in_date) {
+        const maps = await loadPaidMaps(pool, [pay.tenant_id]);
+        balance = computeLedger({ rent: pay.rent_amount, moveInDate: pay.move_in_date, paidMap: maps[pay.tenant_id] || {} }).totalOwed;
+      }
+    }
+    const rentTotal = siblings.reduce((a, r) => a + parseFloat(r.amount || 0), 0);
+    const utilTotal = utilities.reduce((a, u) => a + parseFloat(u.amount || 0), 0);
+    res.json({
+      success: true,
+      data: {
+        receipt_number: `RF-${String(Math.min(...siblings.map(r => r.id))).padStart(6, '0')}`,
+        payment: { id: pay.id, tenant_name: pay.tenant_name, tenant_phone: pay.tenant_phone, unit_number: pay.unit_number,
+                   plot_name: pay.plot_name, plot_location: pay.plot_location, method: pay.method, reference: pay.receipt_no,
+                   payment_date: pay.payment_date, status: pay.status },
+        rent_lines: siblings.map(r => ({ id: r.id, amount: parseFloat(r.amount), for_year: r.for_year, for_month: r.for_month })),
+        utility_lines: utilities.map(u => ({ type: u.utility_type, amount: parseFloat(u.amount) })),
+        rent_total: rentTotal, utility_total: utilTotal, grand_total: rentTotal + utilTotal, balance_after: balance,
+      },
+    });
+  } catch (err) { console.error(err); res.status(500).json({ error: err.message }); }
+});
+
 router.get('/arrears/:tenantId', staffAuth, async (req, res) => {
   try {
     const tenantRes = await pool.query(
