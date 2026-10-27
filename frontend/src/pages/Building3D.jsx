@@ -7,6 +7,8 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import API from '../services/api';
+import { computePlacement, draftFrom, applyDraft, EXTRA_KINDS } from '../utils/buildingLayout';
+import LayoutEditor from '../components/LayoutEditor';
 
 const STATES = {
   paid:     { label: 'Paid up',          color: '#22c55e' },
@@ -19,23 +21,6 @@ const STATES = {
   other:    { label: 'Other',            color: '#a78bfa' },
 };
 const kes = (n) => `KES ${Math.round(parseFloat(n || 0)).toLocaleString()}`;
-const natural = (a, b) => String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: 'base' });
-
-// Decide which floor each unit sits on and where. If no unit has a floor set,
-// units are chunked into floors of `perFloor` in unit-number order.
-function layoutUnits(units, perFloor) {
-  const anyFloor = units.some(u => u.floor != null);
-  const sorted = [...units].sort((a, b) => natural(a.unit_number, b.unit_number));
-  const floors = {};
-  if (anyFloor) sorted.forEach(u => { (floors[u.floor ?? 0] ||= []).push(u); });
-  else sorted.forEach((u, i) => { (floors[Math.floor(i / perFloor)] ||= []).push(u); });
-  const floorKeys = Object.keys(floors).map(Number).sort((a, b) => a - b);
-  const maxCount = Math.max(1, ...floorKeys.map(f => floors[f].length));
-  // A compact footprint: units are laid out in a few rows rather than one long strip.
-  const rowsMax = Math.max(1, Math.round(Math.sqrt(maxCount / 2)));
-  const cols = Math.ceil(maxCount / rowsMax);
-  return { floors, floorKeys, cols, rowsMax, anyFloor };
-}
 
 export default function Building3D() {
   const navigate = useNavigate();
@@ -52,6 +37,11 @@ export default function Building3D() {
   const [selectedId, setSelectedId] = useState(null);
   const [hover, setHover] = useState(null);         // { unit, x, y }
   const [autoRotate, setAutoRotate] = useState(true);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState('');
+  const camMemory = useRef(null);                  // keeps the camera where the user left it across rebuilds
 
   const mountRef = useRef(null);
   const sceneRef = useRef({});                         // meshes, controls, etc. shared with the update effects
@@ -68,22 +58,24 @@ export default function Building3D() {
   // Building data
   useEffect(() => {
     if (!plotId) return;
-    setLoading(true); setError(''); setSelectedId(null); setFilterState(null);
+    setLoading(true); setError(''); setSelectedId(null); setFilterState(null); setEditing(false); camMemory.current = null;
     API.get(`/houses/building/${plotId}`)
       .then(r => setInfo(r.data.data))
       .catch(e => setError(e.response?.data?.error || 'Could not load this building.'))
       .finally(() => setLoading(false));
   }, [plotId]);
 
-  const units = info?.units || [];
-  const layout = useMemo(() => layoutUnits(units, perFloor), [units, perFloor]);
-  const selected = units.find(u => u.id === selectedId) || null;
+  const units = useMemo(() => info?.units || [], [info]);
+  const viewUnits = useMemo(() => (editing && draft ? applyDraft(units, draft) : units), [units, editing, draft]);
+  const viewExtras = editing && draft ? draft.extras : (info?.extras || []);
+  const layout = useMemo(() => computePlacement(viewUnits, viewExtras, perFloor), [viewUnits, viewExtras, perFloor]); // eslint-disable-line react-hooks/exhaustive-deps
+  const selected = viewUnits.find(u => u.id === selectedId) || null;
   const counts = info?.summary || {};
   const owed = units.reduce((a, u) => a + (u.balance || 0), 0);
 
   // ── 3D scene: rebuilt when the layout or mode changes ──
   useEffect(() => {
-    if (mode !== '3d' || !mountRef.current || !units.length) return undefined;
+    if (mode !== '3d' || !mountRef.current || !layout.items.length) return undefined;
     const el = mountRef.current;
     let renderer;
     try {
@@ -100,62 +92,101 @@ export default function Building3D() {
     const sun = new THREE.DirectionalLight(0xffffff, 0.9); sun.position.set(8, 16, 10); scene.add(sun);
     const fill = new THREE.DirectionalLight(0xffffff, 0.3); fill.position.set(-8, 6, -10); scene.add(fill);
 
-    const W = 1.7, H = 1.0, D = 1.7, GAP = 0.14, FLOOR_H = 1.3;
-    const { floors, floorKeys, cols, rowsMax } = layout;
-    const totalW = cols * (W + GAP), totalD = rowsMax * (D + GAP);
+    const CELL = 1.8, H = 1.0, GAP = 0.16, FLOOR_H = 1.3;
+    const all = [...layout.items, ...layout.extras];
+    const minX = Math.min(...all.map(i => i.x)), maxX = Math.max(...all.map(i => i.x + i.w));
+    const minZ = Math.min(...all.map(i => i.z)), maxZ = Math.max(...all.map(i => i.z + i.d));
+    const cx = ((minX + maxX) / 2) * CELL, cz = ((minZ + maxZ) / 2) * CELL;
+    const wx = (x, w) => (x + w / 2) * CELL - cx;       // world centre of a piece
+    const wz = (z, d) => (z + d / 2) * CELL - cz;
+    const maxFloor = Math.max(0, ...all.map(i => i.floor));
+    const totalW = (maxX - minX) * CELL, totalD = (maxZ - minZ) * CELL;
     const group = new THREE.Group(); scene.add(group);
+    const slate = (op) => new THREE.MeshStandardMaterial({ color: 0x64748b, transparent: true, opacity: op });
 
     // Ground
-    const ground = new THREE.Mesh(new THREE.CircleGeometry(Math.max(totalW, totalD) * 0.75 + 2.5, 48),
+    const ground = new THREE.Mesh(new THREE.CircleGeometry(Math.max(totalW, totalD) * 0.75 + 3, 56),
       new THREE.MeshStandardMaterial({ color: 0x94a3b8, transparent: true, opacity: 0.18 }));
-    ground.rotation.x = -Math.PI / 2; ground.position.y = -0.06; group.add(ground);
+    ground.rotation.x = -Math.PI / 2; ground.position.y = -0.09; group.add(ground);
 
-    const meshes = [];
-    floorKeys.forEach((f, fi) => {
-      const list = floors[f];
-      const y = fi * FLOOR_H;
-      // floor slab
-      const slab = new THREE.Mesh(new THREE.BoxGeometry(totalW + 0.2, 0.08, totalD + 0.2),
-        new THREE.MeshStandardMaterial({ color: 0x64748b, transparent: true, opacity: 0.55 }));
-      slab.position.set(0, y - 0.04, 0); group.add(slab);
-      list.forEach((u, i) => {
-        const col = i % cols, row = Math.floor(i / cols);
-        const x = (col - (cols - 1) / 2) * (W + GAP);
-        const z = (row - (rowsMax - 1) / 2) * (D + GAP);
-        const color = new THREE.Color(STATES[u.state]?.color || '#999');
-        const mat = new THREE.MeshStandardMaterial({ color, transparent: true, opacity: u.state === 'vacant' ? 0.45 : 0.95, roughness: 0.55, metalness: 0.05 });
-        const mesh = new THREE.Mesh(new THREE.BoxGeometry(W, H, D), mat);
-        mesh.position.set(x, y + H / 2, z);
-        mesh.userData = { unit: u, baseOpacity: u.state === 'vacant' ? 0.45 : 0.95 };
-        group.add(mesh); meshes.push(mesh);
-        const edges = new THREE.LineSegments(new THREE.EdgesGeometry(mesh.geometry), new THREE.LineBasicMaterial({ color: 0x0f172a, transparent: true, opacity: 0.35 }));
-        edges.position.copy(mesh.position); group.add(edges);
-        // label sprite (unit number) on top
-        const cv = document.createElement('canvas'); cv.width = 128; cv.height = 64;
-        const cx = cv.getContext('2d');
-        cx.fillStyle = 'rgba(15,23,42,0.78)'; cx.fillRect(0, 0, 128, 64);
-        cx.fillStyle = '#fff'; cx.font = 'bold 34px sans-serif'; cx.textAlign = 'center'; cx.textBaseline = 'middle';
-        cx.fillText(String(u.unit_number).slice(0, 7), 64, 34);
-        const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(cv), transparent: true, depthTest: true }));
-        sprite.scale.set(0.9, 0.45, 1); sprite.position.set(x, y + H + 0.28, z); sprite.renderOrder = 5;
-        group.add(sprite); mesh.userData.sprite = sprite;
-      });
+    // Extras: corridors, stairs, gardens, roads
+    layout.extras.forEach(e => {
+      const y = e.floor * FLOOR_H, w = e.w * CELL, d = e.d * CELL, px = wx(e.x, e.w), pz = wz(e.z, e.d);
+      const kind = EXTRA_KINDS[e.kind] || EXTRA_KINDS.corridor;
+      const add = (geo, color, x, yy, z, op = 1) => {
+        const m = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color, transparent: op < 1, opacity: op, roughness: 0.8 }));
+        m.position.set(x, yy, z); group.add(m); return m;
+      };
+      if (e.kind === 'stairs') {
+        const along = e.d >= e.w ? 'z' : 'x', len = along === 'z' ? d : w, steps = 6;
+        for (let i = 0; i < steps; i++) {
+          const h = ((i + 1) / steps) * FLOOR_H, sl = len / steps;
+          const geo = along === 'z' ? new THREE.BoxGeometry(w - 0.2, h, sl) : new THREE.BoxGeometry(sl, h, d - 0.2);
+          const off = -len / 2 + sl * (i + 0.5);
+          add(geo, kind.color, along === 'x' ? px + off : px, y + h / 2, along === 'z' ? pz + off : pz);
+        }
+      } else if (e.kind === 'garden') {
+        add(new THREE.BoxGeometry(w - 0.1, 0.1, d - 0.1), kind.color, px, y + 0.02, pz, 0.85);
+        const trees = Math.min(6, Math.max(1, Math.round(e.w * e.d / 3)));
+        for (let i = 0; i < trees; i++) {
+          const tx = px + (((i * 37 + e.x * 13) % 10) / 10 - 0.5) * (w - 0.9);
+          const tz = pz + (((i * 53 + e.z * 17) % 10) / 10 - 0.5) * (d - 0.9);
+          add(new THREE.CylinderGeometry(0.07, 0.09, 0.45, 8), 0x92400e, tx, y + 0.3, tz);
+          add(new THREE.ConeGeometry(0.4, 0.9, 10), 0x15803d, tx, y + 0.95, tz);
+        }
+      } else if (e.kind === 'road') {
+        add(new THREE.BoxGeometry(w, 0.06, d), kind.color, px, y - 0.02, pz);
+        const horiz = e.w >= e.d, n = Math.max(2, Math.round((horiz ? e.w : e.d) / 1.2));
+        for (let i = 0; i < n; i++) {
+          const t = ((i + 0.5) / n - 0.5) * (horiz ? w : d);
+          add(new THREE.BoxGeometry(horiz ? 0.45 : 0.08, 0.02, horiz ? 0.08 : 0.45), 0xf8fafc, horiz ? px + t : px, y + 0.03, horiz ? pz : pz + t);
+        }
+      } else { // corridor
+        add(new THREE.BoxGeometry(w, 0.1, d), kind.color, px, y - 0.03, pz, 0.9);
+      }
     });
 
-    const height = floorKeys.length * FLOOR_H;
+    // Units
+    const meshes = [];
+    layout.items.forEach(it => {
+      const u = it.unit, y = it.floor * FLOOR_H;
+      const w = it.w * CELL - GAP, d = it.d * CELL - GAP;
+      const x = wx(it.x, it.w), z = wz(it.z, it.d);
+      const plate = new THREE.Mesh(new THREE.BoxGeometry(it.w * CELL, 0.08, it.d * CELL), slate(0.55));
+      plate.position.set(x, y - 0.04, z); group.add(plate);
+      const base = u.state === 'vacant' ? 0.45 : 0.95;
+      const mat = new THREE.MeshStandardMaterial({ color: new THREE.Color(STATES[u.state]?.color || '#999'), transparent: true, opacity: base, roughness: 0.55, metalness: 0.05 });
+      const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, H, d), mat);
+      mesh.position.set(x, y + H / 2, z);
+      mesh.userData = { unit: u, baseOpacity: base, dims: [w, H, d] };
+      group.add(mesh); meshes.push(mesh);
+      const edges = new THREE.LineSegments(new THREE.EdgesGeometry(mesh.geometry), new THREE.LineBasicMaterial({ color: 0x0f172a, transparent: true, opacity: 0.35 }));
+      edges.position.copy(mesh.position); group.add(edges);
+      const cv = document.createElement('canvas'); cv.width = 128; cv.height = 64;
+      const c2 = cv.getContext('2d');
+      c2.fillStyle = 'rgba(15,23,42,0.78)'; c2.fillRect(0, 0, 128, 64);
+      c2.fillStyle = '#fff'; c2.font = 'bold 34px sans-serif'; c2.textAlign = 'center'; c2.textBaseline = 'middle';
+      c2.fillText(String(u.unit_number).slice(0, 7), 64, 34);
+      const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(cv), transparent: true, depthTest: true }));
+      sprite.scale.set(0.9, 0.45, 1); sprite.position.set(x, y + H + 0.28, z); sprite.renderOrder = 5;
+      group.add(sprite); mesh.userData.sprite = sprite;
+    });
+
+    const height = (maxFloor + 1) * FLOOR_H;
     const target = new THREE.Vector3(0, height / 2, 0);
     const radius = Math.max(totalW, totalD, height * 1.3) * 0.85 + 3.5;
     const home = new THREE.Vector3(radius * 0.8, height * 0.7 + radius * 0.45, radius * 0.9);
-    camera.position.copy(home);
+    const mem = camMemory.current;
+    if (mem) camera.position.set(...mem.pos); else camera.position.copy(home);
     const controls = new OrbitControls(camera, renderer.domElement);
-    controls.target.copy(target); controls.enableDamping = true; controls.dampingFactor = 0.08;
-    controls.maxPolarAngle = Math.PI / 2.05; controls.minDistance = 4; controls.maxDistance = radius * 3;
-    controls.autoRotate = true; controls.autoRotateSpeed = 0.9;
+    if (mem) controls.target.set(...mem.target); else controls.target.copy(target);
+    controls.enableDamping = true; controls.dampingFactor = 0.08;
+    controls.maxPolarAngle = Math.PI / 2.05; controls.minDistance = 4; controls.maxDistance = radius * 3 + 20;
+    controls.autoRotate = !mem; controls.autoRotateSpeed = 0.9;
     controls.addEventListener('start', () => { controls.autoRotate = false; setAutoRotate(false); });
     controls.update();
 
-    // selection outline
-    const outline = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(W + 0.12, H + 0.12, D + 0.12)),
+    const outline = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(1, 1, 1)),
       new THREE.LineBasicMaterial({ color: 0xffffff })); outline.visible = false; scene.add(outline);
 
     const raycaster = new THREE.Raycaster(), pointer = new THREE.Vector2();
@@ -169,10 +200,7 @@ export default function Building3D() {
     };
     const onMove = (e) => {
       const m = pick(e);
-      if (m !== hovered) {
-        hovered = m;
-        renderer.domElement.style.cursor = m ? 'pointer' : 'grab';
-      }
+      if (m !== hovered) { hovered = m; renderer.domElement.style.cursor = m ? 'pointer' : 'grab'; }
       const r = renderer.domElement.getBoundingClientRect();
       setHover(m ? { unit: m.userData.unit, x: e.clientX - r.left, y: e.clientY - r.top } : null);
     };
@@ -183,10 +211,8 @@ export default function Building3D() {
       setSelectedId(m ? m.userData.unit.id : null);
     };
     const onLeave = () => { hovered = null; setHover(null); };
-    renderer.domElement.addEventListener('pointermove', onMove);
-    renderer.domElement.addEventListener('pointerdown', onDown);
-    renderer.domElement.addEventListener('pointerup', onUp);
-    renderer.domElement.addEventListener('pointerleave', onLeave);
+    const handlers = { pointermove: onMove, pointerdown: onDown, pointerup: onUp, pointerleave: onLeave };
+    Object.entries(handlers).forEach(([n, f]) => renderer.domElement.addEventListener(n, f));
 
     const resize = () => {
       const w = el.clientWidth, h = el.clientHeight || 1;
@@ -197,10 +223,9 @@ export default function Building3D() {
     let raf;
     const tick = () => {
       raf = requestAnimationFrame(tick);
-      const t = hovered;
       meshes.forEach(m => { // gentle hover lift
         const targetY = m.userData.baseY ?? (m.userData.baseY = m.position.y);
-        m.position.y += ((t === m ? targetY + 0.12 : targetY) - m.position.y) * 0.25;
+        m.position.y += ((hovered === m ? targetY + 0.12 : targetY) - m.position.y) * 0.25;
         m.userData.sprite.position.y = m.position.y + H / 2 + 0.28;
       });
       controls.update();
@@ -210,8 +235,10 @@ export default function Building3D() {
 
     sceneRef.current = { meshes, outline, controls, camera, home, target };
     return () => {
-      cancelAnimationFrame(raf); ro.disconnect(); controls.dispose();
-      ['pointermove', 'pointerdown', 'pointerup', 'pointerleave'].forEach(n => renderer.domElement.removeEventListener(n, { pointermove: onMove, pointerdown: onDown, pointerup: onUp, pointerleave: onLeave }[n]));
+      cancelAnimationFrame(raf); ro.disconnect();
+      camMemory.current = { pos: camera.position.toArray(), target: controls.target.toArray() };
+      controls.dispose();
+      Object.entries(handlers).forEach(([n, f]) => renderer.domElement.removeEventListener(n, f));
       scene.traverse(o => {
         if (o.geometry) o.geometry.dispose();
         if (o.material) { (Array.isArray(o.material) ? o.material : [o.material]).forEach(m => { if (m.map) m.map.dispose(); m.dispose(); }); }
@@ -220,7 +247,7 @@ export default function Building3D() {
       if (renderer.domElement.parentNode === el) el.removeChild(renderer.domElement);
       sceneRef.current = {};
     };
-  }, [layout, mode, units.length]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [layout, mode]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Filter dimming + selection outline (cheap, no scene rebuild)
   useEffect(() => {
@@ -232,15 +259,41 @@ export default function Building3D() {
       m.userData.sprite.material.opacity = dim ? 0.15 : 1;
     });
     const sel = meshes.find(m => m.userData.unit.id === selectedId);
-    if (sel) { outline.visible = true; outline.position.copy(sel.position); } else outline.visible = false;
-  }, [filterState, selectedId, layout, mode, units.length]);
+    if (sel) {
+      const [w, h, d] = sel.userData.dims;
+      outline.scale.set(w + 0.12, h + 0.12, d + 0.12);
+      outline.visible = true; outline.position.copy(sel.position);
+    } else outline.visible = false;
+  }, [filterState, selectedId, layout, mode]);
 
   useEffect(() => { const c = sceneRef.current.controls; if (c) c.autoRotate = autoRotate; }, [autoRotate]);
+
+  function startEdit() {
+    setDraft(draftFrom(units, info.extras || [], perFloor));
+    setSaveError(''); setSelectedId(null); setEditing(true);
+  }
+  function autoArrange() {
+    setDraft(d => draftFrom(units.map(u => ({ ...u, layout_x: null })), d ? d.extras : [], perFloor));
+  }
+  function cancelEdit() { setEditing(false); setDraft(null); setSaveError(''); }
+  async function saveLayout() {
+    setSaving(true); setSaveError('');
+    try {
+      await API.put(`/houses/layout/${plotId}`, {
+        units: units.map(u => ({ id: u.id, ...draft.units[u.id] })),
+        extras: draft.extras,
+      });
+      const r = await API.get(`/houses/building/${plotId}`);
+      setInfo(r.data.data); setEditing(false); setDraft(null);
+    } catch (e) {
+      setSaveError(e.response?.data?.error || 'Could not save the layout.');
+    } finally { setSaving(false); }
+  }
 
   function resetView() {
     const { camera, controls, home, target } = sceneRef.current;
     if (!camera) return;
-    camera.position.copy(home); controls.target.copy(target); controls.update(); setAutoRotate(true);
+    camera.position.copy(home); controls.target.copy(target); controls.update(); camMemory.current = null; setAutoRotate(true);
   }
 
   const card = { background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, boxShadow: 'var(--shadow)' };
@@ -263,6 +316,7 @@ export default function Building3D() {
           {webglOk && <button style={btn} onClick={() => setMode(m => (m === '3d' ? '2d' : '3d'))}>{mode === '3d' ? '▦ 2D grid' : '🧊 3D view'}</button>}
           {mode === '3d' && <button style={btn} onClick={() => setAutoRotate(a => !a)}>{autoRotate ? '⏸ Stop rotating' : '⟳ Rotate'}</button>}
           {mode === '3d' && <button style={btn} onClick={resetView}>⌂ Reset view</button>}
+          {info?.can_edit_layout && !editing && <button style={{ ...btn, background: 'var(--primary, #7c3aed)', color: '#fff', border: 'none' }} onClick={() => { setMode('3d'); startEdit(); }}>✏️ Edit layout</button>}
         </div>
       </div>
 
@@ -286,7 +340,7 @@ export default function Building3D() {
 
           <div style={{ display: 'flex', gap: 14, alignItems: 'stretch', flexWrap: 'wrap' }}>
             <div style={{ ...card, flex: '1 1 560px', position: 'relative', minHeight: 460, overflow: 'hidden', background: 'linear-gradient(180deg, var(--surface2), var(--surface))' }}>
-              {units.length === 0 && <div style={{ padding: 40, color: 'var(--muted)' }}>This property has no approved units yet.</div>}
+              {layout.items.length === 0 && <div style={{ padding: 40, color: 'var(--muted)' }}>This property has no approved units yet.</div>}
 
               {mode === '3d' && <div ref={mountRef} style={{ position: 'absolute', inset: 0, cursor: 'grab' }} />}
               {mode === '3d' && hover && (
@@ -296,15 +350,15 @@ export default function Building3D() {
                   {hover.unit.balance > 0 && <div style={{ color: '#fca5a5' }}>Owes {kes(hover.unit.balance)}</div>}
                 </div>
               )}
-              {mode === '3d' && units.length > 0 && <div style={{ position: 'absolute', left: 12, bottom: 10, fontSize: 11.5, color: 'var(--muted)', pointerEvents: 'none' }}>Drag to rotate · scroll to zoom · click a unit for details</div>}
+              {mode === '3d' && layout.items.length > 0 && <div style={{ position: 'absolute', left: 12, bottom: 10, fontSize: 11.5, color: 'var(--muted)', pointerEvents: 'none' }}>Drag to rotate · scroll to zoom · click a unit for details</div>}
 
               {mode === '2d' && (
                 <div style={{ padding: 16, overflow: 'auto', maxHeight: 620 }}>
-                  {[...layout.floorKeys].reverse().map(f => (
+                  {[...new Set(layout.items.map(i => i.floor))].sort((x, y) => y - x).map(f => (
                     <div key={f} style={{ marginBottom: 14 }}>
                       <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--muted)', marginBottom: 6 }}>{layout.anyFloor ? (f === 0 ? 'Ground floor' : `Floor ${f}`) : `Row ${f + 1}`}</div>
                       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-                        {layout.floors[f].map(u => {
+                        {layout.items.filter(i => i.floor === f).sort((a, b) => a.z - b.z || a.x - b.x).map(({ unit: u }) => {
                           const dim = filterState && u.state !== filterState;
                           return (
                             <button key={u.id} onClick={() => setSelectedId(u.id)}
@@ -326,11 +380,11 @@ export default function Building3D() {
                 <div style={{ color: 'var(--muted)', fontSize: 13, lineHeight: 1.6 }}>
                   <div style={{ fontWeight: 700, color: 'var(--text)', marginBottom: 6 }}>Unit details</div>
                   Click a unit in the building to see its tenant, rent and what is owed.
-                  {!layout.anyFloor && mode === '3d' && (
+                  {!layout.custom && !layout.anyFloor && mode === '3d' && !editing && (
                     <div style={{ marginTop: 16 }}>
                       <div style={{ fontWeight: 600, color: 'var(--text)', marginBottom: 4 }}>Units per floor: {perFloor}</div>
                       <input type="range" min="2" max="12" value={perFloor} onChange={e => setPerFloor(parseInt(e.target.value))} style={{ width: '100%' }} />
-                      <div style={{ fontSize: 11.5, marginTop: 4 }}>No floors are set on these units, so they are stacked automatically. Set a floor on each unit (Properties → edit unit) for an exact layout.</div>
+                      <div style={{ fontSize: 11.5, marginTop: 4 }}>No floors are set on these units, so they are stacked automatically. Set a floor on each unit (Properties → edit unit), or use Edit layout to place each unit exactly.</div>
                     </div>
                   )}
                 </div>
@@ -367,6 +421,12 @@ export default function Building3D() {
               )}
             </div>
           </div>
+          {editing && draft && (
+            <LayoutEditor units={units} draft={draft} setDraft={setDraft} onSave={saveLayout} onCancel={cancelEdit} onAuto={autoArrange} saving={saving} error={saveError} />
+          )}
+          {layout.custom && layout.unplaced > 0 && !editing && (
+            <div style={{ fontSize: 12.5, color: 'var(--muted)', marginTop: 10 }}>{layout.unplaced} unit{layout.unplaced > 1 ? 's are' : ' is'} not placed yet and shown in a row in front of the building.</div>
+          )}
         </>
       )}
     </div>

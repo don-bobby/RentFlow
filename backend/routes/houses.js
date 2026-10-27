@@ -46,13 +46,14 @@ router.get('/building/:plotId', auth, async (req, res) => {
     const visible = await getVisiblePlotIds(req.user);
     if (visible !== 'ALL' && !visible.includes(plotId)) return res.status(403).json({ error: 'Access denied' });
 
-    const plotRes = await pool.query('SELECT id, name, location FROM plots WHERE id = $1', [plotId]);
+    const plotRes = await pool.query('SELECT id, name, location, layout_extras FROM plots WHERE id = $1', [plotId]);
     if (!plotRes.rows[0]) return res.status(404).json({ error: 'Property not found' });
     const { permissions } = await getPermissions(req.user, plotId);
     const seeMoney = permissions.includes('*') || permissions.includes('tenants.view');
 
     const hs = await pool.query(
       `SELECT h.id, h.unit_number, h.house_type, h.rent_amount, h.status, h.floor,
+              h.layout_x, h.layout_z, h.layout_w, h.layout_d,
               t.id AS tenant_id, t.full_name, t.phone, t.move_in_date, t.rent_due_day
        FROM houses h
        LEFT JOIN LATERAL (
@@ -67,7 +68,8 @@ router.get('/building/:plotId', auth, async (req, res) => {
     const curKey = `${now.getFullYear()}-${now.getMonth() + 1}`;
 
     const units = hs.rows.map(h => {
-      const base = { id: h.id, unit_number: h.unit_number, house_type: h.house_type, rent_amount: parseFloat(h.rent_amount || 0), floor: h.floor };
+      const base = { id: h.id, unit_number: h.unit_number, house_type: h.house_type, rent_amount: parseFloat(h.rent_amount || 0), floor: h.floor,
+                     layout_x: h.layout_x, layout_z: h.layout_z, layout_w: h.layout_w || 1, layout_d: h.layout_d || 1 };
       if (!h.tenant_id) return { ...base, state: h.status === 'vacant' ? 'vacant' : (h.status === 'occupied' ? 'occupied' : 'other'), house_status: h.status };
       if (!seeMoney) return { ...base, state: 'occupied', house_status: h.status };
       const paidMap = maps[h.tenant_id] || {};
@@ -85,9 +87,86 @@ router.get('/building/:plotId', auth, async (req, res) => {
     });
 
     const summary = units.reduce((a, u) => { a[u.state] = (a[u.state] || 0) + 1; return a; }, {});
-    res.json({ success: true, data: { plot: plotRes.rows[0], units, summary, see_money: seeMoney,
+    res.json({ success: true, data: { plot: { id: plotRes.rows[0].id, name: plotRes.rows[0].name, location: plotRes.rows[0].location },
+      extras: plotRes.rows[0].layout_extras || [],
+      can_edit_layout: permissions.includes('*') || permissions.includes('houses.edit'),
+      units, summary, see_money: seeMoney,
       month: now.toLocaleString('en-KE', { month: 'long', year: 'numeric' }) } });
   } catch (err) { console.error(err); res.status(500).json({ error: err.message }); }
+});
+
+// PUT /api/houses/layout/:plotId — save the 3D layout of one property.
+// Body: { units: [{ id, placed, floor, x, z, w, d }], extras: [{ id, kind, floor, x, z, w, d }] }
+// Every placed piece must fit the grid and nothing may overlap on a floor.
+const GRID_MAX = 40;
+const EXTRA_KINDS = ['corridor', 'stairs', 'garden', 'road'];
+router.put('/layout/:plotId', auth, async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const plotId = parseInt(req.params.plotId);
+    if (!plotId) return res.status(400).json({ error: 'Invalid property.' });
+    const plotRow = await client.query('SELECT id, name FROM plots WHERE id = $1', [plotId]);
+    if (!plotRow.rows[0]) return res.status(404).json({ error: 'Property not found' });
+    const { permissions } = await getPermissions(req.user, plotId);
+    if (!permissions.includes('*') && !permissions.includes('houses.edit')) {
+      return res.status(403).json({ error: 'Missing permission: houses.edit' });
+    }
+    const visible = await getVisiblePlotIds(req.user);
+    if (visible !== 'ALL' && !visible.includes(plotId)) return res.status(403).json({ error: 'Access denied' });
+
+    const unitsIn = Array.isArray(req.body.units) ? req.body.units : [];
+    const extrasIn = Array.isArray(req.body.extras) ? req.body.extras : [];
+    if (unitsIn.length > 500 || extrasIn.length > 100) return res.status(400).json({ error: 'Too many items.' });
+
+    const own = await client.query('SELECT id FROM houses WHERE plot_id = $1', [plotId]);
+    const ownIds = new Set(own.rows.map(r => r.id));
+    const int = (v) => (Number.isInteger(Number(v)) ? Number(v) : NaN);
+    const rect = (o) => ({ floor: int(o.floor), x: int(o.x), z: int(o.z), w: int(o.w), d: int(o.d) });
+    const valid = (r) => r.floor >= 0 && r.floor <= 60 && r.x >= 0 && r.z >= 0 && r.w >= 1 && r.d >= 1 && r.w <= 8 && r.d <= 8 && r.x + r.w <= GRID_MAX && r.z + r.d <= GRID_MAX;
+
+    const placed = [], cleared = [], extras = [];
+    for (const u of unitsIn) {
+      const id = int(u.id);
+      if (!ownIds.has(id)) return res.status(400).json({ error: 'A unit in the layout does not belong to this property.' });
+      if (!u.placed) { cleared.push(id); continue; }
+      const r = rect(u);
+      if (!valid(r)) return res.status(400).json({ error: 'A unit position is outside the allowed grid.' });
+      placed.push({ kind: 'unit', id, ...r });
+    }
+    for (const e of extrasIn) {
+      if (!EXTRA_KINDS.includes(e.kind)) return res.status(400).json({ error: 'Unknown layout piece.' });
+      const r = rect(e);
+      if (!valid(r)) return res.status(400).json({ error: 'A layout piece is outside the allowed grid.' });
+      extras.push({ kind: e.kind, id: String(e.id || '').slice(0, 24) || `${e.kind}-${extras.length}`, ...r });
+    }
+    // No overlaps on the same floor
+    const all = [...placed, ...extras.map(e => ({ ...e, kind: 'extra' }))];
+    for (let i = 0; i < all.length; i++) for (let j = i + 1; j < all.length; j++) {
+      const a = all[i], b = all[j];
+      if (a.floor === b.floor && a.x < b.x + b.w && b.x < a.x + a.w && a.z < b.z + b.d && b.z < a.z + a.d) {
+        return res.status(400).json({ error: 'Two pieces overlap on the same floor. Move one and save again.' });
+      }
+    }
+
+    await client.query('BEGIN');
+    for (const u of placed) {
+      await client.query('UPDATE houses SET floor=$1, layout_x=$2, layout_z=$3, layout_w=$4, layout_d=$5 WHERE id=$6 AND plot_id=$7',
+        [u.floor, u.x, u.z, u.w, u.d, u.id, plotId]);
+    }
+    if (cleared.length) {
+      await client.query('UPDATE houses SET layout_x=NULL, layout_z=NULL, layout_w=1, layout_d=1 WHERE id = ANY($1) AND plot_id=$2', [cleared, plotId]);
+    }
+    await client.query('UPDATE plots SET layout_extras = $1::jsonb WHERE id = $2',
+      [JSON.stringify(extras.map(({ kind, id, floor, x, z, w, d }) => ({ kind, id, floor, x, z, w, d }))), plotId]);
+    await client.query('COMMIT');
+    await logAudit({ user: req.user, action: 'plot.layout_saved', entityType: 'plot', entityId: plotId,
+      changes: { placed_units: { to: placed.length }, pieces: { to: extras.length } } });
+    res.json({ success: true });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('Layout save failed:', err);
+    res.status(500).json({ error: err.message });
+  } finally { client.release(); }
 });
 
 router.get('/pending-approval-count', auth, async (req, res) => {
