@@ -1,7 +1,9 @@
 import React, { useMemo, useRef, useState } from 'react';
-import { GRID_W, GRID_D, EXTRA_KINDS, overlaps, fits, natural } from '../utils/buildingLayout';
+import { GRID_W, GRID_D, EXTRA_KINDS, FACINGS, DEFAULT_FACING, overlaps, fits, natural, isLine, lineId } from '../utils/buildingLayout';
 
 const CELL = 28;
+// white bar on the side a unit's front door faces (north, east, south, west)
+const FACE_EDGE = ['inset 0 5px 0 #fff', 'inset -5px 0 0 #fff', 'inset 0 -5px 0 #fff', 'inset 5px 0 0 #fff'];
 const STATE_COLORS = { paid: '#22c55e', partial: '#f59e0b', pending: '#60a5fa', unpaid: '#f97316', overdue: '#dc2626', vacant: '#9ca3af', occupied: '#6366f1', other: '#a78bfa' };
 
 // Top-down editor for one floor at a time. The parent owns `draft` and shows
@@ -11,18 +13,21 @@ export default function LayoutEditor({ units, draft, setDraft, onSave, onCancel,
   const [floor, setFloor] = useState(0);
   const [sel, setSel] = useState(null);       // { type: 'unit'|'extra', id }
   const [arm, setArm] = useState(null);       // piece waiting to be dropped: { type, id } | { type:'new', kind }
+  const paintRef = useRef(null);          // last square painted while the mouse is down
   const [drag, setDrag] = useState(null);     // { type, id, dx, dz, x, z }
   const gridRef = useRef(null);
   const [msg, setMsg] = useState('');
 
   const unitById = useMemo(() => Object.fromEntries(units.map(u => [u.id, u])), [units]);
-  const maxFloor = Math.max(0, ...Object.values(draft.units).filter(d => d.placed).map(d => d.floor), ...draft.extras.map(e => e.floor));
+  const maxFloor = Math.max(0, ...Object.values(draft.units).filter(d => d.placed).map(d => d.floor), ...draft.extras.filter(e => !isLine(e.kind)).map(e => e.floor));
   const floors = Array.from({ length: Math.max(maxFloor, floor) + 1 }, (_, i) => i);
 
   const pieces = useMemo(() => ([
     ...units.filter(u => draft.units[u.id]?.placed).map(u => ({ type: 'unit', id: u.id, ...draft.units[u.id] })),
-    ...draft.extras.map(e => ({ type: 'extra', ...e })),
+    ...draft.extras.filter(e => !isLine(e.kind)).map(e => ({ type: 'extra', ...e })),
   ]), [units, draft]);
+  const lines = useMemo(() => draft.extras.filter(e => isLine(e.kind)), [draft]);
+  const painting = arm && arm.type === 'paint';
   const unplaced = units.filter(u => !draft.units[u.id]?.placed).sort((a, b) => natural(a.unit_number, b.unit_number));
   const here = pieces.filter(p => p.floor === floor);
   const below = pieces.filter(p => p.floor === floor - 1);
@@ -48,6 +53,7 @@ export default function LayoutEditor({ units, draft, setDraft, onSave, onCancel,
 
   // Click on empty grid: drop the armed piece
   const onGridClick = (e) => {
+    if (painting) return;
     if (!arm) { setSel(null); return; }
     const c = cellFromEvent(e);
     if (arm.type === 'new') {
@@ -65,6 +71,36 @@ export default function LayoutEditor({ units, draft, setDraft, onSave, onCancel,
       setPiece({ type: 'unit', id: arm.id }, { placed: true, floor, x: r.x, z: r.z });
       setSel({ type: 'unit', id: arm.id }); setArm(null);
     }
+  };
+
+  // Sketch fences and gates: press and drag across squares (ground floor)
+  const paintCell = (c, kind) => {
+    if (c.x < 0 || c.z < 0 || c.x >= GRID_W || c.z >= GRID_D) return;
+    setDraft(d => {
+      const rest = d.extras.filter(e => !(isLine(e.kind) && e.x === c.x && e.z === c.z));
+      if (kind === 'erase') return rest.length === d.extras.length ? d : { ...d, extras: rest };
+      return { ...d, extras: [...rest, { id: lineId(kind, c.x, c.z), kind, floor: 0, x: c.x, z: c.z, w: 1, d: 1 }] };
+    });
+  };
+  const paintTo = (c) => {
+    const from = paintRef.current || c;
+    const n = Math.max(Math.abs(c.x - from.x), Math.abs(c.z - from.z), 1);
+    for (let i = 1; i <= n; i++) paintCell({ x: Math.round(from.x + ((c.x - from.x) * i) / n), z: Math.round(from.z + ((c.z - from.z) * i) / n) }, arm.kind);
+    paintRef.current = c;
+  };
+  const onGridDown = (e) => {
+    if (!painting) return;
+    e.preventDefault();
+    const c = cellFromEvent(e);
+    paintRef.current = null; paintTo(c);
+    e.currentTarget.setPointerCapture?.(e.pointerId);
+  };
+  const onGridMove = (e) => { if (painting && paintRef.current) paintTo(cellFromEvent(e)); };
+  const onGridUp = () => { paintRef.current = null; };
+  const armPaint = (kind) => {
+    const on = arm && arm.type === 'paint' && arm.kind === kind;
+    setArm(on ? null : { type: 'paint', kind }); setSel(null);
+    if (!on && floor !== 0) setFloor(0);
   };
 
   // Drag an existing piece
@@ -130,7 +166,8 @@ export default function LayoutEditor({ units, draft, setDraft, onSave, onCancel,
           background: color, opacity: dragging ? 0.8 : (u?.state === 'vacant' ? 0.7 : 1), borderRadius: p.type === 'unit' ? 5 : 3, cursor: 'grab',
           border: bad ? '2px solid #dc2626' : isSel ? '2px solid var(--text)' : '1px solid rgba(0,0,0,.25)',
           display: 'flex', alignItems: 'center', justifyContent: 'center', color: p.type === 'unit' ? '#fff' : '#0f172a',
-          fontSize: 11, fontWeight: 700, overflow: 'hidden', touchAction: 'none', userSelect: 'none', zIndex: dragging ? 5 : 2,
+          fontSize: 11, fontWeight: 700, overflow: 'hidden', touchAction: 'none', userSelect: 'none', zIndex: dragging ? 5 : 2, pointerEvents: painting ? 'none' : 'auto',
+          boxShadow: u ? FACE_EDGE[p.facing ?? DEFAULT_FACING] : 'none',
         }}>
         {u ? u.unit_number : EXTRA_KINDS[p.kind]?.label}
       </div>
@@ -162,12 +199,31 @@ export default function LayoutEditor({ units, draft, setDraft, onSave, onCancel,
             {floors.length < 60 && <button style={sbtn} onClick={() => setFloor(floors.length)}>＋ Floor</button>}
           </div>
           <div style={{ overflow: 'auto', maxHeight: 460, border: '1px solid var(--border)', borderRadius: 10 }}>
-            <div ref={gridRef} onClick={onGridClick}
-              style={{ position: 'relative', width: GRID_W * CELL, height: GRID_D * CELL, cursor: arm ? 'crosshair' : 'default',
+            <div ref={gridRef} onClick={onGridClick} onPointerDown={onGridDown} onPointerMove={onGridMove} onPointerUp={onGridUp} onPointerCancel={onGridUp}
+              style={{ position: 'relative', width: GRID_W * CELL, height: GRID_D * CELL, cursor: arm ? 'crosshair' : 'default', touchAction: painting ? 'none' : 'auto',
                 backgroundColor: 'var(--surface2)',
                 backgroundImage: 'linear-gradient(to right, var(--border) 1px, transparent 1px), linear-gradient(to bottom, var(--border) 1px, transparent 1px)',
                 backgroundSize: `${CELL}px ${CELL}px` }}>
               {below.map(ghost)}
+              {floor === 0 && lines.length > 0 && (
+                <svg width={GRID_W * CELL} height={GRID_D * CELL} style={{ position: 'absolute', left: 0, top: 0, pointerEvents: 'none', zIndex: 1 }}>
+                  {lines.map(e => {
+                    const has = (dx, dz) => lines.some(o => o.x === e.x + dx && o.z === e.z + dz);
+                    const cx = e.x * CELL + CELL / 2, cz = e.z * CELL + CELL / 2, col = EXTRA_KINDS[e.kind].color;
+                    const segs = [[1, 0], [0, 1]].filter(([dx, dz]) => has(dx, dz)).map(([dx, dz]) => (
+                      <line key={`${dx}${dz}`} x1={cx} y1={cz} x2={cx + dx * CELL} y2={cz + dz * CELL} stroke={col} strokeWidth="4" strokeLinecap="round" />
+                    ));
+                    return (
+                      <g key={e.id}>
+                        {segs}
+                        {e.kind === 'gate'
+                          ? <rect x={e.x * CELL + 3} y={e.z * CELL + 3} width={CELL - 6} height={CELL - 6} rx="4" fill="#fff" stroke={col} strokeWidth="3" />
+                          : <circle cx={cx} cy={cz} r="4.5" fill={col} />}
+                      </g>
+                    );
+                  })}
+                </svg>
+              )}
               {here.map(render)}
             </div>
           </div>
@@ -189,7 +245,7 @@ export default function LayoutEditor({ units, draft, setDraft, onSave, onCancel,
 
           <div style={label}>Add</div>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-            {Object.entries(EXTRA_KINDS).map(([k, v]) => {
+            {Object.entries(EXTRA_KINDS).filter(([, v]) => !v.line).map(([k, v]) => {
               const on = arm && arm.type === 'new' && arm.kind === k;
               return <button key={k} onClick={() => { setArm(on ? null : { type: 'new', kind: k }); setSel(null); }}
                 style={{ ...sbtn, background: on ? 'var(--text)' : 'var(--surface)', color: on ? 'var(--surface)' : 'var(--text)' }}>
@@ -198,8 +254,21 @@ export default function LayoutEditor({ units, draft, setDraft, onSave, onCancel,
             })}
           </div>
 
+          <div style={label}>Draw on the ground</div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+            {[['fence', 'Fence'], ['gate', 'Gate'], ['erase', 'Erase']].map(([k, t]) => {
+              const on = arm && arm.type === 'paint' && arm.kind === k;
+              return <button key={k} onClick={() => armPaint(k)} style={{ ...sbtn, background: on ? 'var(--text)' : 'var(--surface)', color: on ? 'var(--surface)' : 'var(--text)' }}>
+                {k !== 'erase' && <span style={{ display: 'inline-block', width: 10, height: 10, borderRadius: 2, background: EXTRA_KINDS[k].color, marginRight: 6 }} />}{k === 'erase' ? '⌫ ' : ''}{t}
+              </button>;
+            })}
+          </div>
+          <div style={{ fontSize: 11.5, color: 'var(--muted)', marginTop: 4 }}>
+            {painting ? (arm.kind === 'erase' ? 'Click or drag over fence squares to remove them.' : `Click or drag across squares to ${arm.kind === 'gate' ? 'place a gate (put it in a fence line)' : 'draw a fence'}. Click the button again to stop.`) : 'Optional. Sketch a boundary fence and a gate square by square.'}
+          </div>
+
           <div style={label}>Selected</div>
-          {!selected && <div style={{ fontSize: 12.5, color: 'var(--muted)' }}>Click a piece on the grid to resize, move it to another floor, or remove it.</div>}
+          {!selected && <div style={{ fontSize: 12.5, color: 'var(--muted)' }}>Click a unit or piece on the grid to resize it, turn its door, move it to another floor, or remove it.</div>}
           {selected && (
             <div style={{ fontSize: 13, color: 'var(--text)' }}>
               <div style={{ fontWeight: 700, marginBottom: 8 }}>{selected.type === 'unit' ? `Unit ${unitById[selected.id]?.unit_number}` : EXTRA_KINDS[selected.kind]?.label}</div>
@@ -219,6 +288,19 @@ export default function LayoutEditor({ units, draft, setDraft, onSave, onCancel,
                   {Array.from({ length: Math.max(maxFloor, selected.floor) + 2 }, (_, i) => i).map(f => <option key={f} value={f}>{f === 0 ? 'Ground' : f}</option>)}
                 </select>
               </div>
+              {selected.type === 'unit' && (
+                <div style={{ marginBottom: 10 }}>
+                  <div style={{ color: 'var(--muted)', marginBottom: 4 }}>Front door faces</div>
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    {FACINGS.map((f, i) => {
+                      const on = (selected.facing ?? DEFAULT_FACING) === i;
+                      return <button key={i} title={f.label} onClick={() => setPiece(selected, { facing: i })}
+                        style={{ ...sbtn, flex: 1, padding: '6px 0', fontSize: 16, background: on ? 'var(--text)' : 'var(--surface)', color: on ? 'var(--surface)' : 'var(--text)' }}>{f.arrow}</button>;
+                    })}
+                  </div>
+                  <div style={{ fontSize: 11.5, color: 'var(--muted)', marginTop: 3 }}>The white edge on the unit marks its door side. Top of the grid is north.</div>
+                </div>
+              )}
               <button style={{ ...sbtn, color: '#dc2626' }} onClick={() => remove(selected)}>{selected.type === 'unit' ? 'Take off grid' : 'Delete piece'}</button>
             </div>
           )}

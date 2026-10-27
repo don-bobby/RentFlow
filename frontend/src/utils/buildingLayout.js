@@ -8,9 +8,33 @@ export const EXTRA_KINDS = {
   stairs:   { label: 'Stairs',   color: '#a8a29e', w: 1, d: 2 },
   garden:   { label: 'Garden',   color: '#4ade80', w: 4, d: 3 },
   road:     { label: 'Road',     color: '#475569', w: 8, d: 2 },
-  fence:    { label: 'Fence',    color: '#a16207', w: 8, d: 1 },
-  gate:     { label: 'Gate',     color: '#0f766e', w: 2, d: 1 },
+  fence:    { label: 'Fence',    color: '#a16207', w: 1, d: 1, line: true },
+  gate:     { label: 'Gate',     color: '#0f766e', w: 1, d: 1, line: true },
 };
+// Fences and gates are boundary lines: ground level, one square each, and they
+// may sit next to or on top of other pieces.
+export const isLine = (kind) => !!EXTRA_KINDS[kind]?.line;
+export const lineId = (kind, x, z) => `${kind[0]}${x}_${z}`;
+// Older saves stored a fence/gate as one wide piece; turn those into squares.
+export function expandLines(extras) {
+  const out = [];
+  (extras || []).forEach(e => {
+    if (!isLine(e.kind) || (e.w <= 1 && e.d <= 1 && e.floor === 0)) { out.push(e); return; }
+    for (let i = 0; i < e.w; i++) for (let j = 0; j < e.d; j++) {
+      out.push({ id: lineId(e.kind, e.x + i, e.z + j), kind: e.kind, floor: 0, x: e.x + i, z: e.z + j, w: 1, d: 1 });
+    }
+  });
+  return out;
+}
+
+// Which way a unit's front door faces: 0 north (top of grid), 1 east, 2 south, 3 west.
+export const FACINGS = [
+  { label: 'North', arrow: '↑', dx: 0, dz: -1 },
+  { label: 'East',  arrow: '→', dx: 1, dz: 0 },
+  { label: 'South', arrow: '↓', dx: 0, dz: 1 },
+  { label: 'West',  arrow: '←', dx: -1, dz: 0 },
+];
+export const DEFAULT_FACING = 2;
 
 export const natural = (a, b) => String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: 'base' });
 
@@ -35,7 +59,7 @@ export function autoItems(units, perFloor) {
   const cols = Math.ceil(maxCount / rows);
   const items = [];
   Object.keys(floors).map(Number).forEach(f => floors[f].forEach((u, i) => {
-    items.push({ kind: 'unit', unit: u, floor: f, x: i % cols, z: Math.floor(i / cols), w: 1, d: 1 });
+    items.push({ kind: 'unit', unit: u, floor: f, x: i % cols, z: Math.floor(i / cols), w: 1, d: 1, facing: u.layout_facing ?? DEFAULT_FACING });
   }));
   return { items, anyFloor };
 }
@@ -45,20 +69,20 @@ export function computePlacement(units, extras, perFloor) {
   const custom = units.some(u => u.layout_x != null);
   if (!custom) {
     const { items, anyFloor } = autoItems(units, perFloor);
-    return { items, extras: extras || [], custom: false, unplaced: 0, anyFloor };
+    return { items, extras: expandLines(extras), custom: false, unplaced: 0, anyFloor };
   }
   const items = [];
   const loose = [];
   units.forEach(u => {
-    if (u.layout_x != null) items.push({ kind: 'unit', unit: u, floor: u.floor ?? 0, x: u.layout_x, z: u.layout_z, w: u.layout_w || 1, d: u.layout_d || 1 });
+    if (u.layout_x != null) items.push({ kind: 'unit', unit: u, floor: u.floor ?? 0, x: u.layout_x, z: u.layout_z, w: u.layout_w || 1, d: u.layout_d || 1, facing: u.layout_facing ?? DEFAULT_FACING });
     else loose.push(u);
   });
   // Units not yet placed wait in a row in front of the building.
-  const maxZ = Math.max(0, ...items.map(i => i.z + i.d), ...(extras || []).map(e => e.z + e.d));
+  const maxZ = Math.max(0, ...items.map(i => i.z + i.d), ...(extras || []).filter(e => !isLine(e.kind)).map(e => e.z + e.d));
   loose.sort((a, b) => natural(a.unit_number, b.unit_number)).forEach((u, i) => {
-    items.push({ kind: 'unit', unit: u, floor: 0, x: i % 12, z: maxZ + 1 + Math.floor(i / 12), w: 1, d: 1, staging: true });
+    items.push({ kind: 'unit', unit: u, floor: 0, x: i % 12, z: maxZ + 1 + Math.floor(i / 12), w: 1, d: 1, facing: u.layout_facing ?? DEFAULT_FACING, staging: true });
   });
-  return { items, extras: extras || [], custom: true, unplaced: loose.length, anyFloor: true };
+  return { items, extras: expandLines(extras), custom: true, unplaced: loose.length, anyFloor: true };
 }
 
 // Starting draft for the editor: saved positions, or the current auto layout.
@@ -68,15 +92,15 @@ export function draftFrom(units, extras, perFloor) {
   if (custom) {
     units.forEach(u => {
       draftUnits[u.id] = u.layout_x != null
-        ? { placed: true, floor: u.floor ?? 0, x: u.layout_x, z: u.layout_z, w: u.layout_w || 1, d: u.layout_d || 1 }
-        : { placed: false, floor: u.floor ?? 0, x: 0, z: 0, w: 1, d: 1 };
+        ? { placed: true, floor: u.floor ?? 0, x: u.layout_x, z: u.layout_z, w: u.layout_w || 1, d: u.layout_d || 1, facing: u.layout_facing ?? DEFAULT_FACING }
+        : { placed: false, floor: u.floor ?? 0, x: 0, z: 0, w: 1, d: 1, facing: u.layout_facing ?? DEFAULT_FACING };
     });
   } else {
     const { items } = autoItems(units, perFloor);
-    units.forEach(u => { draftUnits[u.id] = { placed: false, floor: 0, x: 0, z: 0, w: 1, d: 1 }; });
-    items.forEach(i => { draftUnits[i.unit.id] = { placed: true, floor: i.floor, x: i.x, z: i.z, w: 1, d: 1 }; });
+    units.forEach(u => { draftUnits[u.id] = { placed: false, floor: 0, x: 0, z: 0, w: 1, d: 1, facing: u.layout_facing ?? DEFAULT_FACING }; });
+    items.forEach(i => { draftUnits[i.unit.id] = { placed: true, floor: i.floor, x: i.x, z: i.z, w: 1, d: 1, facing: i.facing }; });
   }
-  return { units: draftUnits, extras: (extras || []).map(e => ({ ...e })) };
+  return { units: draftUnits, extras: expandLines(extras).map(e => ({ ...e })) };
 }
 
 // Units with the draft applied (used for the live 3D preview while editing).
@@ -84,6 +108,6 @@ export function applyDraft(units, draft) {
   return units.map(u => {
     const d = draft.units[u.id];
     if (!d) return u;
-    return { ...u, floor: d.floor, layout_x: d.placed ? d.x : null, layout_z: d.placed ? d.z : null, layout_w: d.w, layout_d: d.d };
+    return { ...u, floor: d.floor, layout_x: d.placed ? d.x : null, layout_z: d.placed ? d.z : null, layout_w: d.w, layout_d: d.d, layout_facing: d.facing ?? DEFAULT_FACING };
   });
 }

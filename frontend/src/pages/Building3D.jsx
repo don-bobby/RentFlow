@@ -7,7 +7,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import API from '../services/api';
-import { computePlacement, draftFrom, applyDraft, EXTRA_KINDS } from '../utils/buildingLayout';
+import { computePlacement, draftFrom, applyDraft, EXTRA_KINDS, isLine } from '../utils/buildingLayout';
 import LayoutEditor from '../components/LayoutEditor';
 
 const STATES = {
@@ -70,12 +70,21 @@ export default function Building3D() {
   const viewUnits = useMemo(() => (editing && draft ? applyDraft(units, draft) : units), [units, editing, draft]);
   const viewExtras = editing && draft ? draft.extras : (info?.extras || []);
   const layout = useMemo(() => computePlacement(viewUnits, viewExtras, perFloor), [viewUnits, viewExtras, perFloor]); // eslint-disable-line react-hooks/exhaustive-deps
+  // While editing, wait a moment after the last change before rebuilding the 3D scene
+  // (painting a fence changes the layout on every square).
+  const [sceneLayout, setSceneLayout] = useState(layout);
+  useEffect(() => {
+    if (!editing) { setSceneLayout(layout); return undefined; }
+    const t = setTimeout(() => setSceneLayout(layout), 140);
+    return () => clearTimeout(t);
+  }, [layout, editing]);
   const selected = viewUnits.find(u => u.id === selectedId) || null;
   const counts = info?.summary || {};
   const owed = units.reduce((a, u) => a + (u.balance || 0), 0);
 
   // ── 3D scene: rebuilt when the layout or mode changes ──
   useEffect(() => {
+    const layout = sceneLayout;
     if (mode !== '3d' || !mountRef.current || !layout.items.length) return undefined;
     const el = mountRef.current;
     let renderer;
@@ -112,6 +121,7 @@ export default function Building3D() {
 
     // Extras: corridors, stairs, gardens, roads
     layout.extras.forEach(e => {
+      if (isLine(e.kind)) return;                       // fences and gates are drawn below
       const y = e.floor * FLOOR_H, w = e.w * CELL, d = e.d * CELL, px = wx(e.x, e.w), pz = wz(e.z, e.d);
       const kind = EXTRA_KINDS[e.kind] || EXTRA_KINDS.corridor;
       const add = (geo, color, x, yy, z, op = 1) => {
@@ -142,27 +152,49 @@ export default function Building3D() {
           const t = ((i + 0.5) / n - 0.5) * (horiz ? w : d);
           add(new THREE.BoxGeometry(horiz ? 0.45 : 0.08, 0.02, horiz ? 0.08 : 0.45), 0xf8fafc, horiz ? px + t : px, y + 0.03, horiz ? pz : pz + t);
         }
-      } else if (e.kind === 'fence') {
-        const horiz = e.w >= e.d, len = horiz ? w : d, n = Math.max(2, Math.round(len / 0.7) + 1);
-        const wood = 0x92400e;
-        for (let i = 0; i < n; i++) {
-          const t = (i / (n - 1) - 0.5) * (len - 0.1);
-          add(new THREE.BoxGeometry(0.1, 0.75, 0.1), wood, horiz ? px + t : px, y + 0.38, horiz ? pz : pz + t);
-        }
-        [0.28, 0.58].forEach(hy => add(new THREE.BoxGeometry(horiz ? len : 0.05, 0.07, horiz ? 0.05 : len), 0xb45309, px, y + hy, pz));
-      } else if (e.kind === 'gate') {
-        const horiz = e.w >= e.d, len = horiz ? w : d;
-        [-1, 1].forEach(sg => add(new THREE.BoxGeometry(horiz ? 0.22 : 0.3, 1.05, horiz ? 0.3 : 0.22), 0x475569, horiz ? px + sg * (len / 2 - 0.11) : px, y + 0.52, horiz ? pz : pz + sg * (len / 2 - 0.11)));
-        const bars = Math.max(4, Math.round(len / 0.22));
-        for (let i = 0; i < bars; i++) {
-          const t = (i / (bars - 1) - 0.5) * (len - 0.5);
-          add(new THREE.BoxGeometry(0.04, 0.8, 0.04), kind.color, horiz ? px + t : px, y + 0.45, horiz ? pz : pz + t);
-        }
-        [0.12, 0.78].forEach(hy => add(new THREE.BoxGeometry(horiz ? len - 0.45 : 0.05, 0.06, horiz ? 0.05 : len - 0.45), kind.color, px, y + hy, pz));
       } else { // corridor
         add(new THREE.BoxGeometry(w, 0.1, d), kind.color, px, y - 0.03, pz, 0.9);
       }
     });
+
+    // Fences and gates: single squares joined into continuous lines
+    const lineCells = layout.extras.filter(e => isLine(e.kind));
+    if (lineCells.length) {
+      const cellMap = new Map(lineCells.map(e => [`${e.x},${e.z}`, e]));
+      const nb = (e, dx, dz) => cellMap.get(`${e.x + dx},${e.z + dz}`);
+      const box = (w, h, d, color, x, y, z) => {
+        const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), new THREE.MeshStandardMaterial({ color, roughness: 0.75 }));
+        m.position.set(x, y, z); group.add(m);
+      };
+      const FENCE = 0x92400e, RAIL = 0xb45309;
+      lineCells.forEach(e => {
+        const px = wx(e.x, 1), pz = wz(e.z, 1);
+        if (e.kind === 'fence') {
+          box(0.1, 0.75, 0.1, FENCE, px, 0.38, pz);
+          [[1, 0], [-1, 0], [0, 1], [0, -1]].forEach(([dx, dz]) => {
+            const o = nb(e, dx, dz); if (!o) return;
+            const horiz = dx !== 0;
+            if (o.kind === 'fence') {
+              if (dx < 0 || dz < 0) return;               // draw each fence-to-fence rail once
+              [0.28, 0.58].forEach(hy => box(horiz ? CELL : 0.05, 0.07, horiz ? 0.05 : CELL, RAIL, px + dx * CELL / 2, hy, pz + dz * CELL / 2));
+            } else {                                      // stops at the gate post
+              const len = CELL / 2 + 0.1;
+              [0.28, 0.58].forEach(hy => box(horiz ? len : 0.05, 0.07, horiz ? 0.05 : len, RAIL, px + dx * len / 2, hy, pz + dz * len / 2));
+            }
+          });
+        } else {
+          const hasX = nb(e, 1, 0) || nb(e, -1, 0), hasZ = nb(e, 0, 1) || nb(e, 0, -1);
+          const horiz = hasX || !hasZ, len = CELL;
+          [-1, 1].forEach(sg => box(horiz ? 0.22 : 0.3, 1.05, horiz ? 0.3 : 0.22, 0x475569, horiz ? px + sg * (len / 2 - 0.11) : px, 0.52, horiz ? pz : pz + sg * (len / 2 - 0.11)));
+          const bars = Math.max(4, Math.round(len / 0.22));
+          for (let i = 0; i < bars; i++) {
+            const t = (i / (bars - 1) - 0.5) * (len - 0.5);
+            box(0.04, 0.8, 0.04, EXTRA_KINDS.gate.color ? parseInt(EXTRA_KINDS.gate.color.slice(1), 16) : 0x0f766e, horiz ? px + t : px, 0.45, horiz ? pz : pz + t);
+          }
+          [0.12, 0.78].forEach(hy => box(horiz ? len - 0.45 : 0.05, 0.06, horiz ? 0.05 : len - 0.45, parseInt(EXTRA_KINDS.gate.color.slice(1), 16), px, hy, pz));
+        }
+      });
+    }
 
     // Units
     const meshes = [];
@@ -187,7 +219,8 @@ export default function Building3D() {
         const roofM = mk(0x94a3b8, base < 0.9 ? 0.5 : 1, { roughness: 0.8 });
         const roof = new THREE.Mesh(new THREE.BoxGeometry(w + 0.1, 0.07, d + 0.1), roofM);
         roof.position.set(0, H / 2 + 0.035, 0); mesh.add(roof);
-        // face: 0=+z (door), 1=-z, 2=+x, 3=-x
+        // face: 0=+z, 1=-z, 2=+x, 3=-x; the door is on the side the unit faces
+        const doorFace = [1, 2, 0, 3][it.facing ?? 2];
         [0, 1, 2, 3].forEach(face => {
           const fw = face < 2 ? w : d;
           const g = new THREE.Group();
@@ -196,12 +229,12 @@ export default function Building3D() {
           const n = Math.max(1, Math.round(fw / 0.85));
           for (let i = 0; i < n; i++) {
             const cx = (i + 0.5) / n * fw - fw / 2;
-            if (face === 0 && Math.abs(cx) < 0.3 && n > 1) continue;       // leave room for the door
-            if (face === 0 && n === 1) continue;
+            if (face === doorFace && Math.abs(cx) < 0.3 && n > 1) continue;       // leave room for the door
+            if (face === doorFace && n === 1) continue;
             const win = new THREE.Mesh(new THREE.PlaneGeometry(Math.min(0.42, fw / n - 0.2), 0.4), glass);
             win.position.set(cx, 0.1, 0); g.add(win);
           }
-          if (face === 0) {
+          if (face === doorFace) {
             const door = new THREE.Mesh(new THREE.PlaneGeometry(0.38, 0.66), doorM); door.position.set(0, -H / 2 + 0.33, 0.002); g.add(door);
             const knob = new THREE.Mesh(new THREE.CircleGeometry(0.03, 10), handle); knob.position.set(0.12, -H / 2 + 0.32, 0.004); g.add(knob);
           }
@@ -290,10 +323,11 @@ export default function Building3D() {
         if (o.material) { (Array.isArray(o.material) ? o.material : [o.material]).forEach(m => { if (m.map) m.map.dispose(); m.dispose(); }); }
       });
       renderer.dispose();
+      renderer.forceContextLoss();
       if (renderer.domElement.parentNode === el) el.removeChild(renderer.domElement);
       sceneRef.current = {};
     };
-  }, [layout, mode, details]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [sceneLayout, mode, details]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Filter dimming + selection outline (cheap, no scene rebuild)
   useEffect(() => {
@@ -311,7 +345,7 @@ export default function Building3D() {
       outline.scale.set(w + 0.12, h + 0.12, d + 0.12);
       outline.visible = true; outline.position.copy(sel.position);
     } else outline.visible = false;
-  }, [filterState, selectedId, layout, mode, details]);
+  }, [filterState, selectedId, sceneLayout, mode, details]);
 
   useEffect(() => { const c = sceneRef.current.controls; if (c) c.autoRotate = autoRotate; }, [autoRotate]);
 

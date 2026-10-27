@@ -53,7 +53,7 @@ router.get('/building/:plotId', auth, async (req, res) => {
 
     const hs = await pool.query(
       `SELECT h.id, h.unit_number, h.house_type, h.rent_amount, h.status, h.floor,
-              h.layout_x, h.layout_z, h.layout_w, h.layout_d,
+              h.layout_x, h.layout_z, h.layout_w, h.layout_d, h.layout_facing,
               t.id AS tenant_id, t.full_name, t.phone, t.move_in_date, t.rent_due_day
        FROM houses h
        LEFT JOIN LATERAL (
@@ -69,7 +69,7 @@ router.get('/building/:plotId', auth, async (req, res) => {
 
     const units = hs.rows.map(h => {
       const base = { id: h.id, unit_number: h.unit_number, house_type: h.house_type, rent_amount: parseFloat(h.rent_amount || 0), floor: h.floor,
-                     layout_x: h.layout_x, layout_z: h.layout_z, layout_w: h.layout_w || 1, layout_d: h.layout_d || 1 };
+                     layout_x: h.layout_x, layout_z: h.layout_z, layout_w: h.layout_w || 1, layout_d: h.layout_d || 1, layout_facing: h.layout_facing ?? 2 };
       if (!h.tenant_id) return { ...base, state: h.status === 'vacant' ? 'vacant' : (h.status === 'occupied' ? 'occupied' : 'other'), house_status: h.status };
       if (!seeMoney) return { ...base, state: 'occupied', house_status: h.status };
       const paidMap = maps[h.tenant_id] || {};
@@ -100,6 +100,7 @@ router.get('/building/:plotId', auth, async (req, res) => {
 // Every placed piece must fit the grid and nothing may overlap on a floor.
 const GRID_MAX = 40;
 const EXTRA_KINDS = ['corridor', 'stairs', 'garden', 'road', 'fence', 'gate'];
+const LINE_KINDS = ['fence', 'gate'];   // single ground-level squares drawn as a line; may sit on top of other pieces
 router.put('/layout/:plotId', auth, async (req, res) => {
   const client = await pool.connect();
   try {
@@ -116,7 +117,7 @@ router.put('/layout/:plotId', auth, async (req, res) => {
 
     const unitsIn = Array.isArray(req.body.units) ? req.body.units : [];
     const extrasIn = Array.isArray(req.body.extras) ? req.body.extras : [];
-    if (unitsIn.length > 500 || extrasIn.length > 100) return res.status(400).json({ error: 'Too many items.' });
+    if (unitsIn.length > 500 || extrasIn.length > 900) return res.status(400).json({ error: 'Too many items.' });
 
     const own = await client.query('SELECT id FROM houses WHERE plot_id = $1', [plotId]);
     const ownIds = new Set(own.rows.map(r => r.id));
@@ -131,16 +132,20 @@ router.put('/layout/:plotId', auth, async (req, res) => {
       if (!u.placed) { cleared.push(id); continue; }
       const r = rect(u);
       if (!valid(r)) return res.status(400).json({ error: 'A unit position is outside the allowed grid.' });
-      placed.push({ kind: 'unit', id, ...r });
+      const facing = u.facing == null ? 2 : int(u.facing);
+      if (!(facing >= 0 && facing <= 3)) return res.status(400).json({ error: 'Invalid unit direction.' });
+      placed.push({ kind: 'unit', id, facing, ...r });
     }
     for (const e of extrasIn) {
       if (!EXTRA_KINDS.includes(e.kind)) return res.status(400).json({ error: 'Unknown layout piece.' });
       const r = rect(e);
       if (!valid(r)) return res.status(400).json({ error: 'A layout piece is outside the allowed grid.' });
+      if (LINE_KINDS.includes(e.kind) && (r.w !== 1 || r.d !== 1 || r.floor !== 0)) return res.status(400).json({ error: 'Fences and gates are single ground-level squares.' });
       extras.push({ kind: e.kind, id: String(e.id || '').slice(0, 24) || `${e.kind}-${extras.length}`, ...r });
     }
     // No overlaps on the same floor
-    const all = [...placed, ...extras.map(e => ({ ...e, kind: 'extra' }))];
+    // (fences and gates are boundary lines, so they are left out of this check)
+    const all = [...placed, ...extras.filter(e => !LINE_KINDS.includes(e.kind)).map(e => ({ ...e, kind: 'extra' }))];
     for (let i = 0; i < all.length; i++) for (let j = i + 1; j < all.length; j++) {
       const a = all[i], b = all[j];
       if (a.floor === b.floor && a.x < b.x + b.w && b.x < a.x + a.w && a.z < b.z + b.d && b.z < a.z + a.d) {
@@ -150,11 +155,11 @@ router.put('/layout/:plotId', auth, async (req, res) => {
 
     await client.query('BEGIN');
     for (const u of placed) {
-      await client.query('UPDATE houses SET floor=$1, layout_x=$2, layout_z=$3, layout_w=$4, layout_d=$5 WHERE id=$6 AND plot_id=$7',
-        [u.floor, u.x, u.z, u.w, u.d, u.id, plotId]);
+      await client.query('UPDATE houses SET floor=$1, layout_x=$2, layout_z=$3, layout_w=$4, layout_d=$5, layout_facing=$6 WHERE id=$7 AND plot_id=$8',
+        [u.floor, u.x, u.z, u.w, u.d, u.facing, u.id, plotId]);
     }
     if (cleared.length) {
-      await client.query('UPDATE houses SET layout_x=NULL, layout_z=NULL, layout_w=1, layout_d=1 WHERE id = ANY($1) AND plot_id=$2', [cleared, plotId]);
+      await client.query('UPDATE houses SET layout_x=NULL, layout_z=NULL, layout_w=1, layout_d=1, layout_facing=2 WHERE id = ANY($1) AND plot_id=$2', [cleared, plotId]);
     }
     await client.query('UPDATE plots SET layout_extras = $1::jsonb WHERE id = $2',
       [JSON.stringify(extras.map(({ kind, id, floor, x, z, w, d }) => ({ kind, id, floor, x, z, w, d }))), plotId]);
