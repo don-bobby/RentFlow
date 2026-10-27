@@ -246,7 +246,7 @@ export default function Properties() {
     // must change — so don't pre-pick landlords[0] for them; leave it blank
     // and let the required "— Select landlord —" placeholder force an
     // actual, deliberate selection instead of one chosen by load order.
-    setForm({ name: '', location: '', description: '', owner_id: isAgent ? '' : (landlords[0]?.id || ''), agent_id: '', gps_lat: '', gps_lng: '' });
+    setForm({ name: '', location: '', description: '', owner_id: isAgent ? '' : (landlords[0]?.id || ''), agent_id: '', agent_fee_percent: '', gps_lat: '', gps_lng: '' });
     setModal('plot'); setError('');
   }
 
@@ -258,6 +258,7 @@ export default function Properties() {
       description: plot.description || '',
       owner_id:    plot.user_id     || '',
       agent_id:    plot.agent_id    || '',
+      agent_fee_percent: plot.agent_fee_percent != null ? String(plot.agent_fee_percent) : '',
       gps_lat:     plot.gps_lat     != null ? String(plot.gps_lat) : '',
       gps_lng:     plot.gps_lng     != null ? String(plot.gps_lng) : '',
     });
@@ -996,6 +997,16 @@ export default function Properties() {
                     <div style={{ fontSize: 11.5, color: 'var(--muted)', marginTop: 6 }}>
                       Set per property — the owner's other properties are not affected.
                     </div>
+                    {form.agent_id && (
+                      <div style={{ marginTop: 12 }}>
+                        <label style={labelStyle}>Agent fee (% of rent collected)</label>
+                        <input type="number" min="0" max="100" step="0.1" value={form.agent_fee_percent ?? ''} placeholder="e.g. 10"
+                          onChange={e => setForm(f => ({ ...f, agent_fee_percent: e.target.value }))} style={inputStyle} />
+                        <div style={{ fontSize: 11.5, color: 'var(--muted)', marginTop: 6 }}>
+                          The agreed percentage. It is deducted on the owner statement; leave blank if no fee is agreed.
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
               </>) : (<>

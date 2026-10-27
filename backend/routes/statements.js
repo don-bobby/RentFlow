@@ -120,20 +120,27 @@ function drawStatement(doc, { tenant, payments, utilities = [] }, startNewPage =
   }
 }
 
-// GET /api/statements/landlord?month=YYYY-MM[&plot_id=N] — one-page-per-property
-// monthly owner statement: rent collected, utilities recovered, expenses,
-// net, collection rate, arrears and occupancy. MUST stay above /:tenantId.
+// GET /api/statements/landlord?month=YYYY-MM[&plot_id=N] — monthly owner
+// statement, one section per property: tenant-by-tenant payments, property
+// expenses and miscellaneous expenses itemised, agent fee (if the property is
+// agent-managed with an agreed %), and the net payable to the owner.
+// MUST stay above /:tenantId.
+const MISC_CATEGORIES = ['Other', 'Miscellaneous', 'Misc'];
+
 router.get('/landlord', auth, async (req, res) => {
   try {
     const month = /^\d{4}-\d{2}$/.test(req.query.month || '') ? req.query.month : new Date().toISOString().slice(0, 7);
     const [yy, mm] = month.split('-').map(Number);
     const start = `${month}-01`;
-    const endDate = new Date(yy, mm, 1).toISOString().slice(0, 10); // first day of next month
+    const endDate = new Date(Date.UTC(yy, mm, 1)).toISOString().slice(0, 10); // first day of next month
 
     const visible = await getVisiblePlotIds(req.user);
     if (visible !== 'ALL' && visible.length === 0) return res.status(403).json({ error: 'No properties available.' });
     const plotRes = await pool.query(
-      `SELECT p.id, p.name, p.location, u.name AS owner_name FROM plots p LEFT JOIN users u ON p.user_id = u.id
+      `SELECT p.id, p.name, p.location, p.agent_id, p.agent_fee_percent, u.name AS owner_name, ag.name AS agent_name
+       FROM plots p
+       LEFT JOIN users u  ON p.user_id  = u.id
+       LEFT JOIN users ag ON p.agent_id = ag.id
        WHERE ${visible === 'ALL' ? 'true' : 'p.id = ANY($1)'} ${req.query.plot_id ? `AND p.id = ${parseInt(req.query.plot_id) || 0}` : ''}
        ORDER BY p.name`,
       visible === 'ALL' ? [] : [visible]
@@ -142,80 +149,207 @@ router.get('/landlord', auth, async (req, res) => {
     if (!plots.length) return res.status(403).json({ error: 'You do not have access to financial statements for these properties.' });
 
     const monthLabel = new Date(yy, mm - 1, 1).toLocaleString('en-KE', { month: 'long', year: 'numeric' });
-    const doc = new PDFDocument({ margin: 50 });
+    const doc = new PDFDocument({ margin: 50, size: 'A4', bufferPages: true });
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `attachment; filename="landlord_statement_${month}.pdf"`);
+    res.setHeader('Content-Disposition', `attachment; filename="owner_statement_${month}.pdf"`);
     doc.pipe(res);
+
+    const L = 50, R = 545, PRIMARY = '#5b21b6', GREY = '#6b7280';
     const kes = (n) => `KES ${Math.round(parseFloat(n || 0)).toLocaleString()}`;
-    const line = (label, value, bold = false) => {
+    const num = (n) => Math.round(parseFloat(n || 0)).toLocaleString();
+    const fmtDate = (d) => new Date(d).toLocaleDateString('en-KE', { day: '2-digit', month: 'short' });
+    const ensure = (h) => { if (doc.y + h > doc.page.height - 60) { doc.addPage(); doc.y = 50; } };
+
+    const sectionTitle = (text) => {
+      ensure(60);
+      doc.moveDown(0.6);
+      doc.font('Helvetica-Bold').fontSize(12).fillColor(PRIMARY).text(text, L, doc.y);
+      doc.moveTo(L, doc.y + 2).lineTo(R, doc.y + 2).strokeColor(PRIMARY).lineWidth(1).stroke();
+      doc.moveDown(0.5);
+    };
+    // cols: [{ label, x, w, align }]
+    const tableHead = (cols) => {
+      ensure(40);
       const y = doc.y;
-      doc.font(bold ? 'Helvetica-Bold' : 'Helvetica').fontSize(11).fillColor('#000');
-      doc.text(label, 60, y, { width: 300, continued: false });
-      doc.text(value, 360, y, { width: 190, align: 'right' });
+      doc.rect(L, y - 2, R - L, 16).fill('#f3f0fb');
+      doc.font('Helvetica-Bold').fontSize(8.5).fillColor('#111');
+      cols.forEach(c => doc.text(c.label, c.x, y + 1, { width: c.w, align: c.align || 'left', lineBreak: false }));
+      doc.y = y + 18;
+    };
+    const tableRow = (cols, vals, opts = {}) => {
+      ensure(18);
+      const y = doc.y;
+      doc.font(opts.bold ? 'Helvetica-Bold' : 'Helvetica').fontSize(8.5).fillColor('#111');
+      cols.forEach((c, i) => doc.text(String(vals[i] ?? ''), c.x, y, { width: c.w, align: c.align || 'left', lineBreak: false, ellipsis: true }));
+      doc.y = y + 14;
+      if (!opts.noRule) doc.moveTo(L, doc.y - 2).lineTo(R, doc.y - 2).strokeColor('#ececf1').lineWidth(0.5).stroke();
+    };
+    const kv = (label, value, opts = {}) => {
+      ensure(18);
+      const y = doc.y;
+      doc.font(opts.bold ? 'Helvetica-Bold' : 'Helvetica').fontSize(opts.size || 10).fillColor(opts.color || '#111');
+      doc.text(label, L + 8, y, { width: 330, lineBreak: false });
+      doc.text(value, 380, y, { width: R - 380, align: 'right', lineBreak: false });
+      doc.y = y + (opts.size ? opts.size + 6 : 16);
     };
 
     let first = true;
     for (const plot of plots) {
       if (!first) doc.addPage();
       first = false;
-      const [coll, utils, exps, houses, tenantsRes] = await Promise.all([
-        pool.query(`SELECT COALESCE(p.method,'other') AS method, SUM(COALESCE(p.amount_allocated, p.amount)) AS total
-                    FROM payments p JOIN houses h ON p.house_id = h.id
-                    WHERE h.plot_id = $1 AND p.payment_date >= $2 AND p.payment_date < $3 AND p.status NOT IN ('failed','pending') AND COALESCE(p.method,'') != 'balance_charge'
-                    GROUP BY 1 ORDER BY 2 DESC`, [plot.id, start, endDate]),
-        pool.query(`SELECT utility_type, SUM(amount) AS total FROM utility_payments
-                    WHERE plot_id = $1 AND payment_date >= $2 AND payment_date < $3 GROUP BY 1 ORDER BY 2 DESC`, [plot.id, start, endDate]),
-        pool.query(`SELECT COALESCE(category,'Uncategorised') AS category, SUM(amount) AS total FROM expenses
-                    WHERE plot_id = $1 AND expense_date >= $2 AND expense_date < $3
-                      AND COALESCE(status,'confirmed') != 'pending' GROUP BY 1 ORDER BY 2 DESC`, [plot.id, start, endDate]),
+
+      const [tenantRows, rentPays, utilRows, expRows, houseRes] = await Promise.all([
+        pool.query(
+          `SELECT t.id, t.full_name, t.move_in_date, t.is_active, h.unit_number, h.rent_amount
+           FROM tenants t JOIN houses h ON t.house_id = h.id
+           WHERE h.plot_id = $1
+             AND (t.is_active = true OR EXISTS (SELECT 1 FROM payments py WHERE py.tenant_id = t.id AND py.payment_date >= $2 AND py.payment_date < $3))
+           ORDER BY h.unit_number, t.full_name`, [plot.id, start, endDate]),
+        pool.query(
+          `SELECT p.tenant_id, p.payment_date, COALESCE(p.method,'other') AS method, SUM(COALESCE(p.amount_allocated, p.amount)) AS total
+           FROM payments p JOIN houses h ON p.house_id = h.id
+           WHERE h.plot_id = $1 AND p.payment_date >= $2 AND p.payment_date < $3
+             AND p.status NOT IN ('failed','pending') AND COALESCE(p.method,'') != 'balance_charge'
+           GROUP BY p.tenant_id, p.payment_date, 3 ORDER BY p.payment_date`, [plot.id, start, endDate]),
+        pool.query(
+          `SELECT tenant_id, utility_type, SUM(amount) AS total FROM utility_payments
+           WHERE plot_id = $1 AND payment_date >= $2 AND payment_date < $3 GROUP BY 1, 2`, [plot.id, start, endDate]),
+        pool.query(
+          `SELECT e.expense_date, COALESCE(e.category,'Uncategorised') AS category, e.description, e.amount, h.unit_number
+           FROM expenses e LEFT JOIN houses h ON e.house_id = h.id
+           WHERE e.plot_id = $1 AND e.expense_date >= $2 AND e.expense_date < $3 AND COALESCE(e.status,'confirmed') != 'pending'
+           ORDER BY e.category, e.expense_date`, [plot.id, start, endDate]),
         pool.query(`SELECT COUNT(*) AS total, COUNT(*) FILTER (WHERE status = 'occupied') AS occupied FROM houses WHERE plot_id = $1`, [plot.id]),
-        pool.query(`SELECT t.id, t.move_in_date, h.rent_amount FROM tenants t JOIN houses h ON t.house_id = h.id
-                    WHERE h.plot_id = $1 AND t.is_active = true`, [plot.id]),
       ]);
-      const collected = coll.rows.reduce((a, r) => a + parseFloat(r.total), 0);
-      const utilIn    = utils.rows.reduce((a, r) => a + parseFloat(r.total), 0);
-      const expenseTotal = exps.rows.reduce((a, r) => a + parseFloat(r.total), 0);
-      const expected  = tenantsRes.rows.reduce((a, t) => a + parseFloat(t.rent_amount || 0), 0);
-      const maps = await loadPaidMaps(pool, tenantsRes.rows.map(t => t.id));
-      const arrears = tenantsRes.rows.reduce((a, t) => a + computeLedger({ rent: t.rent_amount, moveInDate: t.move_in_date, paidMap: maps[t.id] || {} }).totalOwed, 0);
-      const utilBills = exps.rows.filter(r => ['Water', 'Electricity', 'Garbage Collection', 'Utilities'].includes(r.category)).reduce((a, r) => a + parseFloat(r.total), 0);
 
-      doc.font('Helvetica-Bold').fontSize(18).fillColor('#000').text('RentFlow — Owner Statement', 50, 50);
-      doc.font('Helvetica').fontSize(10).fillColor('#666').text(`${monthLabel}  ·  Generated ${new Date().toLocaleDateString('en-KE')}`);
+      // Per-tenant figures
+      const byTenant = {};
+      tenantRows.rows.forEach(t => { byTenant[t.id] = { ...t, paid: 0, util: 0, dates: [], methods: new Set() }; });
+      rentPays.rows.forEach(r => {
+        const t = byTenant[r.tenant_id]; if (!t) return;
+        t.paid += parseFloat(r.total); t.dates.push(fmtDate(r.payment_date)); t.methods.add(r.method);
+      });
+      utilRows.rows.forEach(u => { const t = byTenant[u.tenant_id]; if (t) t.util += parseFloat(u.total); });
+      const activeIds = tenantRows.rows.filter(t => t.is_active).map(t => t.id);
+      const maps = await loadPaidMaps(pool, activeIds);
+      Object.values(byTenant).forEach(t => {
+        t.balance = t.is_active ? computeLedger({ rent: t.rent_amount, moveInDate: t.move_in_date, paidMap: maps[t.id] || {} }).totalOwed : 0;
+      });
+      const tenants = Object.values(byTenant);
+
+      const collected   = tenants.reduce((a, t) => a + t.paid, 0);
+      const utilIn      = tenants.reduce((a, t) => a + t.util, 0);
+      const isMisc      = (c) => MISC_CATEGORIES.includes(c) || c === 'Uncategorised';
+      const propExp     = expRows.rows.filter(e => !isMisc(e.category));
+      const miscExp     = expRows.rows.filter(e => isMisc(e.category));
+      const propTotal   = propExp.reduce((a, e) => a + parseFloat(e.amount), 0);
+      const miscTotal   = miscExp.reduce((a, e) => a + parseFloat(e.amount), 0);
+      const feePct      = plot.agent_id && plot.agent_fee_percent != null ? parseFloat(plot.agent_fee_percent) : null;
+      const agentFee    = feePct != null ? collected * feePct / 100 : 0;
+      const net         = collected + utilIn - propTotal - miscTotal - agentFee;
+      const expected    = tenants.filter(t => t.is_active).reduce((a, t) => a + parseFloat(t.rent_amount || 0), 0);
+      const arrears     = tenants.reduce((a, t) => a + t.balance, 0);
+      const h           = houseRes.rows[0];
+
+      // ── Header band ──
+      doc.rect(0, 0, doc.page.width, 78).fill(PRIMARY);
+      doc.font('Helvetica-Bold').fontSize(19).fillColor('#fff').text('Owner Statement', L, 24, { lineBreak: false });
+      doc.font('Helvetica').fontSize(10).text(monthLabel, L, 50, { lineBreak: false });
+      doc.font('Helvetica-Bold').fontSize(12).text('RentFlow', 380, 26, { width: R - 380, align: 'right', lineBreak: false });
+      doc.font('Helvetica').fontSize(8.5).text(`Generated ${new Date().toLocaleDateString('en-KE')}`, 380, 46, { width: R - 380, align: 'right', lineBreak: false });
+      doc.y = 96;
+
+      doc.font('Helvetica-Bold').fontSize(15).fillColor('#111').text(plot.name, L, doc.y);
+      doc.font('Helvetica').fontSize(9).fillColor(GREY).text(
+        [plot.location, plot.owner_name ? `Owner: ${plot.owner_name}` : null,
+         plot.agent_id ? `Managed by agent: ${plot.agent_name || '—'}${feePct != null ? ` (${feePct}% fee)` : ''}` : 'Self-managed'].filter(Boolean).join('   ·   '), L, doc.y + 2);
       doc.moveDown(0.8);
-      doc.font('Helvetica-Bold').fontSize(14).fillColor('#000').text(plot.name);
-      doc.font('Helvetica').fontSize(10).fillColor('#666').text(`${plot.location || ''}${plot.owner_name ? `  ·  Owner: ${plot.owner_name}` : ''}`);
-      doc.moveDown();
 
-      doc.font('Helvetica-Bold').fontSize(12).fillColor('#000').text('Income', 50);
-      doc.moveDown(0.3);
-      coll.rows.forEach(r => line(`Rent — ${r.method}`, kes(r.total)));
-      if (!coll.rows.length) line('No rent recorded this month', kes(0));
-      line('Total rent collected', kes(collected), true);
-      utils.rows.forEach(r => line(`Utilities recovered — ${r.utility_type}`, kes(r.total)));
-      if (utilIn > 0) line('Total utilities recovered', kes(utilIn), true);
-      doc.moveDown();
+      // ── Summary boxes ──
+      const boxes = [
+        ['Rent collected', kes(collected), '#15803d'],
+        ['Total expenses', kes(propTotal + miscTotal + agentFee), '#b91c1c'],
+        ['Net to owner', kes(net), PRIMARY],
+        ['Collection rate', expected ? `${Math.round((collected / expected) * 100)}%` : '—', '#111'],
+      ];
+      const bw = (R - L - 30) / 4, by = doc.y;
+      boxes.forEach(([label, value, color], i) => {
+        const x = L + i * (bw + 10);
+        doc.roundedRect(x, by, bw, 42, 5).lineWidth(0.7).strokeColor('#dcdce4').stroke();
+        doc.font('Helvetica').fontSize(7.5).fillColor(GREY).text(label, x + 8, by + 8, { width: bw - 16, lineBreak: false });
+        doc.font('Helvetica-Bold').fontSize(12.5).fillColor(color).text(value, x + 8, by + 22, { width: bw - 16, lineBreak: false });
+      });
+      doc.y = by + 52;
 
-      doc.font('Helvetica-Bold').fontSize(12).fillColor('#000').text('Expenses', 50);
-      doc.moveDown(0.3);
-      exps.rows.forEach(r => line(r.category, kes(r.total)));
-      if (!exps.rows.length) line('No expenses recorded this month', kes(0));
-      line('Total expenses', kes(expenseTotal), true);
-      doc.moveDown();
+      // ── 1. Tenant payments ──
+      sectionTitle('1. Tenant payments');
+      const tc = [
+        { label: 'Unit', x: L + 2, w: 40 }, { label: 'Tenant', x: L + 46, w: 140 },
+        { label: 'Rent (KES)', x: 238, w: 55, align: 'right' }, { label: 'Paid (KES)', x: 298, w: 55, align: 'right' },
+        { label: 'Utilities', x: 358, w: 50, align: 'right' }, { label: 'Paid on', x: 414, w: 70 }, { label: 'Balance', x: 488, w: 55, align: 'right' },
+      ];
+      tableHead(tc);
+      if (!tenants.length) tableRow(tc, ['', 'No tenants for this property.', '', '', '', '', ''], { noRule: true });
+      tenants.forEach(t => tableRow(tc, [
+        t.unit_number || '—', t.full_name + (t.is_active ? '' : ' (moved out)'), num(t.rent_amount), t.paid ? num(t.paid) : '—',
+        t.util ? num(t.util) : '—', t.dates.length ? [...new Set(t.dates)].slice(0, 2).join(', ') : '—', t.balance ? num(t.balance) : '0',
+      ]));
+      tableRow(tc, ['', 'Total', num(expected), num(collected), num(utilIn), '', num(arrears)], { bold: true, noRule: true });
 
-      doc.moveTo(60, doc.y).lineTo(550, doc.y).strokeColor('#bbb').stroke();
-      doc.moveDown(0.5);
-      line('Net for the month (rent + utilities recovered − expenses)', kes(collected + utilIn - expenseTotal), true);
-      doc.moveDown();
+      // ── 2. Property expenses ──
+      sectionTitle('2. Property expenses paid');
+      const ec = [
+        { label: 'Date', x: L + 2, w: 45 }, { label: 'Category', x: L + 52, w: 95 },
+        { label: 'Description', x: 202, w: 235 }, { label: 'Amount (KES)', x: 440, w: 100, align: 'right' },
+      ];
+      const expTable = (rows, emptyText) => {
+        tableHead(ec);
+        if (!rows.length) tableRow(ec, ['', '', emptyText, ''], { noRule: true });
+        rows.forEach(e => tableRow(ec, [fmtDate(e.expense_date), e.category, `${e.description || '—'}${e.unit_number ? ` (Unit ${e.unit_number})` : ''}`, num(e.amount)]));
+      };
+      expTable(propExp, 'No property expenses this month.');
+      tableRow(ec, ['', '', 'Subtotal — property expenses', num(propTotal)], { bold: true, noRule: true });
 
-      doc.font('Helvetica-Bold').fontSize(12).fillColor('#000').text('Property snapshot', 50);
-      doc.moveDown(0.3);
-      const h = houses.rows[0];
-      line('Occupancy', `${h.occupied} of ${h.total} units${parseInt(h.total) ? ` (${Math.round((h.occupied / h.total) * 100)}%)` : ''}`);
-      line('Monthly rent roll (active tenants)', kes(expected));
-      line('Collection rate this month', expected ? `${Math.round((collected / expected) * 100)}%` : '—');
-      line('Outstanding arrears today', kes(arrears));
-      if (utilBills > 0 || utilIn > 0) line('Utility bills vs recovered', `${kes(utilBills)} / ${kes(utilIn)}`);
+      // ── 3. Miscellaneous expenses ──
+      sectionTitle('3. Miscellaneous expenses');
+      expTable(miscExp, 'No miscellaneous expenses this month.');
+      tableRow(ec, ['', '', 'Subtotal — miscellaneous', num(miscTotal)], { bold: true, noRule: true });
+
+      // ── 4. Agent fee (agent-managed properties only) ──
+      if (plot.agent_id) {
+        sectionTitle('4. Agent fee');
+        if (feePct != null) {
+          kv(`${plot.agent_name || 'Agent'} — ${feePct}% of rent collected (${kes(collected)})`, kes(agentFee), { bold: true });
+        } else {
+          doc.font('Helvetica-Oblique').fontSize(9).fillColor(GREY).text('This property is agent-managed but no fee percentage has been set, so no agent fee is deducted. Set it under Properties > Edit.', L + 8, doc.y);
+          doc.moveDown(0.5);
+        }
+      }
+
+      // ── Settlement ──
+      ensure(140);
+      sectionTitle('Statement summary');
+      kv('Rent collected', kes(collected));
+      if (utilIn > 0) kv('Utilities recovered from tenants', kes(utilIn));
+      kv('Less: property expenses', `- ${kes(propTotal)}`);
+      kv('Less: miscellaneous expenses', `- ${kes(miscTotal)}`);
+      if (plot.agent_id) kv(`Less: agent fee${feePct != null ? ` (${feePct}%)` : ''}`, `- ${kes(agentFee)}`);
+      doc.moveTo(L + 8, doc.y).lineTo(R, doc.y).strokeColor('#999').lineWidth(0.8).stroke();
+      doc.y += 4;
+      kv('NET PAYABLE TO OWNER', kes(net), { bold: true, size: 12, color: net >= 0 ? '#15803d' : '#b91c1c' });
+      doc.moveDown(0.4);
+      doc.font('Helvetica').fontSize(8.5).fillColor(GREY).text(
+        `Occupancy: ${h.occupied} of ${h.total} units${parseInt(h.total) ? ` (${Math.round((h.occupied / h.total) * 100)}%)` : ''}   ·   Outstanding arrears today: ${kes(arrears)}`, L + 8, doc.y);
+    }
+
+    // Page footers
+    const range = doc.bufferedPageRange();
+    for (let i = 0; i < range.count; i++) {
+      doc.switchToPage(range.start + i);
+      doc.page.margins.bottom = 0; // otherwise writing in the footer zone makes pdfkit add a blank page
+      doc.font('Helvetica').fontSize(8).fillColor('#9ca3af');
+      doc.text(`RentFlow - Owner Statement - ${monthLabel}`, L, doc.page.height - 36, { width: 300, lineBreak: false });
+      doc.text(`Page ${i + 1} of ${range.count}`, 380, doc.page.height - 36, { width: R - 380, align: 'right', lineBreak: false });
     }
     doc.end();
     await logStaffActivity({ userId: req.user.id, action: 'landlord_statement_viewed', detail: `${monthLabel} · ${plots.length} propert${plots.length === 1 ? 'y' : 'ies'}` });

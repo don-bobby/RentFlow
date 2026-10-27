@@ -1183,22 +1183,27 @@ export default function Reports() {
       const inMonth = (d) => String(d || '').slice(0, 7) === ownerMonth;
       const okPay = (p) => p.status !== 'failed' && p.status !== 'pending' && p.method !== 'balance_charge';
       const visPlots = plots.filter(pl => canForPlot('reports.revenue_summary', pl.id, plotPermissions) && (ownerPlot === 'all' || String(pl.id) === String(ownerPlot)));
-      columns = ['Property', 'Rent Collected (KES)', 'Utilities Recovered (KES)', 'Expenses (KES)', 'Net (KES)'];
+      columns = ['Property', 'Rent Collected (KES)', 'Utilities Recovered (KES)', 'Expenses (KES)', 'Agent Fee (KES)', 'Net to Owner (KES)'];
       rows = visPlots.map(pl => {
         const rent = payments.filter(p => p.plot_id === pl.id && okPay(p) && inMonth(p.payment_date)).reduce((a, p) => a + parseFloat(p.amount || 0), 0);
         const util = utilities.filter(u => u.plot_id === pl.id && inMonth(u.payment_date)).reduce((a, u) => a + parseFloat(u.amount || 0), 0);
         const exp  = expenses.filter(e => e.plot_id === pl.id && inMonth(e.expense_date) && e.status !== 'pending').reduce((a, e) => a + parseFloat(e.amount || 0), 0);
-        return { Property: pl.name, 'Rent Collected (KES)': rent.toLocaleString(), 'Utilities Recovered (KES)': util.toLocaleString(), 'Expenses (KES)': exp.toLocaleString(), 'Net (KES)': (rent + util - exp).toLocaleString(), _rent: rent, _util: util, _exp: exp };
+        const pct = pl.agent_id && pl.agent_fee_percent != null ? parseFloat(pl.agent_fee_percent) : null;
+        const fee = pct != null ? (rent * pct) / 100 : 0;
+        return { Property: pl.name, 'Rent Collected (KES)': rent.toLocaleString(), 'Utilities Recovered (KES)': util.toLocaleString(), 'Expenses (KES)': exp.toLocaleString(),
+                 'Agent Fee (KES)': pl.agent_id ? `${Math.round(fee).toLocaleString()}${pct != null ? ` (${pct}%)` : ' (no % set)'}` : '—',
+                 'Net to Owner (KES)': Math.round(rent + util - exp - fee).toLocaleString(), _rent: rent, _util: util, _exp: exp, _fee: fee };
       });
       const tot = (k) => rows.reduce((a, r) => a + r[k], 0);
       summary = [
         { label: 'Rent collected', value: `KES ${tot('_rent').toLocaleString()}`, color: 'var(--green)' },
         { label: 'Utilities recovered', value: `KES ${tot('_util').toLocaleString()}`, color: 'var(--blue)' },
         { label: 'Expenses', value: `KES ${tot('_exp').toLocaleString()}`, color: 'var(--red)' },
-        { label: 'Net', value: `KES ${(tot('_rent') + tot('_util') - tot('_exp')).toLocaleString()}`, color: 'var(--primary)' },
+        { label: 'Agent fees', value: `KES ${Math.round(tot('_fee')).toLocaleString()}`, color: 'var(--amber)' },
+        { label: 'Net to owner', value: `KES ${Math.round(tot('_rent') + tot('_util') - tot('_exp') - tot('_fee')).toLocaleString()}`, color: 'var(--primary)' },
       ];
       title = `Owner Statement - ${new Date(ownerMonth + '-01').toLocaleString('en-KE', { month: 'long', year: 'numeric' })}`;
-      note = 'Pick a property and month beside the button, then press "Owner statement (PDF)" for the full one-page-per-property statement.';
+      note = 'Pick a property and month, then press "Owner statement (PDF)" for the full statement: tenant payments, itemised expenses, miscellaneous expenses, agent fee and net payable to the owner.';
     }
 
     if (active === 'arrearsrisk') {
@@ -2062,7 +2067,7 @@ export default function Reports() {
               )}
 
               {/* Print / Save as PDF — browsers' print dialog offers "Save as PDF" */}
-              <button type="button" className="rp-btn" onClick={() => downloadPDF(columns, visibleRows, summary, title)} disabled={!columns.length}>📄 Download PDF</button>
+              <button type="button" className="rp-btn" onClick={() => downloadPDF(columns, visibleRows, summary, title)} disabled={!columns.length} style={active === 'ownerstatement' ? { display: 'none' } : undefined}>📄 Download PDF</button>
               <button type="button" className="rp-btn" onClick={() => window.print()} title="Browser print of the on-screen page">🖨️ Print</button>
 
               {/* Download button */}

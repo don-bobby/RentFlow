@@ -139,6 +139,14 @@ router.post('/', staffAuth, requirePermission('plots.create'), async (req, res) 
       'INSERT INTO plots (user_id, name, location, description, gps_lat, gps_lng, agent_id) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *',
       [assignedTo, name, location || null, description || null, lat, lng, plotAgentId]
     );
+    // Agreed agent fee % — admin only, and only meaningful with an agent.
+    if (req.user.role === 'admin' && plotAgentId && req.body.agent_fee_percent !== undefined && req.body.agent_fee_percent !== '') {
+      const fee = parseFloat(req.body.agent_fee_percent);
+      if (Number.isFinite(fee) && fee >= 0 && fee <= 100) {
+        await pool.query('UPDATE plots SET agent_fee_percent = $1 WHERE id = $2', [fee, result.rows[0].id]);
+        result.rows[0].agent_fee_percent = fee;
+      }
+    }
 
     // Plot create/edit/delete was never logged at all before this.
     await logAudit({
@@ -154,7 +162,7 @@ router.post('/', staffAuth, requirePermission('plots.create'), async (req, res) 
 // plot was loaded — same problem as GET /:id above.
 router.put('/:id', staffAuth, async (req, res) => {
   try {
-    const check = await pool.query('SELECT name, user_id, agent_id, location, gps_lat, gps_lng FROM plots WHERE id = $1', [req.params.id]);
+    const check = await pool.query('SELECT name, user_id, agent_id, agent_fee_percent, location, gps_lat, gps_lng FROM plots WHERE id = $1', [req.params.id]);
     if (check.rows.length === 0) return res.status(404).json({ error: 'Plot not found' });
 
     const plotId = Number(req.params.id);
@@ -181,6 +189,14 @@ router.put('/:id', staffAuth, async (req, res) => {
         newAgentId = null;
       }
     }
+    // Agent fee %: admin-editable, cleared whenever the property has no agent.
+    let newFee = check.rows[0].agent_fee_percent;
+    if (req.user.role === 'admin' && req.body.agent_fee_percent !== undefined) {
+      const f = req.body.agent_fee_percent === '' || req.body.agent_fee_percent === null ? null : parseFloat(req.body.agent_fee_percent);
+      if (f !== null && (!Number.isFinite(f) || f < 0 || f > 100)) return res.status(400).json({ error: 'Agent fee must be a percentage between 0 and 100.' });
+      newFee = f;
+    }
+    if (!newAgentId) newFee = null;
     const newOwnerId = req.user.role === 'admin' && owner_id ? owner_id : check.rows[0].user_id;
 
     let lat = numOrNull(gps_lat) ?? check.rows[0].gps_lat;
@@ -192,8 +208,8 @@ router.put('/:id', staffAuth, async (req, res) => {
     }
 
     const result = await pool.query(
-      'UPDATE plots SET name=$1, location=$2, description=$3, user_id=$4, gps_lat=$5, gps_lng=$6, agent_id=$7 WHERE id=$8 RETURNING *',
-      [name, location || null, description || null, newOwnerId, lat, lng, newAgentId, req.params.id]
+      'UPDATE plots SET name=$1, location=$2, description=$3, user_id=$4, gps_lat=$5, gps_lng=$6, agent_id=$7, agent_fee_percent=$8 WHERE id=$9 RETURNING *',
+      [name, location || null, description || null, newOwnerId, lat, lng, newAgentId, newFee, req.params.id]
     );
 
     const changes = diff(
