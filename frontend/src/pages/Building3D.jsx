@@ -37,6 +37,7 @@ export default function Building3D() {
   const [selectedId, setSelectedId] = useState(null);
   const [hover, setHover] = useState(null);         // { unit, x, y }
   const [autoRotate, setAutoRotate] = useState(true);
+  const [details, setDetails] = useState(true);       // windows, doors, roof caps
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(null);
   const [saving, setSaving] = useState(false);
@@ -141,6 +142,23 @@ export default function Building3D() {
           const t = ((i + 0.5) / n - 0.5) * (horiz ? w : d);
           add(new THREE.BoxGeometry(horiz ? 0.45 : 0.08, 0.02, horiz ? 0.08 : 0.45), 0xf8fafc, horiz ? px + t : px, y + 0.03, horiz ? pz : pz + t);
         }
+      } else if (e.kind === 'fence') {
+        const horiz = e.w >= e.d, len = horiz ? w : d, n = Math.max(2, Math.round(len / 0.7) + 1);
+        const wood = 0x92400e;
+        for (let i = 0; i < n; i++) {
+          const t = (i / (n - 1) - 0.5) * (len - 0.1);
+          add(new THREE.BoxGeometry(0.1, 0.75, 0.1), wood, horiz ? px + t : px, y + 0.38, horiz ? pz : pz + t);
+        }
+        [0.28, 0.58].forEach(hy => add(new THREE.BoxGeometry(horiz ? len : 0.05, 0.07, horiz ? 0.05 : len), 0xb45309, px, y + hy, pz));
+      } else if (e.kind === 'gate') {
+        const horiz = e.w >= e.d, len = horiz ? w : d;
+        [-1, 1].forEach(sg => add(new THREE.BoxGeometry(horiz ? 0.22 : 0.3, 1.05, horiz ? 0.3 : 0.22), 0x475569, horiz ? px + sg * (len / 2 - 0.11) : px, y + 0.52, horiz ? pz : pz + sg * (len / 2 - 0.11)));
+        const bars = Math.max(4, Math.round(len / 0.22));
+        for (let i = 0; i < bars; i++) {
+          const t = (i / (bars - 1) - 0.5) * (len - 0.5);
+          add(new THREE.BoxGeometry(0.04, 0.8, 0.04), kind.color, horiz ? px + t : px, y + 0.45, horiz ? pz : pz + t);
+        }
+        [0.12, 0.78].forEach(hy => add(new THREE.BoxGeometry(horiz ? len - 0.45 : 0.05, 0.06, horiz ? 0.05 : len - 0.45), kind.color, px, y + hy, pz));
       } else { // corridor
         add(new THREE.BoxGeometry(w, 0.1, d), kind.color, px, y - 0.03, pz, 0.9);
       }
@@ -162,6 +180,34 @@ export default function Building3D() {
       group.add(mesh); meshes.push(mesh);
       const edges = new THREE.LineSegments(new THREE.EdgesGeometry(mesh.geometry), new THREE.LineBasicMaterial({ color: 0x0f172a, transparent: true, opacity: 0.35 }));
       edges.position.copy(mesh.position); group.add(edges);
+      mesh.userData.detail = [];
+      if (details) {
+        const mk = (color, op, extra = {}) => { const m = new THREE.MeshStandardMaterial({ color, transparent: true, opacity: op, roughness: 0.3, ...extra }); m.userData.base = op; mesh.userData.detail.push(m); return m; };
+        const glass = mk(0x1e3a5f, base < 0.9 ? 0.5 : 0.9, { metalness: 0.4 }), doorM = mk(0x78350f, base < 0.9 ? 0.5 : 1, { roughness: 0.7 }), handle = mk(0xfbbf24, base < 0.9 ? 0.5 : 1, { metalness: 0.7 });
+        const roofM = mk(0x94a3b8, base < 0.9 ? 0.5 : 1, { roughness: 0.8 });
+        const roof = new THREE.Mesh(new THREE.BoxGeometry(w + 0.1, 0.07, d + 0.1), roofM);
+        roof.position.set(0, H / 2 + 0.035, 0); mesh.add(roof);
+        // face: 0=+z (door), 1=-z, 2=+x, 3=-x
+        [0, 1, 2, 3].forEach(face => {
+          const fw = face < 2 ? w : d;
+          const g = new THREE.Group();
+          g.position.set(face === 2 ? w / 2 + 0.006 : face === 3 ? -w / 2 - 0.006 : 0, 0, face === 0 ? d / 2 + 0.006 : face === 1 ? -d / 2 - 0.006 : 0);
+          g.rotation.y = face === 1 ? Math.PI : face === 2 ? Math.PI / 2 : face === 3 ? -Math.PI / 2 : 0;
+          const n = Math.max(1, Math.round(fw / 0.85));
+          for (let i = 0; i < n; i++) {
+            const cx = (i + 0.5) / n * fw - fw / 2;
+            if (face === 0 && Math.abs(cx) < 0.3 && n > 1) continue;       // leave room for the door
+            if (face === 0 && n === 1) continue;
+            const win = new THREE.Mesh(new THREE.PlaneGeometry(Math.min(0.42, fw / n - 0.2), 0.4), glass);
+            win.position.set(cx, 0.1, 0); g.add(win);
+          }
+          if (face === 0) {
+            const door = new THREE.Mesh(new THREE.PlaneGeometry(0.38, 0.66), doorM); door.position.set(0, -H / 2 + 0.33, 0.002); g.add(door);
+            const knob = new THREE.Mesh(new THREE.CircleGeometry(0.03, 10), handle); knob.position.set(0.12, -H / 2 + 0.32, 0.004); g.add(knob);
+          }
+          mesh.add(g);
+        });
+      }
       const cv = document.createElement('canvas'); cv.width = 128; cv.height = 64;
       const c2 = cv.getContext('2d');
       c2.fillStyle = 'rgba(15,23,42,0.78)'; c2.fillRect(0, 0, 128, 64);
@@ -247,7 +293,7 @@ export default function Building3D() {
       if (renderer.domElement.parentNode === el) el.removeChild(renderer.domElement);
       sceneRef.current = {};
     };
-  }, [layout, mode]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [layout, mode, details]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Filter dimming + selection outline (cheap, no scene rebuild)
   useEffect(() => {
@@ -256,6 +302,7 @@ export default function Building3D() {
     meshes.forEach(m => {
       const dim = filterState && m.userData.unit.state !== filterState;
       m.material.opacity = dim ? 0.1 : m.userData.baseOpacity;
+      (m.userData.detail || []).forEach(x => { x.opacity = dim ? 0.08 : x.userData.base; });
       m.userData.sprite.material.opacity = dim ? 0.15 : 1;
     });
     const sel = meshes.find(m => m.userData.unit.id === selectedId);
@@ -264,7 +311,7 @@ export default function Building3D() {
       outline.scale.set(w + 0.12, h + 0.12, d + 0.12);
       outline.visible = true; outline.position.copy(sel.position);
     } else outline.visible = false;
-  }, [filterState, selectedId, layout, mode]);
+  }, [filterState, selectedId, layout, mode, details]);
 
   useEffect(() => { const c = sceneRef.current.controls; if (c) c.autoRotate = autoRotate; }, [autoRotate]);
 
@@ -315,6 +362,7 @@ export default function Building3D() {
           </select>
           {webglOk && <button style={btn} onClick={() => setMode(m => (m === '3d' ? '2d' : '3d'))}>{mode === '3d' ? '▦ 2D grid' : '🧊 3D view'}</button>}
           {mode === '3d' && <button style={btn} onClick={() => setAutoRotate(a => !a)}>{autoRotate ? '⏸ Stop rotating' : '⟳ Rotate'}</button>}
+          {mode === '3d' && <button style={btn} onClick={() => setDetails(d => !d)}>{details ? '🪟 Hide windows & doors' : '🪟 Show windows & doors'}</button>}
           {mode === '3d' && <button style={btn} onClick={resetView}>⌂ Reset view</button>}
           {info?.can_edit_layout && !editing && <button style={{ ...btn, background: 'var(--primary, #7c3aed)', color: '#fff', border: 'none' }} onClick={() => { setMode('3d'); startEdit(); }}>✏️ Edit layout</button>}
         </div>

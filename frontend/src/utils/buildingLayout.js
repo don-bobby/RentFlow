@@ -8,6 +8,8 @@ export const EXTRA_KINDS = {
   stairs:   { label: 'Stairs',   color: '#a8a29e', w: 1, d: 2 },
   garden:   { label: 'Garden',   color: '#4ade80', w: 4, d: 3 },
   road:     { label: 'Road',     color: '#475569', w: 8, d: 2 },
+  fence:    { label: 'Fence',    color: '#a16207', w: 8, d: 1 },
+  gate:     { label: 'Gate',     color: '#0f766e', w: 2, d: 1 },
 };
 
 export const natural = (a, b) => String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: 'base' });

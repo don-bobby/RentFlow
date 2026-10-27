@@ -99,7 +99,7 @@ router.get('/building/:plotId', auth, async (req, res) => {
 // Body: { units: [{ id, placed, floor, x, z, w, d }], extras: [{ id, kind, floor, x, z, w, d }] }
 // Every placed piece must fit the grid and nothing may overlap on a floor.
 const GRID_MAX = 40;
-const EXTRA_KINDS = ['corridor', 'stairs', 'garden', 'road'];
+const EXTRA_KINDS = ['corridor', 'stairs', 'garden', 'road', 'fence', 'gate'];
 router.put('/layout/:plotId', auth, async (req, res) => {
   const client = await pool.connect();
   try {
