@@ -124,6 +124,7 @@ export default function LayoutEditor({ units, draft, setDraft, onSave, onCancel,
     return (
       <div key={key(p.type, p.id)}
         onPointerDown={(e) => startDrag(e, p)} onPointerMove={moveDrag} onPointerUp={endDrag} onPointerCancel={endDrag}
+        onClick={(e) => e.stopPropagation()}
         style={{
           position: 'absolute', left: x * CELL + 1, top: z * CELL + 1, width: p.w * CELL - 2, height: p.d * CELL - 2,
           background: color, opacity: dragging ? 0.8 : (u?.state === 'vacant' ? 0.7 : 1), borderRadius: p.type === 'unit' ? 5 : 3, cursor: 'grab',
