@@ -17,8 +17,37 @@ export const STATES = {
 };
 
 export const CELL = 1.8, H = 1.0, FLOOR_H = 1.3;
+export const SKY_TOP = 0x7fb2e5, SKY_HORIZON = 0xdce9f5;
 
-export function buildBuilding(layout, { details = true, ground: withGround = true } = {}) {
+// Soft plaster speckle, shared by every wall (multiplied with the status colour).
+let plaster = null;
+function plasterTexture() {
+  if (plaster) return plaster;
+  const cv = document.createElement('canvas'); cv.width = cv.height = 128;
+  const c = cv.getContext('2d');
+  c.fillStyle = '#f4f4f5'; c.fillRect(0, 0, 128, 128);
+  let seed = 7; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  for (let i = 0; i < 1400; i++) { const v = 200 + Math.floor(rnd() * 55); c.fillStyle = `rgba(${v},${v},${v},${0.35 + rnd() * 0.4})`; c.fillRect(rnd() * 128, rnd() * 128, 1 + rnd() * 2, 1 + rnd() * 2); }
+  c.fillStyle = 'rgba(0,0,0,0.05)'; for (let y = 0; y < 128; y += 32) c.fillRect(0, y, 128, 1.5);   // faint render lines
+  plaster = new THREE.CanvasTexture(cv);
+  plaster.wrapS = plaster.wrapT = THREE.RepeatWrapping; plaster.repeat.set(1.5, 1);
+  if ('colorSpace' in plaster) plaster.colorSpace = THREE.SRGBColorSpace;
+  return plaster;
+}
+
+// A vertical blue-to-horizon gradient for the scene background.
+export function skyTexture() {
+  const cv = document.createElement('canvas'); cv.width = 4; cv.height = 256;
+  const c = cv.getContext('2d'), g = c.createLinearGradient(0, 0, 0, 256);
+  g.addColorStop(0, '#' + SKY_TOP.toString(16)); g.addColorStop(0.62, '#' + SKY_HORIZON.toString(16)); g.addColorStop(1, '#' + SKY_HORIZON.toString(16));
+  c.fillStyle = g; c.fillRect(0, 0, 4, 256);
+  const t = new THREE.CanvasTexture(cv);
+  if ('colorSpace' in t) t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+
+export function buildBuilding(layout, { details = true, ground: withGround = true, quality = 'high' } = {}) {
+    const hi = quality === 'high';
     const GAP = 0.16;
     const all = [...layout.items, ...layout.extras];
     const minX = Math.min(...all.map(i => i.x)), maxX = Math.max(...all.map(i => i.x + i.w));
@@ -31,11 +60,15 @@ export function buildBuilding(layout, { details = true, ground: withGround = tru
     const group = new THREE.Group();
     const slate = (op) => new THREE.MeshStandardMaterial({ color: 0x64748b, transparent: true, opacity: op });
 
+    let groundMeshes = [];
     if (withGround) {
-      // Ground
-      const ground = new THREE.Mesh(new THREE.CircleGeometry(Math.max(totalW, totalD) * 0.75 + 3, 56),
-        new THREE.MeshStandardMaterial({ color: 0x94a3b8, transparent: true, opacity: 0.18 }));
-      ground.rotation.x = -Math.PI / 2; ground.position.y = -0.09; group.add(ground);
+      const R = Math.max(totalW, totalD) * 1.6 + 14;
+      const grass = new THREE.Mesh(new THREE.CircleGeometry(R, 64), new THREE.MeshStandardMaterial({ color: 0x7fae62, roughness: 1 }));
+      grass.rotation.x = -Math.PI / 2; grass.position.y = -0.1; group.add(grass);
+      // paved compound under and around the buildings
+      const pad = new THREE.Mesh(new THREE.BoxGeometry(totalW + CELL * 2, 0.04, totalD + CELL * 2), new THREE.MeshStandardMaterial({ color: 0xe2e4e8, roughness: 0.95 }));
+      pad.position.set(0, -0.08, 0); group.add(pad);
+      groundMeshes = [grass, pad];
     }
 
     // Extras: corridors, stairs, gardens, roads
@@ -124,7 +157,8 @@ export function buildBuilding(layout, { details = true, ground: withGround = tru
       const plate = new THREE.Mesh(new THREE.BoxGeometry(it.w * CELL, 0.08, it.d * CELL), slate(0.55));
       plate.position.set(x, y - 0.04, z); group.add(plate);
       const base = u.state === 'vacant' ? 0.45 : 0.95;
-      const mat = new THREE.MeshStandardMaterial({ color: new THREE.Color(STATES[u.state]?.color || '#999'), transparent: true, opacity: base, roughness: 0.55, metalness: 0.05 });
+      const statusColor = new THREE.Color(STATES[u.state]?.color || '#999');
+      const mat = new THREE.MeshStandardMaterial({ color: statusColor, transparent: true, opacity: base, roughness: 0.7, metalness: 0.02, map: hi ? plasterTexture() : null });
       const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, H, d), mat);
       mesh.position.set(x, y + H / 2, z);
       mesh.userData = { unit: u, baseOpacity: base, dims: [w, H, d] };
@@ -135,9 +169,14 @@ export function buildBuilding(layout, { details = true, ground: withGround = tru
       if (details) {
         const mk = (color, op, extra = {}) => { const m = new THREE.MeshStandardMaterial({ color, transparent: true, opacity: op, roughness: 0.3, ...extra }); m.userData.base = op; mesh.userData.detail.push(m); return m; };
         const glass = mk(0x1e3a5f, base < 0.9 ? 0.5 : 0.9, { metalness: 0.4 }), doorM = mk(0x78350f, base < 0.9 ? 0.5 : 1, { roughness: 0.7 }), handle = mk(0xfbbf24, base < 0.9 ? 0.5 : 1, { metalness: 0.7 });
-        const roofM = mk(0x94a3b8, base < 0.9 ? 0.5 : 1, { roughness: 0.8 });
-        const roof = new THREE.Mesh(new THREE.BoxGeometry(w + 0.1, 0.07, d + 0.1), roofM);
-        roof.position.set(0, H / 2 + 0.035, 0); mesh.add(roof);
+        const dark = (k) => statusColor.clone().multiplyScalar(k);
+        const fo = base < 0.9 ? 0.5 : 1;
+        const roofM = mk(dark(0.5), fo, { roughness: 0.85 });
+        const eaveM = mk(0xe5e7eb, fo, { roughness: 0.9 }), frameM = mk(0xf8fafc, fo, { roughness: 0.6 }), stepM = mk(0x9ca3af, fo, { roughness: 1 }), railM = mk(0x475569, fo * 0.9, { roughness: 0.5 });
+        const eave = new THREE.Mesh(new THREE.BoxGeometry(w + 0.2, 0.035, d + 0.2), eaveM);
+        eave.position.set(0, H / 2 + 0.0, 0); mesh.add(eave);
+        const roof = new THREE.Mesh(new THREE.BoxGeometry(w + 0.08, 0.07, d + 0.08), roofM);
+        roof.position.set(0, H / 2 + 0.05, 0); mesh.add(roof);
         // face: 0=+z, 1=-z, 2=+x, 3=-x; the door is on the side the unit faces
         const doorFace = [1, 2, 0, 3][it.facing ?? 2];
         [0, 1, 2, 3].forEach(face => {
@@ -150,12 +189,23 @@ export function buildBuilding(layout, { details = true, ground: withGround = tru
             const cx = (i + 0.5) / n * fw - fw / 2;
             if (face === doorFace && Math.abs(cx) < 0.3 && n > 1) continue;       // leave room for the door
             if (face === doorFace && n === 1) continue;
-            const win = new THREE.Mesh(new THREE.PlaneGeometry(Math.min(0.42, fw / n - 0.2), 0.4), glass);
-            win.position.set(cx, 0.1, 0); g.add(win);
+            const ww = Math.min(0.42, fw / n - 0.2);
+            const frame = new THREE.Mesh(new THREE.PlaneGeometry(ww + 0.07, 0.47), frameM); frame.position.set(cx, 0.1, 0.001); g.add(frame);
+            const win = new THREE.Mesh(new THREE.PlaneGeometry(ww, 0.4), glass);
+            win.position.set(cx, 0.1, 0.003); g.add(win);
+            const sill = new THREE.Mesh(new THREE.BoxGeometry(ww + 0.12, 0.03, 0.06), frameM); sill.position.set(cx, -0.145, 0.03); g.add(sill);
           }
           if (face === doorFace) {
-            const door = new THREE.Mesh(new THREE.PlaneGeometry(0.38, 0.66), doorM); door.position.set(0, -H / 2 + 0.33, 0.002); g.add(door);
-            const knob = new THREE.Mesh(new THREE.CircleGeometry(0.03, 10), handle); knob.position.set(0.12, -H / 2 + 0.32, 0.004); g.add(knob);
+            const dframe = new THREE.Mesh(new THREE.PlaneGeometry(0.46, 0.72), frameM); dframe.position.set(0, -H / 2 + 0.36, 0.001); g.add(dframe);
+            const door = new THREE.Mesh(new THREE.PlaneGeometry(0.38, 0.66), doorM); door.position.set(0, -H / 2 + 0.33, 0.003); g.add(door);
+            if (it.floor === 0) {                                              // doorstep
+              const step = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.05, 0.22), stepM); step.position.set(0, -H / 2 + 0.025, 0.11); g.add(step);
+            } else {                                                           // balcony with a railing
+              const bw = Math.min(fw * 0.8, 1.2);
+              const slab = new THREE.Mesh(new THREE.BoxGeometry(bw, 0.04, 0.34), stepM); slab.position.set(0, -H / 2 + 0.02, 0.17); g.add(slab);
+              const rail = new THREE.Mesh(new THREE.BoxGeometry(bw, 0.22, 0.02), railM); rail.position.set(0, -H / 2 + 0.15, 0.33); g.add(rail);
+            }
+            const knob = new THREE.Mesh(new THREE.CircleGeometry(0.03, 10), handle); knob.position.set(0.12, -H / 2 + 0.32, 0.006); g.add(knob);
           }
           mesh.add(g);
         });
@@ -170,6 +220,14 @@ export function buildBuilding(layout, { details = true, ground: withGround = tru
       group.add(sprite); mesh.userData.sprite = sprite;
     });
 
+    if (hi) {                                          // shadows: solids cast, everything receives
+      group.traverse(o => {
+        if (!o.isMesh) return;
+        o.receiveShadow = true;
+        o.castShadow = !['PlaneGeometry', 'CircleGeometry'].includes(o.geometry.type);
+      });
+      groundMeshes.forEach(g => { g.castShadow = false; });
+    }
 
     return { group, meshes, totalW, totalD, maxFloor, height: (maxFloor + 1) * FLOOR_H };
 }

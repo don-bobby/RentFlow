@@ -9,7 +9,7 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import API from '../services/api';
 import { computePlacement, draftFrom, applyDraft } from '../utils/buildingLayout';
 import LayoutEditor from '../components/LayoutEditor';
-import { buildBuilding, STATES, H, FLOOR_H } from '../utils/buildingScene';
+import { buildBuilding, skyTexture, STATES, H, FLOOR_H, SKY_HORIZON } from '../utils/buildingScene';
 
 const kes = (n) => `KES ${Math.round(parseFloat(n || 0)).toLocaleString()}`;
 
@@ -29,6 +29,11 @@ export default function Building3D() {
   const [hover, setHover] = useState(null);         // { unit, x, y }
   const [autoRotate, setAutoRotate] = useState(true);
   const [details, setDetails] = useState(true);       // windows, doors, roof caps
+  const [quality, setQuality] = useState(() => {       // 'high' = shadows + textures, 'basic' = light on phones
+    try { const q = localStorage.getItem('rf_3d_quality'); if (q === 'high' || q === 'basic') return q; } catch { /* storage unavailable */ }
+    return typeof window !== 'undefined' && window.innerWidth < 700 ? 'basic' : 'high';
+  });
+  const toggleQuality = () => setQuality(q => { const n = q === 'high' ? 'basic' : 'high'; try { localStorage.setItem('rf_3d_quality', n); } catch { /* ignore */ } return n; });
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(null);
   const [saving, setSaving] = useState(false);
@@ -80,20 +85,33 @@ export default function Building3D() {
     const el = mountRef.current;
     let renderer;
     try {
-      renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+      renderer = new THREE.WebGLRenderer({ antialias: true });
     } catch { setWebglOk(false); setMode('2d'); return undefined; }
     setWebglOk(true);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     el.appendChild(renderer.domElement);
     renderer.domElement.style.display = 'block';
 
+    const hi = quality === 'high';
+    renderer.shadowMap.enabled = hi; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     const scene = new THREE.Scene();
-    const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 500);
-    scene.add(new THREE.AmbientLight(0xffffff, 0.7));
-    const sun = new THREE.DirectionalLight(0xffffff, 0.9); sun.position.set(8, 16, 10); scene.add(sun);
-    const fill = new THREE.DirectionalLight(0xffffff, 0.3); fill.position.set(-8, 6, -10); scene.add(fill);
+    scene.background = skyTexture();
+    const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 600);
+    scene.add(new THREE.HemisphereLight(0xdbeafe, 0x6b8e4e, 0.85));
 
-    const { group, meshes, totalW, totalD, maxFloor } = buildBuilding(layout, { details });
+    const { group, meshes, totalW, totalD, maxFloor } = buildBuilding(layout, { details, quality });
+    const span = Math.max(totalW, totalD);
+    const groundR = span * 1.6 + 14;
+    scene.fog = new THREE.Fog(SKY_HORIZON, groundR * 0.55, groundR * 1.02);
+    const sun = new THREE.DirectionalLight(0xfff4e0, 1.0);
+    sun.position.set(span * 0.7 + 8, span * 1.1 + 14, span * 0.45 + 6);
+    if (hi) {
+      sun.castShadow = true; sun.shadow.mapSize.set(2048, 2048);
+      const e = span * 0.75 + 8, sc = sun.shadow.camera;
+      sc.left = -e; sc.right = e; sc.top = e; sc.bottom = -e; sc.near = 1; sc.far = span * 3 + 60;
+      sun.shadow.bias = -0.0004; sun.shadow.normalBias = 0.03;
+    }
+    scene.add(sun);
     scene.add(group);
     const height = (maxFloor + 1) * FLOOR_H;
     const target = new THREE.Vector3(0, height / 2, 0);
@@ -171,7 +189,7 @@ export default function Building3D() {
       if (renderer.domElement.parentNode === el) el.removeChild(renderer.domElement);
       sceneRef.current = {};
     };
-  }, [sceneLayout, mode, details]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [sceneLayout, mode, details, quality]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Filter dimming + selection outline (cheap, no scene rebuild)
   useEffect(() => {
@@ -189,7 +207,7 @@ export default function Building3D() {
       outline.scale.set(w + 0.12, h + 0.12, d + 0.12);
       outline.visible = true; outline.position.copy(sel.position);
     } else outline.visible = false;
-  }, [filterState, selectedId, sceneLayout, mode, details]);
+  }, [filterState, selectedId, sceneLayout, mode, details, quality]);
 
   useEffect(() => { const c = sceneRef.current.controls; if (c) c.autoRotate = autoRotate; }, [autoRotate]);
 
@@ -240,6 +258,7 @@ export default function Building3D() {
           </select>
           {webglOk && <button style={btn} onClick={() => setMode(m => (m === '3d' ? '2d' : '3d'))}>{mode === '3d' ? '▦ 2D grid' : '🧊 3D view'}</button>}
           {mode === '3d' && <button style={btn} onClick={() => setAutoRotate(a => !a)}>{autoRotate ? '⏸ Stop rotating' : '⟳ Rotate'}</button>}
+          {mode === '3d' && <button style={btn} onClick={toggleQuality} title="Realistic adds shadows and textures; Basic is lighter on phones">{quality === 'high' ? '✨ Realistic' : '⚡ Basic'}</button>}
           {mode === '3d' && <button style={btn} onClick={() => setDetails(d => !d)}>{details ? '🪟 Hide windows & doors' : '🪟 Show windows & doors'}</button>}
           {mode === '3d' && <button style={btn} onClick={resetView}>⌂ Reset view</button>}
           {info?.can_edit_layout && !editing && <button style={{ ...btn, background: 'var(--primary, #7c3aed)', color: '#fff', border: 'none' }} onClick={() => { setMode('3d'); startEdit(); }}>✏️ Edit layout</button>}
