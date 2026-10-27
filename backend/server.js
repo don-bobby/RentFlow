@@ -16,6 +16,7 @@ app.use('/uploads', express.static('uploads')); // Serve uploaded files
 app.use('/api/auth',        require('./routes/auth'));
 app.use('/api/plots',       require('./routes/plots'));
 app.use('/api/houses',      require('./routes/houses'));
+app.use('/api/estate',      require('./routes/estate'));
 app.use('/api/tenants',     require('./routes/tenants'));
 app.use('/api/payments',    require('./routes/payments'));
 app.use('/api/expenses',    require('./routes/expenses'));

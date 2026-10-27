@@ -3,6 +3,7 @@ import Dashboard      from './pages/Dashboard';
 import Tenants        from './pages/Tenants';
 import Properties     from './pages/Properties';
 import Building3D      from './pages/Building3D';
+import EstateMap        from './pages/EstateMap';
 import Payments       from './pages/Payments';
 import Maintenance    from './pages/Maintenance';
 import PublicListings from './pages/PublicListings';
@@ -53,6 +54,12 @@ function AppRoutes() {
         <Route index             element={<Dashboard />} />
         <Route path="properties" element={<Properties />} />
         <Route path="building"   element={<Building3D />} />
+        {/* Admin-only: the whole estate on one map, with fly/walk modes and a drone tour. */}
+        <Route path="estate" element={
+          <ProtectedRoute allowedRoles={['admin', 'super_admin']}>
+            <EstateMap />
+          </ProtectedRoute>
+        } />
         <Route path="tenants"    element={<Tenants />} />
         {/* Was gated here by allowedRoles={['admin','super_admin','agent',
             'landlord']} — a role-only guest list checked BEFORE the page

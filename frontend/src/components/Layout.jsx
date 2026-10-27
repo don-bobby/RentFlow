@@ -272,6 +272,7 @@ export default function Layout() {
     { to: '/',            icon: '⊞', label: 'Dashboard',  roles: ['admin','super_admin','agent','landlord','caretaker'] },
     { to: '/properties',  icon: '🏢', label: 'Properties', roles: ['admin','super_admin','agent','landlord','caretaker'] },
     { to: '/building',    icon: '🧊', label: '3D View',    roles: ['admin','super_admin','agent','landlord','caretaker'] },
+    { to: '/estate',      icon: '🗺️', label: 'Estate Map', roles: ['admin','super_admin'] },
     /* These four pages (Tenants/Payments/Maintenance/Expenses) are the
        ones an admin can grant or revoke per-property, for agent, landlord
        or caretaker accounts (see Permission Overrides). A static `roles`
