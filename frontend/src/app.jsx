@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import Dashboard      from './pages/Dashboard';
 import Tenants        from './pages/Tenants';
 import Properties     from './pages/Properties';
+import Building3D      from './pages/Building3D';
 import Payments       from './pages/Payments';
 import Maintenance    from './pages/Maintenance';
 import PublicListings from './pages/PublicListings';
@@ -51,6 +52,7 @@ function AppRoutes() {
       <Route path="/" element={user ? <Layout /> : <Navigate to="/listings" />}>
         <Route index             element={<Dashboard />} />
         <Route path="properties" element={<Properties />} />
+        <Route path="building"   element={<Building3D />} />
         <Route path="tenants"    element={<Tenants />} />
         {/* Was gated here by allowedRoles={['admin','super_admin','agent',
             'landlord']} — a role-only guest list checked BEFORE the page

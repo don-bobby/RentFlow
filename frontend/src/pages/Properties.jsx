@@ -279,7 +279,7 @@ export default function Properties() {
     // anywhere in this form to see or change it, so whatever ended up in
     // that column (including leftover test text) stayed stuck there with
     // no way to clear it short of editing the database directly.
-    setForm({ unit_number: house.unit_number, house_type: house.house_type, rent_amount: house.rent_amount, deposit: house.deposit || '', plot_id: house.plot_id, status: house.status, meter_no: house.meter_no || '', description: house.description || '' });
+    setForm({ unit_number: house.unit_number, house_type: house.house_type, rent_amount: house.rent_amount, deposit: house.deposit || '', plot_id: house.plot_id, status: house.status, meter_no: house.meter_no || '', floor: house.floor != null ? String(house.floor) : '', description: house.description || '' });
     setModal('house'); setError('');
   }
 
@@ -306,6 +306,7 @@ export default function Properties() {
           deposit:    form.deposit,
           status:     form.status,
           meter_no:   form.meter_no || '',
+          floor:      form.floor === '' || form.floor == null ? null : form.floor,
         };
         let houseId = editing?.id;
         if (editing) {
@@ -708,6 +709,7 @@ export default function Properties() {
                     // same plot.
                     const items = [
                       ...(can('houses.create', plot.id) ? [{ label: '+ Add Unit', onClick: () => openAddHouse(plot.id) }] : []),
+                      { label: '🧊 3D view', onClick: () => navigate(`/building?plot=${plot.id}`) },
                       ...(can('plots.edit', plot.id)    ? [{ label: 'Edit', onClick: () => openEditPlot(plot) }] : []),
                       ...(can('plots.delete', plot.id)  ? [{ label: 'Delete', onClick: () => handleDeletePlot(plot.id), danger: true }] : []),
                     ];
@@ -1023,6 +1025,7 @@ export default function Properties() {
                     {['Single Room','Double Room','Bedsitter','1 Bedroom','2 Bedroom','3 Bedroom','Shop','Studio'].map(t => <option key={t}>{t}</option>)}
                   </select>
                 </div>
+                <Field label="Floor (0 = ground, optional)" value={form.floor ?? ''} onChange={v => setForm(f => ({ ...f, floor: v }))} placeholder="e.g. 2" type="number" />
                 <Field label="Rent (KES)"    value={form.rent_amount} onChange={v => setForm(f => ({ ...f, rent_amount: v }))} placeholder="e.g. 15000" type="number" />
                 <Field label="Deposit (KES)" value={form.deposit}     onChange={v => setForm(f => ({ ...f, deposit: v }))}     placeholder="e.g. 15000" type="number" />
                 <div>

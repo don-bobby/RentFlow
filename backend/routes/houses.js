@@ -5,6 +5,7 @@ const { logAudit, diff } = require('../utils/audit');
 const { getVisiblePlotIds } = require('../middleware/scope');
 const { getPermissions } = require('../middleware/permissions');
 const { authMiddleware: auth } = require('../middleware/auth');
+const { computeLedger, loadPaidMaps } = require('../utils/rentLedger');
 
 
 // GET ALL houses — admin/super_admin see all, agent sees their landlords',
@@ -33,6 +34,62 @@ router.get('/', auth, async (req, res) => {
 // system-wide, everyone else only sees ones on their own visible plots.
 // Must stay ABOVE GET /:id below, or Express would treat the literal text
 // "pending-approval-count" as an :id value and this route would never match.
+// GET /api/houses/building/:plotId — everything the 3D building view needs:
+// every unit of one property with its floor and this month's payment state.
+// States: paid | partial | pending (rent not yet due) | unpaid | overdue
+// (2+ months owed) | vacant | other. Tenant details and money states need
+// tenants.view for that property; without it units just show occupied/vacant.
+router.get('/building/:plotId', auth, async (req, res) => {
+  try {
+    const plotId = parseInt(req.params.plotId);
+    if (!plotId) return res.status(400).json({ error: 'Invalid property.' });
+    const visible = await getVisiblePlotIds(req.user);
+    if (visible !== 'ALL' && !visible.includes(plotId)) return res.status(403).json({ error: 'Access denied' });
+
+    const plotRes = await pool.query('SELECT id, name, location FROM plots WHERE id = $1', [plotId]);
+    if (!plotRes.rows[0]) return res.status(404).json({ error: 'Property not found' });
+    const { permissions } = await getPermissions(req.user, plotId);
+    const seeMoney = permissions.includes('*') || permissions.includes('tenants.view');
+
+    const hs = await pool.query(
+      `SELECT h.id, h.unit_number, h.house_type, h.rent_amount, h.status, h.floor,
+              t.id AS tenant_id, t.full_name, t.phone, t.move_in_date, t.rent_due_day
+       FROM houses h
+       LEFT JOIN LATERAL (
+         SELECT * FROM tenants tt WHERE tt.house_id = h.id AND tt.is_active = true ORDER BY tt.id DESC LIMIT 1
+       ) t ON true
+       WHERE h.plot_id = $1 AND COALESCE(h.is_approved, true) = true
+       ORDER BY h.floor NULLS LAST, h.unit_number`, [plotId]);
+
+    const tenantIds = hs.rows.map(r => r.tenant_id).filter(Boolean);
+    const maps = seeMoney ? await loadPaidMaps(pool, tenantIds) : {};
+    const now = new Date();
+    const curKey = `${now.getFullYear()}-${now.getMonth() + 1}`;
+
+    const units = hs.rows.map(h => {
+      const base = { id: h.id, unit_number: h.unit_number, house_type: h.house_type, rent_amount: parseFloat(h.rent_amount || 0), floor: h.floor };
+      if (!h.tenant_id) return { ...base, state: h.status === 'vacant' ? 'vacant' : (h.status === 'occupied' ? 'occupied' : 'other'), house_status: h.status };
+      if (!seeMoney) return { ...base, state: 'occupied', house_status: h.status };
+      const paidMap = maps[h.tenant_id] || {};
+      const { unpaidMonths, totalOwed } = computeLedger({ rent: h.rent_amount, moveInDate: h.move_in_date, paidMap, now });
+      const curPaid = paidMap[curKey] || 0;
+      const dueDay = Math.min(28, parseInt(h.rent_due_day) || 1);
+      let state;
+      if (totalOwed <= 0) state = 'paid';
+      else if (unpaidMonths.length >= 2) state = 'overdue';
+      else if (curPaid > 0) state = 'partial';
+      else if (now.getDate() <= dueDay) state = 'pending';
+      else state = 'unpaid';
+      return { ...base, state, house_status: h.status, tenant: { id: h.tenant_id, name: h.full_name, phone: h.phone },
+               balance: totalOwed, months_owed: unpaidMonths.length, paid_this_month: curPaid, due_day: dueDay };
+    });
+
+    const summary = units.reduce((a, u) => { a[u.state] = (a[u.state] || 0) + 1; return a; }, {});
+    res.json({ success: true, data: { plot: plotRes.rows[0], units, summary, see_money: seeMoney,
+      month: now.toLocaleString('en-KE', { month: 'long', year: 'numeric' }) } });
+  } catch (err) { console.error(err); res.status(500).json({ error: err.message }); }
+});
+
 router.get('/pending-approval-count', auth, async (req, res) => {
   try {
     const visible = await getVisiblePlotIds(req.user);
@@ -89,7 +146,7 @@ router.get('/:id', auth, async (req, res) => {
 // plot immediately — no extra query needed to find it.
 router.post('/', auth, async (req, res) => {
   try {
-    const { plot_id, unit_number, house_type, rent_amount, deposit, status, meter_no } = req.body;
+    const { plot_id, unit_number, house_type, rent_amount, deposit, status, meter_no, floor } = req.body;
     if (!plot_id || !unit_number || !rent_amount) return res.status(400).json({ error: 'plot_id, unit_number and rent_amount are required' });
 
     const plotIdNum = parseInt(plot_id);
@@ -111,9 +168,10 @@ router.post('/', auth, async (req, res) => {
     const isApproved = !['agent', 'caretaker'].includes(req.user.role);
 
     const result = await pool.query(
-      `INSERT INTO houses (plot_id, unit_number, house_type, rent_amount, deposit, status, meter_no, is_approved, status_changed_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW()) RETURNING *`,
-      [plot_id, unit_number, house_type || 'Bedsitter', rent_amount, deposit || null, status || 'vacant', meter_no || null, isApproved]
+      `INSERT INTO houses (plot_id, unit_number, house_type, rent_amount, deposit, status, meter_no, is_approved, status_changed_at, floor)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), $9) RETURNING *`,
+      [plot_id, unit_number, house_type || 'Bedsitter', rent_amount, deposit || null, status || 'vacant', meter_no || null, isApproved,
+       floor === '' || floor == null ? null : Math.max(0, Math.min(60, parseInt(floor) || 0))]
     );
 
     // Previously this just sat there unapproved with no one actually told.
@@ -165,14 +223,16 @@ router.put('/:id', auth, async (req, res) => {
       return res.status(403).json({ error: 'Access denied' });
     }
 
-    const { plot_id, unit_number, house_type, rent_amount, deposit, status, meter_no } = req.body;
+    const { plot_id, unit_number, house_type, rent_amount, deposit, status, meter_no, floor } = req.body;
     const oldStatusRes = await pool.query('SELECT status, rent_amount, unit_number FROM houses WHERE id=$1', [req.params.id]);
     const statusChanged = oldStatusRes.rows[0] && oldStatusRes.rows[0].status !== (status || 'vacant');
     const result = await pool.query(
       `UPDATE houses SET plot_id=$1, unit_number=$2, house_type=$3, rent_amount=$4,
-       deposit=$5, status=$6, meter_no=$7, status_changed_at = CASE WHEN $9 THEN NOW() ELSE status_changed_at END
+       deposit=$5, status=$6, meter_no=$7, status_changed_at = CASE WHEN $9 THEN NOW() ELSE status_changed_at END,
+       floor = CASE WHEN $10 THEN $11 ELSE floor END
        WHERE id=$8 RETURNING *`,
-      [plot_id, unit_number, house_type, rent_amount, deposit || null, status || 'vacant', meter_no || null, req.params.id, statusChanged]
+      [plot_id, unit_number, house_type, rent_amount, deposit || null, status || 'vacant', meter_no || null, req.params.id, statusChanged,
+       floor !== undefined, floor === '' || floor == null ? null : Math.max(0, Math.min(60, parseInt(floor) || 0))]
     );
     const changes = diff(oldStatusRes.rows[0], result.rows[0], ['status', 'rent_amount', 'unit_number']);
     if (Object.keys(changes).length > 0) {
