@@ -1,5 +1,5 @@
 import React, { useMemo, useRef, useState } from 'react';
-import { MAP_W, MAP_D, PIECE_KINDS, rotatedSize, rectsOverlap, rectFits, resolvePositions } from '../utils/estateLayout';
+import { MAP_W, MAP_D, PIECE_KINDS, rotatedSize, rectsOverlap, rectFits, resolvePositions, arrangeByGps, hasPin } from '../utils/estateLayout';
 
 const CELL = 14;
 
@@ -11,6 +11,7 @@ export default function EstateMapEditor({ plots, fps, draft, setDraft, onSave, o
   const [tool, setTool] = useState(null);     // 'road' | 'tree' | 'pond' | 'erase' | null
   const [drag, setDrag] = useState(null);     // { id, dx, dz, x, z, moved }
   const [msg, setMsg] = useState('');
+  const [scaleNote, setScaleNote] = useState('');
   const gridRef = useRef(null);
   const lastCell = useRef(null);
 
@@ -94,13 +95,16 @@ export default function EstateMapEditor({ plots, fps, draft, setDraft, onSave, o
           <div style={{ fontSize: 12.5, color: 'var(--muted)' }}>Drag properties to where they sit, turn them, and draw roads, trees and ponds. The 3D map above updates as you go.</div>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
-          <button style={sbtn} onClick={() => { setDraft(d => ({ pieces: d.pieces, plots: resolvePositions(plots.map(p => ({ ...p, map: {} })), fps) })); setSel(null); }} disabled={saving}>Auto-arrange</button>
+          <button style={sbtn} disabled={saving || plots.filter(hasPin).length < 2} title={plots.filter(hasPin).length < 2 ? 'Needs at least two properties with a pin on the real map' : 'Place properties the way they are on the real map'}
+            onClick={() => { const r = arrangeByGps(plots, fps, draft.plots); setDraft(d => ({ ...d, plots: r.positions })); setScaleNote(`Placed by real location (north is up). One grid square is about ${r.metresPerSquare} m on the real map, so distances are scaled down.`); setSel(null); }}>📍 Arrange by real location</button>
+          <button style={sbtn} onClick={() => { setScaleNote(''); setDraft(d => ({ pieces: d.pieces, plots: resolvePositions(plots.map(p => ({ ...p, map: {} })), fps) })); setSel(null); }} disabled={saving}>Auto-arrange</button>
           <button style={sbtn} onClick={onCancel} disabled={saving}>Cancel</button>
           <button style={{ ...sbtn, background: 'var(--primary, #7c3aed)', color: '#fff', border: 'none' }} onClick={onSave} disabled={saving || overlapping.size > 0}>{saving ? 'Saving…' : 'Save map'}</button>
         </div>
       </div>
       {error && <div style={{ color: '#dc2626', fontSize: 13, margin: '6px 0' }}>{error}</div>}
       {msg && <div style={{ color: '#b45309', fontSize: 13, margin: '6px 0' }}>{msg}</div>}
+      {scaleNote && <div style={{ color: 'var(--muted)', fontSize: 12.5, margin: '6px 0' }}>{scaleNote}</div>}
       {overlapping.size > 0 && <div style={{ color: '#dc2626', fontSize: 13, margin: '6px 0' }}>Some properties overlap (shown in red). Move them apart to save.</div>}
 
       <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', alignItems: 'flex-start' }}>

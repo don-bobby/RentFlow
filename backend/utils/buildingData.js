@@ -52,10 +52,15 @@ async function loadBuilding(user, plotId) {
                balance: totalOwed, months_owed: unpaidMonths.length, paid_this_month: curPaid, due_day: dueDay };
     });
 
+    // 360 photo count (quietly 0 if the panoramas migration has not been run yet)
+    let panoramaCount = 0;
+    try { panoramaCount = (await pool.query('SELECT COUNT(*)::int AS n FROM property_panoramas WHERE plot_id = $1', [plotId])).rows[0].n; } catch { /* table missing */ }
+
     const summary = units.reduce((a, u) => { a[u.state] = (a[u.state] || 0) + 1; return a; }, {});
     return { plot: { id: plotRes.rows[0].id, name: plotRes.rows[0].name, location: plotRes.rows[0].location,
       lat: plotRes.rows[0].gps_lat == null ? null : parseFloat(plotRes.rows[0].gps_lat), lng: plotRes.rows[0].gps_lng == null ? null : parseFloat(plotRes.rows[0].gps_lng) },
       extras: plotRes.rows[0].layout_extras || [],
+      panorama_count: panoramaCount,
       can_edit_layout: permissions.includes('*') || permissions.includes('houses.edit'),
       units, summary, see_money: seeMoney,
       month: now.toLocaleString('en-KE', { month: 'long', year: 'numeric' }) };

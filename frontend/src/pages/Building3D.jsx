@@ -9,6 +9,7 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import API from '../services/api';
 import { computePlacement, draftFrom, applyDraft } from '../utils/buildingLayout';
 import LayoutEditor from '../components/LayoutEditor';
+import PanoViewer from '../components/PanoViewer';
 import { buildBuilding, skyTexture, STATES, H, FLOOR_H, SKY_HORIZON } from '../utils/buildingScene';
 
 const kes = (n) => `KES ${Math.round(parseFloat(n || 0)).toLocaleString()}`;
@@ -34,6 +35,7 @@ export default function Building3D() {
     return typeof window !== 'undefined' && window.innerWidth < 700 ? 'basic' : 'high';
   });
   const toggleQuality = () => setQuality(q => { const n = q === 'high' ? 'basic' : 'high'; try { localStorage.setItem('rf_3d_quality', n); } catch { /* ignore */ } return n; });
+  const [showPano, setShowPano] = useState(false);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(null);
   const [saving, setSaving] = useState(false);
@@ -261,6 +263,7 @@ export default function Building3D() {
           {mode === '3d' && <button style={btn} onClick={toggleQuality} title="Realistic adds shadows and textures; Basic is lighter on phones">{quality === 'high' ? '✨ Realistic' : '⚡ Basic'}</button>}
           {mode === '3d' && <button style={btn} onClick={() => setDetails(d => !d)}>{details ? '🪟 Hide windows & doors' : '🪟 Show windows & doors'}</button>}
           {mode === '3d' && <button style={btn} onClick={resetView}>⌂ Reset view</button>}
+          {info?.plot && !editing && <button style={btn} onClick={() => setShowPano(true)}>📷 360° photos{info.panorama_count ? ` (${info.panorama_count})` : ''}</button>}
           {info?.can_edit_layout && !editing && <button style={{ ...btn, background: 'var(--primary, #7c3aed)', color: '#fff', border: 'none' }} onClick={() => { setMode('3d'); startEdit(); }}>✏️ Edit layout</button>}
         </div>
       </div>
@@ -374,6 +377,7 @@ export default function Building3D() {
           )}
         </>
       )}
+      {showPano && info?.plot && <PanoViewer plotId={info.plot.id} plotName={info.plot.name} onClose={() => { setShowPano(false); }} />}
     </div>
   );
 }

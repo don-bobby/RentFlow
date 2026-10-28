@@ -50,7 +50,7 @@ router.get('/', async (req, res) => {
   try {
     // All plots with vacant units
     const plotsRes = await pool.query(`
-      SELECT DISTINCT p.id, p.name, p.location, p.description,
+      SELECT DISTINCT p.id, p.name, p.location, p.description, p.gps_lat, p.gps_lng,
              u.name AS landlord_name, u.phone AS landlord_phone
       FROM plots p
       JOIN houses h ON h.plot_id = p.id
@@ -87,8 +87,19 @@ router.get('/', async (req, res) => {
     for (const u of unitsRes.rows)  (unitsByPlot[u.plot_id] ||= []).push(u);
     for (const m of mediaRes.rows)  (mediaByUnit[m.house_id] ||= []).push(m);
 
-    const listings = plotsRes.rows.map(plot => ({
+    // Public 360 photo counts (quietly empty if the panoramas migration has not been run yet)
+    const panoCounts = {};
+    try {
+      const pc = await pool.query('SELECT plot_id, COUNT(*)::int AS n FROM property_panoramas WHERE plot_id = ANY($1) AND is_public = true GROUP BY plot_id', [plotIds]);
+      pc.rows.forEach(r => { panoCounts[r.plot_id] = r.n; });
+    } catch { /* table missing */ }
+
+    const listings = plotsRes.rows.map(({ gps_lat, gps_lng, ...plot }) => ({
       ...plot,
+      // Coordinates power the "Get directions" buttons (null when the property has no pin yet)
+      pano_count: panoCounts[plot.id] || 0,
+      lat: gps_lat == null ? null : parseFloat(gps_lat),
+      lng: gps_lng == null ? null : parseFloat(gps_lng),
       units: (unitsByPlot[plot.id] || []).map(u => ({
         ...u,
         media: (mediaByUnit[u.id] || []).map(m => ({

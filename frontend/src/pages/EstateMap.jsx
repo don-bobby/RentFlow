@@ -6,9 +6,10 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import API from '../services/api';
 import { buildBuilding, STATES, CELL } from '../utils/buildingScene';
-import { MAP_W, MAP_D, footprint, rotatedSize, resolvePositions, draftFromEstate } from '../utils/estateLayout';
+import { MAP_W, MAP_D, footprint, rotatedSize, resolvePositions, draftFromEstate, distanceM, compassTo, fmtDistance } from '../utils/estateLayout';
 import EstateMapEditor from '../components/EstateMapEditor';
 import EstateRealMap from '../components/EstateRealMap';
+import PanoViewer from '../components/PanoViewer';
 
 const kes = (n) => `KES ${Math.round(parseFloat(n || 0)).toLocaleString()}`;
 const EYE = 0.62;                      // walking eye height (one storey is 1.0)
@@ -17,6 +18,7 @@ const SPEED = { walk: 4, fly: 12 };
 export default function EstateMap() {
   const navigate = useNavigate();
   const [data, setData] = useState(null);
+  const [pano, setPano] = useState(null);
   const [view, setView] = useState(null);                // 'map' (real map) | '3d'; chosen once the data is in
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -164,19 +166,22 @@ export default function EstateMap() {
       const occ = p.units.filter(u => u.state !== 'vacant').length;
       const lab = label(p.plot.name, `${p.units.length} units · ${p.units.length ? Math.round((occ / p.units.length) * 100) : 0}% occupied`);
       lab.position.set(cx, height + 2.6, cz); sc.add(lab); labels.push(lab);
-      stops.push({ id, name: p.plot.name, x: cx, z: cz, height, radius: Math.max(r.w, r.d) * CELL * 0.55 + 6 });
+      stops.push({ id, name: p.plot.name, lat: p.plot.lat, lng: p.plot.lng, x: cx, z: cz, height, radius: Math.max(r.w, r.d) * CELL * 0.55 + 6 });
       rectsAll.push({ x: pos.x, z: pos.z, w: r.w, d: r.d });
     });
     sc.updateMatrixWorld(true);
     const solids = allMeshes.map(m => new THREE.Box3().setFromObject(m));
 
     // Stops in a sensible driving order: always go to the nearest property next
+    // When every property has a pin, "nearest" means nearest on the real map; otherwise nearest on this 3D map.
+    const useGps = stops.length > 1 && stops.every(s => s.lat != null && s.lng != null);
+    const gap = (a, b) => (useGps ? distanceM(a, b) : Math.hypot(a.x - b.x, a.z - b.z));
     const ordered = [];
     if (stops.length) {
       const left = [...stops]; let cur = left.shift(); ordered.push(cur);
       while (left.length) {
         let bi = 0, bd = Infinity;
-        left.forEach((s, i) => { const d = Math.hypot(s.x - cur.x, s.z - cur.z); if (d < bd) { bd = d; bi = i; } });
+        left.forEach((s, i) => { const d = gap(s, cur); if (d < bd) { bd = d; bi = i; } });
         cur = left.splice(bi, 1)[0]; ordered.push(cur);
       }
     }
@@ -210,10 +215,17 @@ export default function EstateMap() {
     };
     const beginTravel = (i) => {
       const stop = ordered[i];
-      tour.i = i; tour.phase = 'travel'; tour.t = 0; tour.dur = 3.8;
+      const prev = tour.lastStop || null;
+      // Real distance to the previous stop decides how long the flight takes and how high it climbs.
+      const metres = useGps && prev ? distanceM(prev, stop) : 0;
+      tour.i = i; tour.phase = 'travel'; tour.t = 0;
+      tour.dur = metres ? Math.min(9.5, 3.2 + 1.8 * Math.log10(1 + metres / 100)) : 3.8;
+      tour.arc = metres ? 4 + Math.min(26, metres / 90) : 4;
+      tour.lastStop = stop;
       tour.fromPos.copy(camera.position); tour.fromLook.copy(curLook);
       tour.a0 = Math.atan2(camera.position.z - stop.z, camera.position.x - stop.x);
-      setTourStop({ id: stop.id, name: stop.name });
+      setTourStop({ id: stop.id, name: stop.name, index: i + 1, total: ordered.length,
+        from: metres ? prev.name : null, distance: metres ? fmtDistance(metres) : null, dir: metres ? compassTo(prev, stop) : null });
     };
     const tp = new THREE.Vector3(), tl = new THREE.Vector3();
     const stepTour = (dt) => {
@@ -222,7 +234,7 @@ export default function EstateMap() {
       if (tour.phase === 'travel') {
         const e = smooth(Math.min(1, tour.t / tour.dur));
         poseAt(stop, tour.a0, tp, tl);
-        const pos = tour.fromPos.clone().lerp(tp, e); pos.y += Math.sin(Math.PI * e) * 4;
+        const pos = tour.fromPos.clone().lerp(tp, e); pos.y += Math.sin(Math.PI * e) * (tour.arc || 4);
         curLook.copy(tour.fromLook).lerp(tl, e); camera.position.copy(pos);
         if (tour.t >= tour.dur) { tour.phase = 'orbit'; tour.t = 0; tour.dur = 11; }
       } else {
@@ -509,7 +521,8 @@ export default function EstateMap() {
 
       {data && (
         <>
-          {view === 'map' && <EstateRealMap plots={data.plots} admin onFly={flyIn} onOpen={(id) => navigate(`/building?plot=${id}`)} onSavePin={savePin} />}
+          {view === 'map' && <EstateRealMap plots={data.plots} admin onFly={flyIn} onOpen={(id) => navigate(`/building?plot=${id}`)} onLook={(id) => setPano(data.plots.find(x => x.plot.id === id)?.plot || null)} onSavePin={savePin} />}
+          {pano && <PanoViewer plotId={pano.id} plotName={pano.name} onClose={() => setPano(null)} />}
           {view === '3d' && <>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12, alignItems: 'center' }}>
             {present.map(k => (
@@ -533,8 +546,9 @@ export default function EstateMap() {
               )}
               {tourOn && tourStop && (
                 <div style={{ position: 'absolute', left: 14, top: 14, background: 'rgba(15,23,42,.8)', color: '#fff', padding: '10px 16px', borderRadius: 12, zIndex: 3, pointerEvents: 'none' }}>
-                  <div style={{ fontSize: 11, opacity: .7, letterSpacing: '.06em', textTransform: 'uppercase' }}>Drone tour</div>
+                  <div style={{ fontSize: 11, opacity: .7, letterSpacing: '.06em', textTransform: 'uppercase' }}>Drone tour{tourStop.total > 1 ? ` · stop ${tourStop.index} of ${tourStop.total}` : ''}</div>
                   <div style={{ fontWeight: 800, fontSize: 18 }}>{tourStop.name}</div>
+                  {tourStop.distance && <div style={{ fontSize: 12.5, color: '#93c5fd' }}>✈ {tourStop.distance} {tourStop.dir} of {tourStop.from}</div>}
                   {(() => { const p = data.plots.find(x => x.plot.id === tourStop.id); if (!p) return null;
                     const occ = p.units.filter(u => u.state !== 'vacant').length, late = p.units.filter(u => ['unpaid', 'overdue', 'partial'].includes(u.state)).length;
                     return <div style={{ fontSize: 12.5, opacity: .85 }}>{p.units.length} units · {occ} occupied · {late} behind on rent</div>; })()}

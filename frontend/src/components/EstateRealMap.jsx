@@ -56,7 +56,7 @@ function FlyTo({ target }) {
   return null;
 }
 
-export default function EstateRealMap({ plots, admin, onFly, onOpen, onSavePin, height = 520 }) {
+export default function EstateRealMap({ plots, admin, onFly, onOpen, onLook, onSavePin, height = 520 }) {
   const [layer, setLayer] = useState('satellite');
   const [editing, setEditing] = useState(false);
   const [placing, setPlacing] = useState(null);      // plot id waiting for a click on the map
@@ -112,6 +112,7 @@ export default function EstateRealMap({ plots, admin, onFly, onOpen, onSavePin, 
                       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                         <button onClick={() => onFly(p.plot.id)} style={{ padding: '7px 11px', borderRadius: 8, border: 'none', background: '#7c3aed', color: '#fff', fontWeight: 700, cursor: 'pointer' }}>🧊 Fly into 3D</button>
                         <button onClick={() => onOpen(p.plot.id)} style={{ padding: '7px 11px', borderRadius: 8, border: '1px solid #cbd5e1', background: '#fff', cursor: 'pointer' }}>Open</button>
+                        {onLook && <button onClick={() => onLook(p.plot.id)} style={{ padding: '7px 11px', borderRadius: 8, border: '1px solid #cbd5e1', background: '#fff', cursor: 'pointer' }}>📷 360°{p.panorama_count ? ` (${p.panorama_count})` : ''}</button>}
                       </div>
                     </div>
                   </Popup>

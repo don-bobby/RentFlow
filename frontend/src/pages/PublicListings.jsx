@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import PanoViewer from '../components/PanoViewer';
 
 const API = process.env.REACT_APP_API_URL || 'http://localhost:5000/api';
 const BASE = process.env.REACT_APP_API_URL?.replace('/api', '') || 'http://localhost:5000';
@@ -147,9 +148,22 @@ function buildWhatsAppLink(phone, unit, plot) {
   return `https://wa.me/${number}?text=${encodeURIComponent(message)}`;
 }
 
+// Directions need no API key: these are plain links that open the visitor's own maps app.
+// With a pin we send exact coordinates; without one we fall back to the name + location text.
+function directionLinks(plot) {
+  const hasPin = plot.lat != null && plot.lng != null;
+  const dest = hasPin ? `${plot.lat},${plot.lng}` : encodeURIComponent([plot.name, plot.location].filter(Boolean).join(', '));
+  return {
+    google: `https://www.google.com/maps/dir/?api=1&destination=${dest}`,
+    waze: hasPin ? `https://waze.com/ul?ll=${plot.lat},${plot.lng}&navigate=yes` : null,
+    exact: hasPin,
+  };
+}
+
 // ── Listing Card (one per vacant unit) ──────────────────────────────────────────
 function ListingCard({ unit, plot, BASE }) {
   const [idx, setIdx] = useState(0);
+  const [showPano, setShowPano] = useState(false);
   const media = unit.media || [];
   const photos = media.filter(m => m.media_type === 'photo');
   const videos = media.filter(m => m.media_type === 'video');
@@ -218,10 +232,23 @@ function ListingCard({ unit, plot, BASE }) {
           {unit.house_type} at {plot.name}
         </h3>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#6b7280', fontSize: 13, marginBottom: 12 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#6b7280', fontSize: 13, marginBottom: 8 }}>
           <span>📍</span>
           <span>{plot.location || 'Location not specified'}</span>
         </div>
+
+        {showPano && <PanoViewer publicMode plotId={plot.id} plotName={plot.name} onClose={() => setShowPano(false)} />}
+        {(plot.location || plot.lat != null) && (() => {
+          const dir = directionLinks(plot);
+          const pill = { display: 'inline-flex', alignItems: 'center', gap: 5, padding: '5px 11px', borderRadius: 99, border: '1px solid #e5e7eb', background: '#f9fafb', color: '#1a1a2e', fontSize: 12, fontWeight: 700, textDecoration: 'none' };
+          return (
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 12 }}>
+              <a href={dir.google} target="_blank" rel="noopener noreferrer" style={pill} title={dir.exact ? 'Open turn-by-turn directions to this property' : 'Search this location in Google Maps'}>🧭 Get directions</a>
+              {dir.waze && <a href={dir.waze} target="_blank" rel="noopener noreferrer" style={pill}>Waze</a>}
+              {plot.pano_count > 0 && <button type="button" onClick={() => setShowPano(true)} style={{ ...pill, cursor: 'pointer' }}>📷 360° tour</button>}
+            </div>
+          );
+        })()}
 
         <div style={{ fontFamily: "'Space Grotesk', sans-serif", fontWeight: 800, fontSize: 19, color: '#1a1a2e' }}>
           KES {parseFloat(unit.rent_amount).toLocaleString()}
