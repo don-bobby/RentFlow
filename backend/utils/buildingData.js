@@ -12,7 +12,7 @@ async function loadBuilding(user, plotId) {
     const visible = await getVisiblePlotIds(user);
     if (visible !== 'ALL' && !visible.includes(plotId)) throw httpError(403, 'Access denied');
 
-    const plotRes = await pool.query('SELECT id, name, location, layout_extras FROM plots WHERE id = $1', [plotId]);
+    const plotRes = await pool.query('SELECT id, name, location, layout_extras, gps_lat, gps_lng FROM plots WHERE id = $1', [plotId]);
     if (!plotRes.rows[0]) throw httpError(404, 'Property not found');
     const { permissions } = await getPermissions(user, plotId);
     const seeMoney = permissions.includes('*') || permissions.includes('tenants.view');
@@ -53,7 +53,8 @@ async function loadBuilding(user, plotId) {
     });
 
     const summary = units.reduce((a, u) => { a[u.state] = (a[u.state] || 0) + 1; return a; }, {});
-    return { plot: { id: plotRes.rows[0].id, name: plotRes.rows[0].name, location: plotRes.rows[0].location },
+    return { plot: { id: plotRes.rows[0].id, name: plotRes.rows[0].name, location: plotRes.rows[0].location,
+      lat: plotRes.rows[0].gps_lat == null ? null : parseFloat(plotRes.rows[0].gps_lat), lng: plotRes.rows[0].gps_lng == null ? null : parseFloat(plotRes.rows[0].gps_lng) },
       extras: plotRes.rows[0].layout_extras || [],
       can_edit_layout: permissions.includes('*') || permissions.includes('houses.edit'),
       units, summary, see_money: seeMoney,

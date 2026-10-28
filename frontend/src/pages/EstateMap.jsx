@@ -8,6 +8,7 @@ import API from '../services/api';
 import { buildBuilding, STATES, CELL } from '../utils/buildingScene';
 import { MAP_W, MAP_D, footprint, rotatedSize, resolvePositions, draftFromEstate } from '../utils/estateLayout';
 import EstateMapEditor from '../components/EstateMapEditor';
+import EstateRealMap from '../components/EstateRealMap';
 
 const kes = (n) => `KES ${Math.round(parseFloat(n || 0)).toLocaleString()}`;
 const EYE = 0.62;                      // walking eye height (one storey is 1.0)
@@ -16,6 +17,7 @@ const SPEED = { walk: 4, fly: 12 };
 export default function EstateMap() {
   const navigate = useNavigate();
   const [data, setData] = useState(null);
+  const [view, setView] = useState(null);                // 'map' (real map) | '3d'; chosen once the data is in
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [details, setDetails] = useState(true);
@@ -41,6 +43,8 @@ export default function EstateMap() {
     .then(r => { setData(r.data.data); setError(''); })
     .catch(e => setError(e.response?.data?.error || 'Could not load the estate map.'));
   useEffect(() => { load().finally(() => setLoading(false)); }, []);
+  // Open on the real map when at least one property has a location, otherwise straight into 3D.
+  useEffect(() => { if (data && view === null) setView(data.plots.some(p => p.plot.lat != null) ? 'map' : '3d'); }, [data, view]);
 
   // ── derived data ──
   const fps = useMemo(() => (data ? Object.fromEntries(data.plots.map(p => [p.plot.id, footprint(p)])) : {}), [data]);
@@ -67,12 +71,22 @@ export default function EstateMap() {
   // ── commands from the UI to the running scene ──
   const cmd = (c) => navRef.current.cmds.push(c);
   useEffect(() => { navRef.current.mode = nav; navRef.current.init = true; }, [nav]);
+  const flyIn = (id) => {
+    setSelected(null); setNav('orbit'); setTourOn(false); setTourPaused(false); setTourStop(null);
+    navRef.current.cmds.length = 0; navRef.current.cmds.push({ type: 'fly-in', id });
+    setView('3d');
+  };
+  const goMap = () => { setSelected(null); setTourOn(false); setTourPaused(false); setTourStop(null); setNav('orbit'); setView('map'); };
+  const savePin = async (id, lat, lng) => {
+    const r = await API.put(`/estate/plots/${id}/location`, { lat, lng });
+    setData(d => ({ ...d, plots: d.plots.map(p => (p.plot.id === id ? { ...p, plot: { ...p.plot, lat: r.data.lat, lng: r.data.lng } } : p)) }));
+  };
   const startTour = () => { setSelected(null); cmd({ type: 'tour-start' }); };
   const stopTour = () => cmd({ type: 'tour-stop' });
 
   // ── 3D scene ──
   useEffect(() => {
-    if (!scene || !mountRef.current) return undefined;
+    if (view !== '3d' || !scene || !mountRef.current) return undefined;
     const S = scene, el = mountRef.current;
     let renderer;
     try { renderer = new THREE.WebGLRenderer({ antialias: true }); } catch { setWebglOk(false); return undefined; }
@@ -222,6 +236,14 @@ export default function EstateMap() {
       tour = null; nv.init = true; nv.retarget = true; setTourOn(false); setTourPaused(false); setTourStop(null);
     };
 
+    // ── smooth fly between viewpoints (map -> property, property -> overview) ──
+    let fly = null;
+    const startFly = (toPos, toTarget, dur = 2.6, done = null) => {
+      if (tour) endTour();
+      fly = { t: 0, dur, arc: Math.min(14, camera.position.distanceTo(toPos) * 0.12), fromPos: camera.position.clone(), fromTarget: controls.target.clone(), toPos: toPos.clone(), toTarget: toTarget.clone(), done };
+    };
+    const poseFor = (st) => ({ pos: new THREE.Vector3(st.x + st.radius * 0.7, st.height + st.radius * 0.7, st.z + st.radius * 0.9), target: new THREE.Vector3(st.x, st.height * 0.4, st.z) });
+
     // ── first-person movement ──
     const fwd = new THREE.Vector3(), right = new THREE.Vector3();
     const blocked = (x, z, y, m = 0.22) => solids.some(b => x > b.min.x - m && x < b.max.x + m && z > b.min.z - m && z < b.max.z + m && y > b.min.y - 0.2 && y < b.max.y + 0.2);
@@ -347,15 +369,27 @@ export default function EstateMap() {
           if (st) {
             if (tour) endTour();
             setNav('orbit'); nv.mode = 'orbit';
-            controls.target.set(st.x, st.height * 0.4, st.z);
-            camera.position.set(st.x + st.radius * 0.7, st.height + st.radius * 0.7, st.z + st.radius * 0.9);
-            controls.update();
+            const ps = poseFor(st); startFly(ps.pos, ps.target, 1.8);
           }
+        } else if (c.type === 'fly-in') {                 // arrive from the map: start high over the whole estate, then drop onto the property
+          const st = stops.find(s => s.id === c.id);
+          setNav('orbit'); nv.mode = 'orbit'; nv.init = false;
+          camera.position.copy(home); controls.target.copy(centre); controls.update();
+          if (st) { const ps = poseFor(st); startFly(ps.pos, ps.target, 2.8); }
+        } else if (c.type === 'fly-out') {                // back to the map: rise over the whole estate, then switch
+          setNav('orbit'); nv.mode = 'orbit';
+          startFly(home, centre, 2.2, () => setView('map'));
         } else if (c.type === 'home') { if (tour) endTour(); setNav('orbit'); nv.mode = 'orbit'; camera.position.copy(home); controls.target.copy(centre); controls.update(); }
       }
       if (nv.init) { nv.init = false; const was = nv.last; nv.last = nv.mode; if (!tour) syncMode(was); }
-      controls.enabled = nv.mode === 'orbit' && !tour;
-      if (tour) stepTour(dt);
+      controls.enabled = nv.mode === 'orbit' && !tour && !fly;
+      if (fly) {
+        fly.t += dt;
+        const e = smooth(Math.min(1, fly.t / fly.dur));
+        camera.position.lerpVectors(fly.fromPos, fly.toPos, e); camera.position.y += Math.sin(Math.PI * e) * fly.arc;
+        controls.target.lerpVectors(fly.fromTarget, fly.toTarget, e); camera.lookAt(controls.target);
+        if (fly.t >= fly.dur) { const d = fly.done; fly = null; controls.update(); if (d) d(); }
+      } else if (tour) stepTour(dt);
       else if (nv.mode === 'orbit') controls.update();
       else stepFree(dt);
       if (helper) helper.update();
@@ -387,7 +421,7 @@ export default function EstateMap() {
       if (renderer.domElement.parentNode === el) el.removeChild(renderer.domElement);
       sceneRef.current = {};
     };
-  }, [scene]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [scene, view]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Dimming by payment state + selection outline (no scene rebuild)
   useEffect(() => {
@@ -401,7 +435,7 @@ export default function EstateMap() {
     });
     const sel = selected ? meshes.find(m => m.userData.unit.id === selected.unitId && m.userData.plotId === selected.plotId) : null;
     setHelper(sel || null);
-  }, [filterState, selected, scene]);
+  }, [filterState, selected, scene, view]);
 
   // ── editing ──
   function startEdit() {
@@ -443,6 +477,12 @@ export default function EstateMap() {
         {data && (
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
             <div style={{ display: 'inline-flex', borderRadius: 10, border: '1px solid var(--border)', overflow: 'hidden' }}>
+              <button style={seg(view === 'map')} onClick={() => { if (view === '3d') goMap(); }} disabled={editing}>🗺 Map</button>
+              <button style={seg(view === '3d')} onClick={() => { if (view !== '3d') { setView('3d'); setNav('orbit'); } }}>🧊 3D</button>
+            </div>
+            {view === '3d' && <>
+            <button style={btn} onClick={() => cmd({ type: 'fly-out' })} disabled={editing}>⬆ Back to map</button>
+            <div style={{ display: 'inline-flex', borderRadius: 10, border: '1px solid var(--border)', overflow: 'hidden' }}>
               {[['orbit', '🛰 Orbit'], ['walk', '🚶 Walk'], ['fly', '🕊 Fly']].map(([k, t]) => (
                 <button key={k} style={seg(nav === k)} onClick={() => { if (tourOn) stopTour(); setNav(k); }} disabled={editing}>{t}</button>
               ))}
@@ -458,6 +498,7 @@ export default function EstateMap() {
             <button style={btn} onClick={() => cmd({ type: 'home' })}>⌂ Whole estate</button>
             <button style={btn} onClick={() => setDetails(d => !d)}>{details ? '🪟 Hide windows & doors' : '🪟 Show windows & doors'}</button>
             {!editing && <button style={{ ...btn, background: 'var(--primary, #7c3aed)', color: '#fff', border: 'none' }} onClick={startEdit}>✏️ Edit map</button>}
+            </>}
           </div>
         )}
       </div>
@@ -468,6 +509,8 @@ export default function EstateMap() {
 
       {data && (
         <>
+          {view === 'map' && <EstateRealMap plots={data.plots} admin onFly={flyIn} onOpen={(id) => navigate(`/building?plot=${id}`)} onSavePin={savePin} />}
+          {view === '3d' && <>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12, alignItems: 'center' }}>
             {present.map(k => (
               <button key={k} onClick={() => setFilterState(f => (f === k ? null : k))}
@@ -552,7 +595,9 @@ export default function EstateMap() {
             </div>
           </div>
 
-          {editing && draft && (
+          </>}
+
+          {view === '3d' && editing && draft && (
             <EstateMapEditor plots={data.plots} fps={fps} draft={draft} setDraft={setDraft} onSave={saveMap} onCancel={cancelEdit} saving={saving} error={saveError} />
           )}
         </>

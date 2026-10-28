@@ -33,6 +33,27 @@ router.get('/', auth, requireAdmin, async (req, res) => {
   }
 });
 
+// PUT /api/estate/plots/:id/location  { lat, lng }  (both null clears the pin)
+// Used by the map view when the admin drags a pin to the exact spot.
+router.put('/plots/:id/location', auth, requireAdmin, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    if (!id) return res.status(400).json({ error: 'Invalid property.' });
+    const { lat, lng } = req.body || {};
+    const clear = lat == null && lng == null;
+    const la = Number(lat), lo = Number(lng);
+    if (!clear && !(Number.isFinite(la) && Number.isFinite(lo) && la >= -90 && la <= 90 && lo >= -180 && lo <= 180)) {
+      return res.status(400).json({ error: 'Latitude must be -90 to 90 and longitude -180 to 180.' });
+    }
+    const r = await pool.query('UPDATE plots SET gps_lat=$1, gps_lng=$2 WHERE id=$3 RETURNING id, name',
+      clear ? [null, null, id] : [la.toFixed(7), lo.toFixed(7), id]);
+    if (!r.rows[0]) return res.status(404).json({ error: 'Property not found' });
+    await logAudit({ user: req.user, action: 'plot.pin_moved', entityType: 'plot', entityId: id,
+      changes: { location: { to: clear ? 'cleared' : `${la.toFixed(5)}, ${lo.toFixed(5)}` } } });
+    res.json({ success: true, lat: clear ? null : Number(la.toFixed(7)), lng: clear ? null : Number(lo.toFixed(7)) });
+  } catch (err) { console.error(err); res.status(500).json({ error: err.message }); }
+});
+
 router.put('/layout', auth, requireAdmin, async (req, res) => {
   const client = await pool.connect();
   try {
