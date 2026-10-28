@@ -6,6 +6,8 @@ import Building3D      from './pages/Building3D';
 import EstateMap        from './pages/EstateMap';
 import Specials         from './pages/Specials';
 import Meters           from './pages/Meters';
+import Reminders        from './pages/Reminders';
+import PaybillAccounts  from './pages/PaybillAccounts';
 import Payments       from './pages/Payments';
 import Maintenance    from './pages/Maintenance';
 import PublicListings from './pages/PublicListings';
@@ -71,6 +73,16 @@ function AppRoutes() {
         <Route path="meters" element={
           <ProtectedRoute allowedRoles={['admin', 'super_admin', 'agent', 'landlord', 'caretaker']}>
             <Meters />
+          </ProtectedRoute>
+        } />
+        <Route path="reminders" element={
+          <ProtectedRoute allowedRoles={['admin', 'super_admin', 'agent', 'landlord', 'caretaker']}>
+            <Reminders />
+          </ProtectedRoute>
+        } />
+        <Route path="paybill" element={
+          <ProtectedRoute allowedRoles={['admin', 'super_admin', 'agent', 'landlord']}>
+            <PaybillAccounts />
           </ProtectedRoute>
         } />
         <Route path="tenants"    element={<Tenants />} />

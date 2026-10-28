@@ -291,6 +291,8 @@ export default function Layout() {
     { to: '/maintenance', icon: '🔧', label: 'Maintenance',permission: 'maintenance.view', roles: ['admin','super_admin'] },
     { to: '/expenses',    icon: '🧾', label: 'Expenses',   permission: 'expenses.view',    roles: ['admin','super_admin'] },
     { to: '/meters',      icon: '💧', label: 'Meters',     permission: 'meters.view',      roles: ['admin','super_admin'] },
+    { to: '/reminders',   icon: '🔔', label: 'Reminders',  permission: 'reminders.send',   roles: ['admin','super_admin'] },
+    { to: '/paybill',      icon: '🏦', label: 'Paybill',    roles: ['admin','super_admin','agent','landlord'] },
     { to: '/reports',     icon: '📊', label: 'Reports',    roles: ['admin','super_admin','agent','landlord'] },
     { to: '/users',       icon: '👤', label: 'Users',      roles: ['admin','super_admin','agent','landlord'] },
     { to: '/roles',       icon: '🛡️', label: 'Roles & Permissions', roles: ['admin','super_admin'] },
