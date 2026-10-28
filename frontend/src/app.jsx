@@ -5,6 +5,7 @@ import Properties     from './pages/Properties';
 import Building3D      from './pages/Building3D';
 import EstateMap        from './pages/EstateMap';
 import Specials         from './pages/Specials';
+import Meters           from './pages/Meters';
 import Payments       from './pages/Payments';
 import Maintenance    from './pages/Maintenance';
 import PublicListings from './pages/PublicListings';
@@ -65,6 +66,11 @@ function AppRoutes() {
         <Route path="specials" element={
           <ProtectedRoute allowedRoles={['admin', 'super_admin']}>
             <Specials />
+          </ProtectedRoute>
+        } />
+        <Route path="meters" element={
+          <ProtectedRoute allowedRoles={['admin', 'super_admin', 'agent', 'landlord', 'caretaker']}>
+            <Meters />
           </ProtectedRoute>
         } />
         <Route path="tenants"    element={<Tenants />} />

@@ -19,6 +19,7 @@ app.use('/api/houses',      require('./routes/houses'));
 app.use('/api/estate',      require('./routes/estate'));
 app.use('/api/panoramas',   require('./routes/panoramas'));
 app.use('/api/specials',     require('./routes/specials'));
+app.use('/api/meters',       require('./routes/meters'));
 app.use('/api/tenants',     require('./routes/tenants'));
 app.use('/api/payments',    require('./routes/payments'));
 app.use('/api/expenses',    require('./routes/expenses'));
