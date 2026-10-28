@@ -8,6 +8,7 @@ import Specials         from './pages/Specials';
 import Meters           from './pages/Meters';
 import Reminders        from './pages/Reminders';
 import PaybillAccounts  from './pages/PaybillAccounts';
+import OwnerPortal      from './pages/OwnerPortal';
 import Payments       from './pages/Payments';
 import Maintenance    from './pages/Maintenance';
 import PublicListings from './pages/PublicListings';
@@ -42,6 +43,24 @@ function AppRoutes() {
   const { user, loading } = useAuth();
   if (loading) return null; // brief blank screen while /me resolves on first load
 
+  // A landlord whose properties ALL have an agent gets only the read-only owner
+  // portal (plus messages and notices). The server enforces the same limits.
+  if (user?.role === 'landlord' && user.portal?.mode === 'portal') {
+    return (
+      <Routes>
+        <Route path="/listings" element={<PublicListings />} />
+        <Route path="/login"    element={<Login />} />
+        <Route path="/" element={<Layout />}>
+          <Route index element={<OwnerPortal />} />
+          <Route path="notices"  element={<Notices defaultTab="notices" />} />
+          <Route path="messages" element={<Notices defaultTab="messages" />} />
+          <Route path="*" element={<Navigate to="/" />} />
+        </Route>
+        <Route path="*" element={<Navigate to="/" />} />
+      </Routes>
+    );
+  }
+
   return (
     <Routes>
       {/* Public pages */}
@@ -56,6 +75,12 @@ function AppRoutes() {
       {/* Protected pages */}
       <Route path="/" element={user ? <Layout /> : <Navigate to="/listings" />}>
         <Route index             element={<Dashboard />} />
+        {/* A landlord with a mix of self-managed and agent-run properties sees the agent-run ones here, read-only. */}
+        <Route path="portal" element={
+          <ProtectedRoute allowedRoles={['landlord']}>
+            <OwnerPortal />
+          </ProtectedRoute>
+        } />
         <Route path="properties" element={<Properties />} />
         <Route path="building"   element={<Building3D />} />
         {/* Admin-only: the whole estate on one map, with fly/walk modes and a drone tour. */}

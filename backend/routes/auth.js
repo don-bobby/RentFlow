@@ -46,6 +46,17 @@ router.get('/me', liveAuthMiddleware, async (req, res) => {
       agent_name = a.rows[0]?.names || null;
     }
 
+    // Which experience a landlord gets: 'portal' = every property has an agent,
+    // so only the read-only owner portal; otherwise the normal management app
+    // ('full'). With a mix, the full app shows the agent-run properties as
+    // read-only owner cards (managed_plot_ids) next to the self-managed ones.
+    let portal = { mode: 'full', managed_plot_ids: [] };
+    if (req.user.role === 'landlord') {
+      const pl = await pool.query('SELECT id, agent_id FROM plots WHERE user_id = $1', [req.user.id]);
+      const managed = pl.rows.filter(r => r.agent_id).map(r => r.id);
+      portal = { mode: managed.length > 0 && managed.length === pl.rows.length ? 'portal' : 'full', managed_plot_ids: managed };
+    }
+
     // `permissions` above only ever reflects role defaults + GLOBAL overrides
     // (plot_id IS NULL) — that's all getPermissions(req.user) with no plotId
     // can see. AuthContext.jsx's can(permission, plotId) on the frontend
@@ -71,6 +82,7 @@ router.get('/me', liveAuthMiddleware, async (req, res) => {
         role: req.user.role,
         agent_id: req.user.agent_id,
         agent_name,
+        portal,
         profile,
         permissions,
         overrides,

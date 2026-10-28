@@ -6,7 +6,7 @@ const archiver = require('archiver');
 const { authMiddleware: auth } = require('../middleware/auth');
 const { getVisiblePlotIds }    = require('../middleware/scope');
 const { logStaffActivity }     = require('../utils/staffActivity');
-const { filterRowsByPermission } = require('../middleware/permissions');
+const { filterRowsByPermission, getPermissions } = require('../middleware/permissions');
 const { computeLedger, loadPaidMaps } = require('../utils/rentLedger');
 
 // Previously this file used its own `auth()` helper, which only checked for
@@ -236,6 +236,13 @@ router.get('/landlord', auth, async (req, res) => {
         t.balance = t.is_active ? computeLedger({ rent: t.rent_amount, moveInDate: t.move_in_date, paidMap: maps[t.id] || {} }).totalOwed : 0;
       });
       const tenants = Object.values(byTenant);
+      // An owner whose property an agent runs sees units, not tenant names,
+      // unless an admin has granted portal.tenant_details for them.
+      let hideNames = false;
+      if (req.user.role === 'landlord') {
+        const { permissions: pp } = await getPermissions(req.user, plot.id);
+        hideNames = !(pp.includes('*') || pp.includes('tenants.view') || pp.includes('portal.tenant_details'));
+      }
 
       const collected   = tenants.reduce((a, t) => a + t.paid, 0);
       const utilIn      = tenants.reduce((a, t) => a + t.util, 0);
@@ -291,7 +298,7 @@ router.get('/landlord', auth, async (req, res) => {
       tableHead(tc);
       if (!tenants.length) tableRow(tc, ['', 'No tenants for this property.', '', '', '', '', ''], { noRule: true });
       tenants.forEach(t => tableRow(tc, [
-        t.unit_number || '—', t.full_name + (t.is_active ? '' : ' (moved out)'), num(t.rent_amount), t.paid ? num(t.paid) : '—',
+        t.unit_number || '—', hideNames ? (t.is_active ? 'Tenant' : 'Tenant (moved out)') : t.full_name + (t.is_active ? '' : ' (moved out)'), num(t.rent_amount), t.paid ? num(t.paid) : '—',
         t.util ? num(t.util) : '—', t.dates.length ? [...new Set(t.dates)].slice(0, 2).join(', ') : '—', t.balance ? num(t.balance) : '0',
       ]));
       tableRow(tc, ['', 'Total', num(expected), num(collected), num(utilIn), '', num(arrears)], { bold: true, noRule: true });

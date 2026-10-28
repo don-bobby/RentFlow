@@ -309,6 +309,20 @@ export default function Layout() {
   // Messages lives in the topbar (next to the profile dropdown) instead of
   // the sidebar. Notices was removed from the topbar per feedback — it can
   // still be reached via the bell notification dropdown.
+  // Landlords whose properties all have an agent see only the owner portal; a
+  // landlord with a mix also gets an "Owner View" link for the agent-run ones.
+  const ownerPortalOnly = role === 'landlord' && user?.portal?.mode === 'portal';
+  if (ownerPortalOnly) {
+    nav.length = 0;
+    nav.push(
+      { to: '/',         icon: '🏠', label: 'My Properties', roles: ['landlord'] },
+      { to: '/notices',  icon: '📢', label: 'Notices',       roles: ['landlord'] },
+      { to: '/messages', icon: '💬', label: 'Messages',      roles: ['landlord'] },
+    );
+  } else if (role === 'landlord' && (user?.portal?.managed_plot_ids || []).length > 0) {
+    nav.splice(1, 0, { to: '/portal', icon: '📊', label: 'Owner View', roles: ['landlord'] });
+  }
+
   const topbarNav  = nav.filter(i => i.to === '/messages');
   const sidebarNav = nav.filter(i => i.to !== '/notices' && i.to !== '/messages');
 
