@@ -4,6 +4,7 @@ import Tenants        from './pages/Tenants';
 import Properties     from './pages/Properties';
 import Building3D      from './pages/Building3D';
 import EstateMap        from './pages/EstateMap';
+import Specials         from './pages/Specials';
 import Payments       from './pages/Payments';
 import Maintenance    from './pages/Maintenance';
 import PublicListings from './pages/PublicListings';
@@ -58,6 +59,12 @@ function AppRoutes() {
         <Route path="estate" element={
           <ProtectedRoute allowedRoles={['admin', 'super_admin']}>
             <EstateMap />
+          </ProtectedRoute>
+        } />
+        {/* Admin-only: Airbnb stays and properties for sale shown on the public listings page. */}
+        <Route path="specials" element={
+          <ProtectedRoute allowedRoles={['admin', 'super_admin']}>
+            <Specials />
           </ProtectedRoute>
         } />
         <Route path="tenants"    element={<Tenants />} />

@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import PanoViewer from '../components/PanoViewer';
+import SpecialCard from '../components/SpecialCard';
 
 const API = process.env.REACT_APP_API_URL || 'http://localhost:5000/api';
 const BASE = process.env.REACT_APP_API_URL?.replace('/api', '') || 'http://localhost:5000';
@@ -19,6 +20,8 @@ export default function PublicListings() {
   const [loading,  setLoading]  = useState(true);
   const [error,    setError]    = useState('');
   const [filter,   setFilter]   = useState('all');
+  const [specials, setSpecials] = useState([]);
+  const [tab,      setTab]      = useState('rent');   // 'rent' | 'stay' | 'sale'
 
   useEffect(() => {
     fetch(`${API}/listings`)
@@ -26,6 +29,13 @@ export default function PublicListings() {
       .then(d => { setListings(d.data || []); setLoading(false); })
       .catch(() => { setError('Failed to load listings.'); setLoading(false); });
   }, []);
+
+  useEffect(() => {
+    fetch(`${API}/specials`).then(r => r.json()).then(d => setSpecials(d.data || [])).catch(() => {});
+  }, []);
+  const stays = specials.filter(x => x.kind === 'stay');
+  const sales = specials.filter(x => x.kind === 'sale');
+  const shownSpecials = tab === 'stay' ? stays : tab === 'sale' ? sales : [];
 
   // Collect all unit types across listings for filter
   const allTypes = [...new Set(listings.flatMap(l => l.units.map(u => u.house_type)))].sort();
@@ -76,8 +86,16 @@ export default function PublicListings() {
             Browse verified vacant units — bedsitters, apartments, and commercial spaces across our managed properties.
           </p>
 
+          {specials.length > 0 && (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, justifyContent: 'center', marginBottom: 18 }}>
+              <FilterPill label="🏠 Rentals" active={tab === 'rent'} onClick={() => setTab('rent')} />
+              {stays.length > 0 && <FilterPill label={`🏖️ Stays (${stays.length})`} active={tab === 'stay'} onClick={() => setTab('stay')} />}
+              {sales.length > 0 && <FilterPill label={`🏡 For sale (${sales.length})`} active={tab === 'sale'} onClick={() => setTab('sale')} />}
+            </div>
+          )}
+
           {/* Type filter pills */}
-          {allTypes.length > 0 && (
+          {tab === 'rent' && allTypes.length > 0 && (
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, justifyContent: 'center' }}>
               <FilterPill label="All Units" active={filter === 'all'} onClick={() => setFilter('all')} />
               {allTypes.map(t => (
@@ -105,7 +123,7 @@ export default function PublicListings() {
           </div>
         )}
 
-        {!loading && !error && filtered.length === 0 && (
+        {tab === 'rent' && !loading && !error && filtered.length === 0 && (
           <div style={{ textAlign: 'center', padding: '80px 0', color: '#6b7280' }}>
             <div style={{ fontSize: 48, marginBottom: 16 }}>🏚️</div>
             <h2 style={{ fontFamily: "'Space Grotesk', sans-serif", fontWeight: 700, fontSize: 22, color: '#374151', marginBottom: 8 }}>No vacancies right now</h2>
@@ -113,7 +131,13 @@ export default function PublicListings() {
           </div>
         )}
 
-        {!loading && filtered.length > 0 && (
+        {tab !== 'rent' && (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 24 }}>
+            {shownSpecials.map(sp => <SpecialCard key={sp.id} s={sp} />)}
+          </div>
+        )}
+
+        {tab === 'rent' && !loading && filtered.length > 0 && (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 24 }}>
             {filtered.map(({ unit, plot }) => (
               <ListingCard key={unit.id} unit={unit} plot={plot} BASE={BASE} />
