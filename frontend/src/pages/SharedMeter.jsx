@@ -27,6 +27,7 @@ export default function SharedMeter({ plotId, plotName, type, month, setMonth, s
   const [setup, setSetup] = useState(null);     // create/edit form
   const [billForm, setBillForm] = useState(null);
   const [contrib, setContrib] = useState(null);
+  const [payerForm, setPayerForm] = useState(null); // a second business sharing a unit
 
   const loadList = useCallback(async () => {
     if (!plotId) return;
@@ -56,7 +57,7 @@ export default function SharedMeter({ plotId, plotName, type, month, setMonth, s
   const canManage = list?.can_manage, canRecord = list?.can_record;
   const isCat = sum?.meter.split_mode === 'category';
   // Categories among units occupied right now, with how many of each (what a new bill will charge).
-  const occCats = (() => { const m = new Map(); (sum?.units || []).filter(u => u.tenant_id).forEach(u => { const c = u.category || 'Other'; m.set(c, (m.get(c) || 0) + 1); }); return [...m.entries()]; })();
+  const occCats = (() => { const m = new Map(); (sum?.units || []).filter(u => u.tenant_id).forEach(u => { const c = u.category || 'Other'; m.set(c, (m.get(c) || 0) + 1); }); (sum?.payers || []).forEach(p => { const c = p.category || 'Other'; m.set(c, (m.get(c) || 0) + 1); }); return [...m.entries()]; })();
   const lastRates = () => (sum?.bills.find(b => b.category_rates)?.category_rates) || {};
   const billExpected = (f) => occCats.reduce((a, [c, n]) => a + n * (Number(f.rates?.[c]) || 0), 0);
   const err = (e, fallback) => setMsg({ ok: '', err: e.response?.data?.error || fallback });
@@ -104,12 +105,26 @@ export default function SharedMeter({ plotId, plotName, type, month, setMonth, s
   };
   const saveContrib = async () => {
     try {
+      if (contrib.payer_id) {
+        await API.post(`/shared-meters/payers/${contrib.payer_id}/payments`, { amount: Number(contrib.amount), payment_date: contrib.date, method: contrib.method, reference: contrib.reference });
+        setContrib(null); setMsg({ ok: 'Contribution recorded.', err: '' }); loadSum(); return;
+      }
       await API.post('/utilities', { tenant_id: contrib.tenant_id, payment_date: contrib.date, method: contrib.method, reference: contrib.reference,
         notes: `Shared ${type.toLowerCase()} meter ${sum.meter.meter_number}, ${monthName(month)}`, items: [{ type, amount: Number(contrib.amount) }] });
       setContrib(null); setMsg({ ok: 'Contribution recorded.', err: '' }); loadSum();
     } catch (e) { err(e, 'Could not record the contribution.'); }
   };
 
+  const addPayer = async () => {
+    try {
+      await API.post(`/shared-meters/${meterId}/payers`, { ...payerForm, house_id: Number(payerForm.house_id) });
+      setPayerForm(null); setMsg({ ok: 'Business added. It will be charged on the next bill, or use Re-split on this month\'s bill.', err: '' }); loadSum();
+    } catch (e) { err(e, 'Could not add the business.'); }
+  };
+  const removePayer = async (p) => {
+    if (!window.confirm(`Remove ${p.name} from the water meter? Past bills and payments stay on record; they just won't be charged on new bills.`)) return;
+    try { await API.delete(`/shared-meters/payers/${p.id}`); loadSum(); } catch (e) { err(e, 'Could not remove.'); }
+  };
   const reminder = (r) => `Hello ${r.tenant_name}, the shared ${type.toLowerCase()} bill for ${monthName(month)} at ${plotName} is KES ${bill.amount.toLocaleString()}. Your share (unit ${r.unit_number}) is KES ${r.share.toLocaleString()}${r.paid > 0 ? `; you have paid KES ${r.paid.toLocaleString()}` : ''}. Balance: KES ${r.balance.toLocaleString()}${bill.due_date ? `, due ${new Date(bill.due_date).toLocaleDateString('en-KE')}` : ''}. Thank you.`;
   const downloadCsv = () => {
     const rows = bill.rows.filter(r => r.status !== 'paid');
@@ -176,6 +191,35 @@ export default function SharedMeter({ plotId, plotName, type, month, setMonth, s
           <div style={{ flex: 1 }} />
           {canManage && sum && <button style={btn} onClick={() => openSetup(meters.find(m => m.id === meterId))}>Edit meter / weights</button>}
           {canManage && <button style={btn} onClick={() => openSetup(null)}>+ Another meter</button>}
+        </div>
+      )}
+
+      {sum && !setup && (canManage || sum.payers?.length > 0) && (
+        <div style={{ ...card, marginBottom: 12 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <b>Businesses sharing a unit</b>
+            <span style={{ fontSize: 12.5, color: 'var(--muted, #6b7280)' }}>pay rent with the unit, pay water separately</span>
+            <div style={{ flex: 1 }} />
+            {canManage && !payerForm && <button style={btn} onClick={() => setPayerForm({ house_id: sum.units[0]?.house_id || '', name: '', phone: '', category: '', weight: 1 })}>+ Add a business</button>}
+          </div>
+          {(sum.payers || []).map(p => (
+            <div key={p.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 0', borderTop: '1px solid var(--border, #f1f5f9)', flexWrap: 'wrap' }}>
+              <span><b>{p.name}</b> · shares unit <b>{p.unit_number}</b>{p.category ? <> · {p.category}</> : ''}{p.phone ? <> · {p.phone}</> : ''}</span>
+              <div style={{ flex: 1 }} />
+              {canManage && <button style={{ ...btn, padding: '3px 10px' }} onClick={() => removePayer(p)}>Remove</button>}
+            </div>))}
+          {payerForm && (
+            <div style={{ marginTop: 10, display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+              <label style={{ fontSize: 13 }}>Unit<br /><select style={inp} value={payerForm.house_id} onChange={e => setPayerForm({ ...payerForm, house_id: e.target.value })}>
+                {sum.units.map(u => <option key={u.house_id} value={u.house_id}>{u.unit_number}{u.tenant_name ? ` — ${u.tenant_name}` : ''}</option>)}</select></label>
+              <label style={{ fontSize: 13 }}>Business name<br /><input style={inp} maxLength={80} value={payerForm.name} onChange={e => setPayerForm({ ...payerForm, name: e.target.value })} /></label>
+              <label style={{ fontSize: 13 }}>Phone (optional)<br /><input style={{ ...inp, width: 130 }} maxLength={20} value={payerForm.phone} onChange={e => setPayerForm({ ...payerForm, phone: e.target.value })} /></label>
+              {isCat
+                ? <label style={{ fontSize: 13 }}>Category<br /><input style={{ ...inp, width: 110 }} list="unit-cats" maxLength={30} value={payerForm.category} onChange={e => setPayerForm({ ...payerForm, category: e.target.value })} /></label>
+                : <label style={{ fontSize: 13 }}>Weight<br /><input style={{ ...inp, width: 70 }} type="number" min="0.1" step="0.1" value={payerForm.weight} onChange={e => setPayerForm({ ...payerForm, weight: e.target.value })} /></label>}
+              <button style={primary} onClick={addPayer}>Add</button><button style={btn} onClick={() => setPayerForm(null)}>Cancel</button>
+            </div>)}
+          <datalist id="unit-cats"><option value="Shop" /><option value="Office" /><option value="Salon" /><option value="Other" /></datalist>
         </div>
       )}
 
@@ -262,13 +306,13 @@ export default function SharedMeter({ plotId, plotName, type, month, setMonth, s
                 {bill.rows.map(r => {
                   const wa = waNumber(r.tenant_phone);
                   return (
-                    <tr key={r.house_id} style={r.status === 'paid' ? undefined : { background: r.status === 'unpaid' ? 'rgba(220,38,38,.05)' : 'rgba(180,83,9,.06)' }}>
-                      <td style={td}><b>{r.unit_number}</b></td><td style={td}>{r.tenant_name || '—'}</td><td style={td}>{isCat ? (r.category || '—') : r.weight}</td>
+                    <tr key={`${r.house_id}-${r.payer_id || 0}`} style={r.status === 'paid' ? undefined : { background: r.status === 'unpaid' ? 'rgba(220,38,38,.05)' : 'rgba(180,83,9,.06)' }}>
+                      <td style={td}><b>{r.unit_number}</b>{r.payer_id && <span title="A second business sharing this unit" style={{ fontSize: 11, color: '#7c3aed' }}> +shared</span>}</td><td style={td}>{r.tenant_name || '—'}</td><td style={td}>{isCat ? (r.category || '—') : r.weight}</td>
                       <td style={td}>{kes(r.share)}</td><td style={td}>{kes(r.paid)}</td><td style={td}>{kes(r.balance)}</td>
                       <td style={{ ...td, color: ST[r.status][1], fontWeight: 700 }}>{ST[r.status][0]}</td>
                       <td style={{ ...td, whiteSpace: 'nowrap' }}>
                         {r.status !== 'paid' && wa && <a style={{ ...btn, textDecoration: 'none', display: 'inline-block', marginRight: 6 }} href={`https://wa.me/${wa}?text=${encodeURIComponent(reminder(r))}`} target="_blank" rel="noopener noreferrer">💬 Remind</a>}
-                        {r.tenant_id && <button style={primary} onClick={() => setContrib({ tenant_id: r.tenant_id, name: r.tenant_name, unit: r.unit_number, amount: r.balance || '', method: 'Cash', reference: '', date: today() })}>+ Record</button>}
+                        {(r.tenant_id || r.payer_id) && <button style={primary} onClick={() => setContrib({ tenant_id: r.tenant_id, payer_id: r.payer_id, name: r.tenant_name, unit: r.unit_number, amount: r.balance || '', method: 'Cash', reference: '', date: today() })}>+ Record</button>}
                       </td>
                     </tr>);
                 })}

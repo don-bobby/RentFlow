@@ -32,12 +32,12 @@ async function guard(req, res, plotId, perm) {
 }
 // Units on a shared meter are billed through /api/shared-meters, not by individual readings.
 async function sharedHouses(db, plotId, type) {
-  try {
-    const r = await db.query(
-      `SELECT smu.house_id, sm.meter_number FROM shared_meter_units smu JOIN shared_meters sm ON sm.id = smu.meter_id
-       WHERE sm.plot_id = $1 AND sm.utility_type = $2 AND sm.active = true`, [plotId, type]);
-    return new Map(r.rows.map(x => [x.house_id, x.meter_number]));
-  } catch (e) { if (e.code === '42P01') return new Map(); throw e; }
+  // Table check rather than catching the error: inside a transaction a failed query aborts it.
+  if (!(await db.query(`SELECT to_regclass('shared_meter_units') AS t`)).rows[0].t) return new Map();
+  const r = await db.query(
+    `SELECT smu.house_id, sm.meter_number FROM shared_meter_units smu JOIN shared_meters sm ON sm.id = smu.meter_id
+     WHERE sm.plot_id = $1 AND sm.utility_type = $2 AND sm.active = true`, [plotId, type]);
+  return new Map(r.rows.map(x => [x.house_id, x.meter_number]));
 }
 const pid = (v) => { const n = parseInt(v, 10); return Number.isInteger(n) && n > 0 ? n : null; };
 

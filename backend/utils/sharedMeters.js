@@ -30,24 +30,38 @@ async function computeMeter(db, meterId) {
               FROM shared_bill_shares s JOIN shared_bills b ON b.id = s.bill_id JOIN houses h ON h.id = s.house_id
               LEFT JOIN tenants t ON t.id = s.tenant_id WHERE b.meter_id = $1`, [meterId]),
   ]);
+  // Extra payers (a second business sharing a unit) — absent until migration 030 is run.
+  let payerRows = [];
+  if ((await db.query(`SELECT to_regclass('shared_meter_payers') AS t`)).rows[0].t) {
+    payerRows = (await db.query(`SELECT p.*, h.unit_number FROM shared_meter_payers p JOIN houses h ON h.id = p.house_id WHERE p.meter_id = $1 AND p.active = true ORDER BY h.unit_number, p.id`, [meterId])).rows;
+  }
   const houseIds = [...new Set([...units.rows.map(u => u.house_id), ...shares.rows.map(s => s.house_id)])];
   const paidRows = houseIds.length ? (await db.query(
     `SELECT house_id, COALESCE(SUM(amount),0) AS total FROM utility_payments
      WHERE house_id = ANY($1) AND utility_type = $2 AND payment_date >= $3::date GROUP BY house_id`,
     [houseIds, m.utility_type, `${m.start_month}-01`])).rows : [];
-  const remaining = new Map(paidRows.map(r => [r.house_id, parseFloat(r.total)]));
+  const remaining = new Map(paidRows.map(r => [`h${r.house_id}`, parseFloat(r.total)]));
+  const allPayerIds = [...new Set([...payerRows.map(p => p.id), ...shares.rows.filter(x => x.payer_id).map(x => x.payer_id)])];
+  if (allPayerIds.length) {
+    const pp = await db.query(`SELECT payer_id, COALESCE(SUM(amount),0) AS total FROM shared_meter_payments WHERE payer_id = ANY($1) AND payment_date >= $2::date GROUP BY payer_id`, [allPayerIds, `${m.start_month}-01`]);
+    pp.rows.forEach(r => remaining.set(`p${r.payer_id}`, parseFloat(r.total)));
+  }
   const totalPaid = new Map(remaining);
+  const payerInfo = new Map();
+  if (allPayerIds.length) (await db.query('SELECT id, name, phone FROM shared_meter_payers WHERE id = ANY($1)', [allPayerIds])).rows.forEach(r => payerInfo.set(r.id, r));
 
   const sharesByBill = new Map();
   for (const s of shares.rows) { if (!sharesByBill.has(s.bill_id)) sharesByBill.set(s.bill_id, []); sharesByBill.get(s.bill_id).push(s); }
 
   const outBills = bills.rows.map(b => {
     const rows = (sharesByBill.get(b.id) || []).sort((a, c) => String(a.unit_number).localeCompare(String(c.unit_number), undefined, { numeric: true })).map(s => {
-      const rem = remaining.get(s.house_id) || 0;
+      const key = s.payer_id ? `p${s.payer_id}` : `h${s.house_id}`;
+      const pinfo = s.payer_id ? payerInfo.get(s.payer_id) : null;
+      const rem = remaining.get(key) || 0;
       const share = parseFloat(s.share);
       const applied = round2(Math.min(rem, share));
-      remaining.set(s.house_id, round2(rem - applied));
-      return { house_id: s.house_id, unit_number: s.unit_number, category: s.category || null, tenant_id: s.tenant_id, tenant_name: s.tenant_name, tenant_phone: s.tenant_phone,
+      remaining.set(key, round2(rem - applied));
+      return { house_id: s.house_id, payer_id: s.payer_id || null, unit_number: s.unit_number, category: s.category || null, tenant_id: s.payer_id ? null : s.tenant_id, tenant_name: pinfo ? pinfo.name : s.tenant_name, tenant_phone: pinfo ? pinfo.phone : s.tenant_phone,
                weight: parseFloat(s.weight), share, paid: applied, balance: round2(share - applied), status: applied >= share ? 'paid' : applied > 0 ? 'partial' : 'unpaid' };
     });
     const target = parseFloat(b.amount);
@@ -58,11 +72,13 @@ async function computeMeter(db, meterId) {
              counts: { paid: rows.filter(r => r.status === 'paid').length, partial: rows.filter(r => r.status === 'partial').length, unpaid: rows.filter(r => r.status === 'unpaid').length },
              rows };
   });
-  const credits = [...remaining.entries()].filter(([, v]) => v > 0).map(([house_id, credit]) => ({ house_id, credit: round2(credit) }));
+  const credits = [...remaining.entries()].filter(([k, v]) => k.startsWith('h') && v > 0).map(([k, credit]) => ({ house_id: Number(k.slice(1)), credit: round2(credit) }));
   return {
     meter: { id: m.id, plot_id: m.plot_id, utility_type: m.utility_type, meter_number: m.meter_number, account_number: m.account_number, start_month: m.start_month, active: m.active, split_mode: m.split_mode || 'weight' },
     units: units.rows.map(u => ({ house_id: u.house_id, unit_number: u.unit_number, weight: parseFloat(u.weight), category: u.category || null, tenant_id: u.tenant_id, tenant_name: u.tenant_name, tenant_phone: u.tenant_phone,
-                                  total_paid: round2(totalPaid.get(u.house_id) || 0), credit: round2(remaining.get(u.house_id) || 0) })),
+                                  total_paid: round2(totalPaid.get(`h${u.house_id}`) || 0), credit: round2(remaining.get(`h${u.house_id}`) || 0) })),
+    payers: payerRows.map(p => ({ id: p.id, house_id: p.house_id, unit_number: p.unit_number, name: p.name, phone: p.phone, category: p.category || null, weight: parseFloat(p.weight),
+                                  total_paid: round2(totalPaid.get(`p${p.id}`) || 0), credit: round2(remaining.get(`p${p.id}`) || 0) })),
     bills: outBills.reverse(), // newest first
     credits,
   };

@@ -68,12 +68,24 @@ function cleanRates(rates, cats) {
   return { rates: out };
 }
 
+// Everyone who owes on a new bill: occupied units (the tenant) plus any active extra payers
+// (a second business sharing a unit). Payers only exist once migration 030 is run.
 async function occupiedUnits(db, meterId) {
-  return (await db.query(
+  const units = (await db.query(
     `SELECT smu.*, t.id AS tenant_id FROM shared_meter_units smu
      JOIN tenants t ON t.house_id = smu.house_id AND t.is_active = true
      WHERE smu.meter_id = $1`, [meterId])).rows
-    .filter((r, i, a) => a.findIndex(x => x.house_id === r.house_id) === i);
+    .filter((r, i, a) => a.findIndex(x => x.house_id === r.house_id) === i)
+    .map(u => ({ ...u, payer_id: null }));
+  let payers = [];
+  // Check the table exists instead of catching the error: inside a transaction a failed query aborts it.
+  if ((await db.query(`SELECT to_regclass('shared_meter_payers') AS t`)).rows[0].t) {
+    payers = (await db.query(
+      `SELECT p.id AS payer_id, p.house_id, p.weight, p.category FROM shared_meter_payers p
+       JOIN shared_meter_units smu ON smu.meter_id = p.meter_id AND smu.house_id = p.house_id
+       WHERE p.meter_id = $1 AND p.active = true`, [meterId])).rows.map(p => ({ ...p, tenant_id: null }));
+  }
+  return [...units, ...payers];
 }
 
 // Returns false when nobody is occupying, or { error } if category rates are missing.
@@ -89,8 +101,10 @@ async function writeShares(db, billId, meter, amount, rates) {
   } else shares = splitBill(amount, occ);
   await db.query('DELETE FROM shared_bill_shares WHERE bill_id = $1', [billId]);
   for (const s of shares) {
-    if (meter.split_mode === 'category') await db.query('INSERT INTO shared_bill_shares (bill_id, house_id, tenant_id, weight, share, category) VALUES ($1,$2,$3,$4,$5,$6)', [billId, s.house_id, s.tenant_id, s.weight, s.share, s.category]);
-    else await db.query('INSERT INTO shared_bill_shares (bill_id, house_id, tenant_id, weight, share) VALUES ($1,$2,$3,$4,$5)', [billId, s.house_id, s.tenant_id, s.weight, s.share]);
+    const cols = ['bill_id', 'house_id', 'tenant_id', 'weight', 'share'], vals = [billId, s.house_id, s.tenant_id, s.weight, s.share];
+    if (meter.split_mode === 'category') { cols.push('category'); vals.push(s.category); }
+    if (s.payer_id) { cols.push('payer_id'); vals.push(s.payer_id); }
+    await db.query(`INSERT INTO shared_bill_shares (${cols.join(',')}) VALUES (${vals.map((_, i) => `$${i + 1}`).join(',')})`, vals);
   }
   return true;
 }
@@ -240,9 +254,9 @@ router.put('/bills/:id', auth, async (req, res) => {
       if (w && w.error) { await client.query('ROLLBACK'); return res.status(400).json({ error: w.error }); }
       if (!w) { await client.query('ROLLBACK'); return res.status(400).json({ error: 'No occupied units on this meter.' }); }
     } else if (!isCat && amount !== parseFloat(bill.amount)) {
-      const cur = (await client.query('SELECT house_id, tenant_id, weight FROM shared_bill_shares WHERE bill_id = $1', [bill.id])).rows;
+      const cur = (await client.query('SELECT id, weight FROM shared_bill_shares WHERE bill_id = $1', [bill.id])).rows;
       const shares = splitBill(amount, cur);
-      for (const s of shares) await client.query('UPDATE shared_bill_shares SET share = $1 WHERE bill_id = $2 AND house_id = $3', [s.share, bill.id, s.house_id]);
+      for (const s of shares) await client.query('UPDATE shared_bill_shares SET share = $1 WHERE id = $2', [s.share, s.id]);
     }
     await client.query('COMMIT');
     await logAudit({ user: req.user, action: 'shared_bill.updated', entityType: 'plot', entityId: meter.plot_id, changes: { bill: { from: `${bill.billing_month} KES ${bill.amount}`, to: `KES ${amount}` } } });
@@ -272,6 +286,83 @@ router.post('/bills/:id/provider-paid', auth, async (req, res) => {
     const d = req.body?.date === null ? null : (/^\d{4}-\d{2}-\d{2}$/.test(req.body?.date || '') ? req.body.date : new Date().toISOString().slice(0, 10));
     await pool.query('UPDATE shared_bills SET provider_paid_on = $1 WHERE id = $2', [d, bill.id]);
     res.json({ success: true });
+  } catch (err) { console.error(err); res.status(500).json({ error: err.message }); }
+});
+
+// ── Extra payers: a second business sharing a unit (rent paid as one unit, water paid separately) ──
+async function payerAndMeter(db, id) {
+  const p = id ? (await db.query('SELECT * FROM shared_meter_payers WHERE id = $1', [id])).rows[0] : null;
+  return p ? { payer: p, meter: await meterOf(db, p.meter_id) } : {};
+}
+function cleanPayer(b, meter) {
+  const name = String(b.name || '').trim().slice(0, 80);
+  if (!name) return { error: 'Enter the business name.' };
+  const phone = String(b.phone || '').trim().slice(0, 20) || null;
+  const category = catOf(b.category) || null;
+  if (meter.split_mode === 'category' && !category) return { error: 'Give this business a category (Shop, Office, Salon…).' };
+  const weight = b.weight == null || b.weight === '' ? 1 : Number(b.weight);
+  if (!Number.isFinite(weight) || weight <= 0 || weight > 1000) return { error: 'Weight must be above 0.' };
+  return { name, phone, category, weight };
+}
+
+// { house_id, name, phone?, category?, weight? }
+router.post('/:id/payers', auth, async (req, res) => {
+  try {
+    const m = await meterOf(pool, pid(req.params.id));
+    if (!m) return res.status(404).json({ error: 'Meter not found.' });
+    if (!(await guard(req, res, m.plot_id, 'meters.rates'))) return;
+    const houseId = pid(req.body?.house_id);
+    const on = houseId && (await pool.query('SELECT 1 FROM shared_meter_units WHERE meter_id = $1 AND house_id = $2', [m.id, houseId])).rows[0];
+    if (!on) return res.status(400).json({ error: 'Choose a unit that is on this meter.' });
+    const c = cleanPayer(req.body || {}, m);
+    if (c.error) return res.status(400).json({ error: c.error });
+    const r = (await pool.query(`INSERT INTO shared_meter_payers (meter_id, house_id, name, phone, category, weight) VALUES ($1,$2,$3,$4,$5,$6) RETURNING id`,
+      [m.id, houseId, c.name, c.phone, c.category, c.weight])).rows[0];
+    await logAudit({ user: req.user, action: 'shared_payer.added', entityType: 'plot', entityId: m.plot_id, changes: { payer: { to: `${c.name} on ${m.utility_type} meter ${m.meter_number}` } } });
+    res.json({ success: true, id: r.id });
+  } catch (err) {
+    if (err.code === '42P01') return res.status(400).json({ error: 'Run migration 030 (030_shared_meter_payers.sql) first.' });
+    console.error(err); res.status(500).json({ error: err.message });
+  }
+});
+
+router.put('/payers/:id', auth, async (req, res) => {
+  try {
+    const { payer, meter } = await payerAndMeter(pool, pid(req.params.id));
+    if (!payer) return res.status(404).json({ error: 'Not found.' });
+    if (!(await guard(req, res, meter.plot_id, 'meters.rates'))) return;
+    const c = cleanPayer({ ...payer, ...req.body }, meter);
+    if (c.error) return res.status(400).json({ error: c.error });
+    await pool.query('UPDATE shared_meter_payers SET name = $1, phone = $2, category = $3, weight = $4 WHERE id = $5', [c.name, c.phone, c.category, c.weight, payer.id]);
+    res.json({ success: true });
+  } catch (err) { console.error(err); res.status(500).json({ error: err.message }); }
+});
+
+// Removing keeps their history (past shares and payments); they just stop being charged on new bills.
+router.delete('/payers/:id', auth, async (req, res) => {
+  try {
+    const { payer, meter } = await payerAndMeter(pool, pid(req.params.id));
+    if (!payer) return res.status(404).json({ error: 'Not found.' });
+    if (!(await guard(req, res, meter.plot_id, 'meters.rates'))) return;
+    await pool.query('UPDATE shared_meter_payers SET active = false WHERE id = $1', [payer.id]);
+    await logAudit({ user: req.user, action: 'shared_payer.removed', entityType: 'plot', entityId: meter.plot_id, changes: { payer: { from: payer.name } } });
+    res.json({ success: true });
+  } catch (err) { console.error(err); res.status(500).json({ error: err.message }); }
+});
+
+// { amount, payment_date?, method?, reference? }
+router.post('/payers/:id/payments', auth, async (req, res) => {
+  try {
+    const { payer, meter } = await payerAndMeter(pool, pid(req.params.id));
+    if (!payer) return res.status(404).json({ error: 'Not found.' });
+    if (!(await guard(req, res, meter.plot_id, 'meters.record'))) return;
+    const amount = round2(Number(req.body?.amount));
+    if (!Number.isFinite(amount) || amount <= 0 || amount > 1e8) return res.status(400).json({ error: 'Enter an amount above 0.' });
+    const date = /^\d{4}-\d{2}-\d{2}$/.test(req.body?.payment_date || '') ? req.body.payment_date : new Date().toISOString().slice(0, 10);
+    const r = (await pool.query(`INSERT INTO shared_meter_payments (payer_id, amount, payment_date, method, reference, created_by) VALUES ($1,$2,$3,$4,$5,$6) RETURNING id`,
+      [payer.id, amount, date, String(req.body?.method || '').slice(0, 30) || null, String(req.body?.reference || '').slice(0, 100) || null, req.user.id])).rows[0];
+    await logAudit({ user: req.user, action: 'shared_payer.payment', entityType: 'plot', entityId: meter.plot_id, changes: { payment: { to: `${payer.name} KES ${amount}` } } });
+    res.json({ success: true, id: r.id });
   } catch (err) { console.error(err); res.status(500).json({ error: err.message }); }
 });
 
