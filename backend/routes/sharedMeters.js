@@ -366,4 +366,87 @@ router.post('/payers/:id/payments', auth, async (req, res) => {
   } catch (err) { console.error(err); res.status(500).json({ error: err.message }); }
 });
 
+// ── Payment history per row: list / edit / delete ──
+// kind 'unit'  = a tenant's receipt in utility_payments (same table as the Expenses page's utility receipts)
+// kind 'payer' = a payment from an extra business sharing a unit (shared_meter_payments)
+const DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+// GET /:id/payments?house_id=  or  ?payer_id=
+router.get('/:id/payments', auth, async (req, res) => {
+  try {
+    const m = await meterOf(pool, pid(req.params.id));
+    if (!m) return res.status(404).json({ error: 'Meter not found.' });
+    if (!(await guard(req, res, m.plot_id, 'meters.view'))) return;
+    const from = `${m.start_month}-01`;
+    if (pid(req.query.payer_id)) {
+      const own = (await pool.query('SELECT 1 FROM shared_meter_payers WHERE id = $1 AND meter_id = $2', [pid(req.query.payer_id), m.id])).rows[0];
+      if (!own) return res.status(404).json({ error: 'Not found.' });
+      const r = await pool.query(`SELECT id, amount, payment_date, method, reference FROM shared_meter_payments WHERE payer_id = $1 AND payment_date >= $2::date ORDER BY payment_date DESC, id DESC`, [pid(req.query.payer_id), from]);
+      return res.json({ success: true, data: r.rows.map(x => ({ ...x, kind: 'payer', amount: parseFloat(x.amount) })) });
+    }
+    const houseId = pid(req.query.house_id);
+    const on = houseId && (await pool.query('SELECT 1 FROM shared_meter_units WHERE meter_id = $1 AND house_id = $2', [m.id, houseId])).rows[0];
+    if (!on) return res.status(404).json({ error: 'Not found.' });
+    const r = await pool.query(
+      `SELECT u.id, u.amount, u.payment_date, u.method, u.reference, t.full_name AS tenant_name FROM utility_payments u LEFT JOIN tenants t ON t.id = u.tenant_id
+       WHERE u.house_id = $1 AND u.utility_type = $2 AND u.payment_date >= $3::date ORDER BY u.payment_date DESC, u.id DESC`, [houseId, m.utility_type, from]);
+    res.json({ success: true, data: r.rows.map(x => ({ ...x, kind: 'unit', amount: parseFloat(x.amount) })) });
+  } catch (err) { console.error(err); res.status(500).json({ error: err.message }); }
+});
+
+// Find a payment and check it belongs to a shared meter, then the user's permission on its property.
+async function paymentContext(req, res) {
+  const kind = req.params.kind, id = pid(req.params.id);
+  if (!id || !['unit', 'payer'].includes(kind)) { res.status(404).json({ error: 'Not found.' }); return null; }
+  let row, plotId, label;
+  if (kind === 'unit') {
+    row = (await pool.query(
+      `SELECT u.*, h.plot_id AS h_plot, h.unit_number FROM utility_payments u JOIN houses h ON h.id = u.house_id
+       WHERE u.id = $1 AND EXISTS (SELECT 1 FROM shared_meter_units smu JOIN shared_meters sm ON sm.id = smu.meter_id
+                                   WHERE smu.house_id = u.house_id AND sm.utility_type = u.utility_type AND sm.active = true)`, [id])).rows[0];
+    plotId = row?.h_plot; label = row ? `unit ${row.unit_number}` : '';
+  } else {
+    row = (await pool.query(
+      `SELECT p.*, pr.name, m.plot_id AS m_plot FROM shared_meter_payments p JOIN shared_meter_payers pr ON pr.id = p.payer_id JOIN shared_meters m ON m.id = pr.meter_id WHERE p.id = $1`, [id])).rows[0];
+    plotId = row?.m_plot; label = row ? row.name : '';
+  }
+  if (!row) { res.status(404).json({ error: 'Payment not found.' }); return null; }
+  if (!(await guard(req, res, plotId, 'meters.record'))) return null;
+  return { kind, id, row, plotId, label };
+}
+
+// { amount?, payment_date?, method?, reference? }
+router.put('/payments/:kind/:id', auth, async (req, res) => {
+  try {
+    const ctx = await paymentContext(req, res); if (!ctx) return;
+    const b = req.body || {}; const old = ctx.row;
+    const amount = b.amount != null ? round2(Number(b.amount)) : parseFloat(old.amount);
+    if (!Number.isFinite(amount) || amount <= 0 || amount > 1e8) return res.status(400).json({ error: 'Enter an amount above 0.' });
+    const date = b.payment_date ? b.payment_date : String(old.payment_date instanceof Date ? old.payment_date.toISOString() : old.payment_date).slice(0, 10);
+    if (!DATE.test(date)) return res.status(400).json({ error: 'The date is not valid.' });
+    const method = b.method !== undefined ? String(b.method || '').slice(0, 30) || null : old.method;
+    const reference = b.reference !== undefined ? String(b.reference || '').slice(0, 100) || null : old.reference;
+    const table = ctx.kind === 'unit' ? 'utility_payments' : 'shared_meter_payments';
+    await pool.query(`UPDATE ${table} SET amount = $1, payment_date = $2, method = $3, reference = $4 WHERE id = $5`, [amount, date, method, reference, ctx.id]);
+    const oldDate = String(old.payment_date instanceof Date ? old.payment_date.toISOString() : old.payment_date).slice(0, 10);
+    const changes = {};
+    if (amount !== parseFloat(old.amount)) changes.amount = { from: `KES ${parseFloat(old.amount)}`, to: `KES ${amount}` };
+    if (date !== oldDate) changes.date = { from: oldDate, to: date };
+    if ((method || '') !== (old.method || '')) changes.method = { from: old.method || '', to: method || '' };
+    if ((reference || '') !== (old.reference || '')) changes.reference = { from: old.reference || '', to: reference || '' };
+    await logAudit({ user: req.user, action: 'shared_payment.edited', entityType: 'plot', entityId: ctx.plotId, changes: { payment: { to: `${ctx.label} water payment #${ctx.id}` }, ...changes } });
+    res.json({ success: true });
+  } catch (err) { console.error(err); res.status(500).json({ error: err.message }); }
+});
+
+router.delete('/payments/:kind/:id', auth, async (req, res) => {
+  try {
+    const ctx = await paymentContext(req, res); if (!ctx) return;
+    const table = ctx.kind === 'unit' ? 'utility_payments' : 'shared_meter_payments';
+    await pool.query(`DELETE FROM ${table} WHERE id = $1`, [ctx.id]);
+    await logAudit({ user: req.user, action: 'shared_payment.deleted', entityType: 'plot', entityId: ctx.plotId, changes: { payment: { from: `${ctx.label}: KES ${parseFloat(ctx.row.amount)} on ${String(ctx.row.payment_date instanceof Date ? ctx.row.payment_date.toISOString() : ctx.row.payment_date).slice(0, 10)}` } } });
+    res.json({ success: true });
+  } catch (err) { console.error(err); res.status(500).json({ error: err.message }); }
+});
+
 module.exports = router;

@@ -2,7 +2,7 @@
 // meter). Staff enter the monthly bill; it is split by unit weight among the
 // occupied units, and tenants' water receipts fund it. Pass-through money — it
 // is not an expense or income, and never touches rent.
-import { useCallback, useEffect, useState } from 'react';
+import { Fragment, useCallback, useEffect, useState } from 'react';
 import API from '../services/api';
 
 const today = () => new Date().toISOString().slice(0, 10);
@@ -28,6 +28,9 @@ export default function SharedMeter({ plotId, plotName, type, month, setMonth, s
   const [billForm, setBillForm] = useState(null);
   const [contrib, setContrib] = useState(null);
   const [payerForm, setPayerForm] = useState(null); // a second business sharing a unit
+  const [histKey, setHistKey] = useState(null);   // which row's payment history is open
+  const [hist, setHist] = useState([]);
+  const [editPay, setEditPay] = useState(null);
 
   const loadList = useCallback(async () => {
     if (!plotId) return;
@@ -115,6 +118,28 @@ export default function SharedMeter({ plotId, plotName, type, month, setMonth, s
     } catch (e) { err(e, 'Could not record the contribution.'); }
   };
 
+  const loadHist = async (r) => {
+    try {
+      const r2 = await API.get(`/shared-meters/${meterId}/payments`, { params: r.payer_id ? { payer_id: r.payer_id } : { house_id: r.house_id } });
+      setHist(r2.data.data);
+    } catch (e) { setHist([]); err(e, 'Could not load the payments.'); }
+  };
+  const toggleHist = (r) => {
+    const k = `${r.house_id}-${r.payer_id || 0}`;
+    if (histKey === k) { setHistKey(null); setEditPay(null); return; }
+    setHistKey(k); setEditPay(null); setHist([]); loadHist(r);
+  };
+  const savePay = async (row) => {
+    try {
+      await API.put(`/shared-meters/payments/${editPay.kind}/${editPay.id}`, { amount: Number(editPay.amount), payment_date: editPay.payment_date, method: editPay.method, reference: editPay.reference });
+      setEditPay(null); setMsg({ ok: 'Payment updated.', err: '' }); await loadHist(row); loadSum();
+    } catch (e) { err(e, 'Could not update the payment.'); }
+  };
+  const delPay = async (row, p) => {
+    if (!window.confirm(`Delete this KES ${p.amount.toLocaleString()} payment (${String(p.payment_date).slice(0, 10)})? This changes the balance and is recorded in the audit log.`)) return;
+    try { await API.delete(`/shared-meters/payments/${p.kind}/${p.id}`); setMsg({ ok: 'Payment deleted.', err: '' }); await loadHist(row); loadSum(); }
+    catch (e) { err(e, 'Could not delete the payment.'); }
+  };
   const addPayer = async () => {
     try {
       await API.post(`/shared-meters/${meterId}/payers`, { ...payerForm, house_id: Number(payerForm.house_id) });
@@ -305,16 +330,40 @@ export default function SharedMeter({ plotId, plotName, type, month, setMonth, s
               <tbody>
                 {bill.rows.map(r => {
                   const wa = waNumber(r.tenant_phone);
+                  const rk = `${r.house_id}-${r.payer_id || 0}`;
                   return (
-                    <tr key={`${r.house_id}-${r.payer_id || 0}`} style={r.status === 'paid' ? undefined : { background: r.status === 'unpaid' ? 'rgba(220,38,38,.05)' : 'rgba(180,83,9,.06)' }}>
+                    <Fragment key={rk}>
+                    <tr style={r.status === 'paid' ? undefined : { background: r.status === 'unpaid' ? 'rgba(220,38,38,.05)' : 'rgba(180,83,9,.06)' }}>
                       <td style={td}><b>{r.unit_number}</b>{r.payer_id && <span title="A second business sharing this unit" style={{ fontSize: 11, color: '#7c3aed' }}> +shared</span>}</td><td style={td}>{r.tenant_name || '—'}</td><td style={td}>{isCat ? (r.category || '—') : r.weight}</td>
                       <td style={td}>{kes(r.share)}</td><td style={td}>{kes(r.paid)}</td><td style={td}>{kes(r.balance)}</td>
                       <td style={{ ...td, color: ST[r.status][1], fontWeight: 700 }}>{ST[r.status][0]}</td>
                       <td style={{ ...td, whiteSpace: 'nowrap' }}>
                         {r.status !== 'paid' && wa && <a style={{ ...btn, textDecoration: 'none', display: 'inline-block', marginRight: 6 }} href={`https://wa.me/${wa}?text=${encodeURIComponent(reminder(r))}`} target="_blank" rel="noopener noreferrer">💬 Remind</a>}
+                        <button style={{ ...btn, marginRight: 6 }} onClick={() => toggleHist(r)} title="See, edit or delete this row's payments">🧾 Payments</button>
                         {(r.tenant_id || r.payer_id) && <button style={primary} onClick={() => setContrib({ tenant_id: r.tenant_id, payer_id: r.payer_id, name: r.tenant_name, unit: r.unit_number, amount: r.balance || '', method: 'Cash', reference: '', date: today() })}>+ Record</button>}
                       </td>
-                    </tr>);
+                    </tr>
+                    {histKey === rk && (
+                      <tr><td colSpan={8} style={{ ...td, background: 'var(--bg, #f8fafc)' }}>
+                        <div style={{ fontSize: 13, marginBottom: 6 }}><b>Water payments for {r.tenant_name || `unit ${r.unit_number}`}</b> <span style={{ color: 'var(--muted, #6b7280)' }}>· applied to the oldest bill first</span></div>
+                        {hist.length === 0 && <div style={{ fontSize: 13, color: 'var(--muted, #6b7280)' }}>No payments recorded yet.</div>}
+                        {hist.map(p => (
+                          <div key={`${p.kind}-${p.id}`} style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', padding: '5px 0', borderTop: '1px solid var(--border, #e5e7eb)' }}>
+                            {editPay && editPay.id === p.id && editPay.kind === p.kind ? (<>
+                              <input style={{ ...inp, width: 100 }} type="number" min="1" step="0.01" value={editPay.amount} onChange={e => setEditPay({ ...editPay, amount: e.target.value })} />
+                              <input style={inp} type="date" value={editPay.payment_date} onChange={e => setEditPay({ ...editPay, payment_date: e.target.value })} />
+                              <select style={inp} value={editPay.method || ''} onChange={e => setEditPay({ ...editPay, method: e.target.value })}><option value="">—</option><option>Cash</option><option>M-Pesa</option><option>Bank</option></select>
+                              <input style={{ ...inp, width: 140 }} placeholder="Reference" maxLength={100} value={editPay.reference || ''} onChange={e => setEditPay({ ...editPay, reference: e.target.value })} />
+                              <button style={primary} onClick={() => savePay(r)}>Save</button><button style={btn} onClick={() => setEditPay(null)}>Cancel</button>
+                            </>) : (<>
+                              <b style={{ width: 110 }}>{kes(p.amount)}</b><span style={{ width: 100 }}>{String(p.payment_date).slice(0, 10)}</span>
+                              <span style={{ width: 80 }}>{p.method || '—'}</span><span style={{ flex: 1, color: 'var(--muted, #6b7280)' }}>{p.reference || ''}</span>
+                              {canRecord && <button style={{ ...btn, padding: '3px 10px' }} onClick={() => setEditPay({ id: p.id, kind: p.kind, amount: p.amount, payment_date: String(p.payment_date).slice(0, 10), method: p.method || '', reference: p.reference || '' })}>Edit</button>}
+                              {canRecord && <button style={{ ...btn, padding: '3px 10px', color: '#b91c1c' }} onClick={() => delPay(r, p)}>Delete</button>}
+                            </>)}
+                          </div>))}
+                      </td></tr>)}
+                    </Fragment>);
                 })}
               </tbody>
             </table>
