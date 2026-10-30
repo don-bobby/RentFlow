@@ -344,6 +344,18 @@ export default function Payments() {
   }
 
   useEffect(() => { if (location.state?.tenantId) setTenantFilter(String(location.state.tenantId)); }, [location.state]); // from Ctrl+K quick search
+  // From the dashboard briefing ("N payments received today"): highlight those rows and scroll to the first.
+  const [highlightIds, setHighlightIds] = useState([]);
+  useEffect(() => {
+    const ids = location.state?.highlightIds;
+    if (ids?.length) { setFilter('all'); setPlotFilter('all'); setTenantFilter('all'); setHighlightIds(ids.map(String)); }
+  }, [location.state]);
+  useEffect(() => {
+    if (!highlightIds.length || loading) return;
+    const t1 = setTimeout(() => document.getElementById(`payment-row-${highlightIds[0]}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 150);
+    const t2 = setTimeout(() => setHighlightIds([]), 6000);
+    return () => { clearTimeout(t1); clearTimeout(t2); };
+  }, [highlightIds, loading]);
   const filtered    = payments
     .filter(p => filter === 'all' || p.status === filter)
     .filter(p => plotFilter === 'all' || String(p.plot_id) === String(plotFilter))
@@ -526,7 +538,7 @@ export default function Payments() {
             </thead>
             <tbody>
               {displayed.map((p, i) => (
-                <tr key={p.id} className="pm-row" style={{ borderTop: '1px solid var(--border)', background: i % 2 === 0 ? 'var(--surface)' : 'var(--surface2)' }}>
+                <tr key={p.id} id={`payment-row-${p.id}`} className="pm-row" style={{ borderTop: '1px solid var(--border)', background: highlightIds.includes(String(p.id)) ? 'rgba(250, 204, 21, 0.28)' : i % 2 === 0 ? 'var(--surface)' : 'var(--surface2)', boxShadow: highlightIds.includes(String(p.id)) ? 'inset 4px 0 0 #f59e0b' : 'none', transition: 'background 0.6s, box-shadow 0.6s' }}>
                   <td style={{ padding: '12px 16px' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                       {(() => {

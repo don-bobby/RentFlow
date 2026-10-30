@@ -699,7 +699,7 @@ export default function Dashboard() {
         const staleMaint = data.requests.filter(r => r.status !== 'completed' && (today - new Date(r.reported_at)) / 86400000 > 7);
         const needsMatching = payments.filter(p => p.status === 'unmatched' || p.status === 'review');
         const items = [
-          { icon: '💰', text: `${paidToday.length} payment${paidToday.length !== 1 ? 's' : ''} received today`, sub: paidToday.length ? `KES ${paidTodayTotal.toLocaleString()}` : null, to: '/payments', show: true, tone: 'green' },
+          { icon: '💰', text: `${paidToday.length} payment${paidToday.length !== 1 ? 's' : ''} received today`, sub: paidToday.length ? `KES ${paidTodayTotal.toLocaleString()}` : null, to: '/payments', state: { highlightIds: paidToday.map(p => p.id) }, show: true, tone: 'green' },
           { icon: '⏰', text: `${dueSoon.length} tenant${dueSoon.length !== 1 ? 's' : ''} with rent due in the next 3 days`, to: '/tenants', show: dueSoon.length > 0, tone: 'amber' },
           { icon: '⚠️', text: `${overdue.length} tenant${overdue.length !== 1 ? 's' : ''} past their due day with a balance`, sub: `KES ${overdue.reduce((a, t) => a + parseFloat(t.balance || 0), 0).toLocaleString()} owed`, to: '/reports', show: overdue.length > 0, tone: 'red' },
           { icon: '🔀', text: `${needsMatching.length} M-Pesa payment${needsMatching.length !== 1 ? 's' : ''} need matching`, to: '/payments', show: needsMatching.length > 0, tone: 'red' },
@@ -716,7 +716,7 @@ export default function Dashboard() {
             <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 12 }}>Today's briefing — {today.toLocaleDateString('en-KE', { weekday: 'long', day: 'numeric', month: 'long' })}</div>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
               {items.map((i, k) => (
-                <button key={k} onClick={() => navigate(i.to)} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '9px 14px', borderRadius: 10, border: '1px solid var(--border)', borderLeft: `4px solid ${toneColor[i.tone]}`, background: 'var(--surface2)', color: 'var(--text)', fontSize: 13, cursor: 'pointer', textAlign: 'left' }}>
+                <button key={k} onClick={() => navigate(i.to, i.state ? { state: i.state } : undefined)} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '9px 14px', borderRadius: 10, border: '1px solid var(--border)', borderLeft: `4px solid ${toneColor[i.tone]}`, background: 'var(--surface2)', color: 'var(--text)', fontSize: 13, cursor: 'pointer', textAlign: 'left' }}>
                   <span>{i.icon}</span>
                   <span><span style={{ fontWeight: 600 }}>{i.text}</span>{i.sub && <span style={{ color: 'var(--muted)' }}> · {i.sub}</span>}</span>
                 </button>
