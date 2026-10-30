@@ -183,6 +183,16 @@ const STYLES = `
 .rp-btn-primary:hover:not(:disabled) { background: var(--rp-accent); filter: brightness(1.08); }
 .rp-btn:disabled { opacity: .55; cursor: default; }
 
+/* Combined download button (CSV / PDF menu) */
+.rp-dl { position: relative; display: inline-flex; }
+.rp-dl-menu { position: absolute; right: 0; top: calc(100% + 6px); z-index: 30; min-width: 190px; padding: 6px;
+  background: var(--rp-surface); border: 1px solid var(--rp-border); border-radius: 12px; box-shadow: var(--rp-shadow); }
+.rp-dl-item { display: flex; align-items: center; gap: 10px; width: 100%; padding: 9px 10px; border: none; border-radius: 8px;
+  background: transparent; color: var(--rp-text); font-size: 13px; font-weight: 600; text-align: left; }
+.rp-dl-item:hover, .rp-dl-item:focus-visible { background: var(--rp-surface2); }
+.rp-dl-item small { display: block; font-weight: 400; font-size: 11px; color: var(--rp-muted); margin-top: 1px; }
+@media (max-width: 640px) { .rp-dl { flex: 1; } .rp-dl .rp-btn { width: 100%; } }
+
 /* Expandable search */
 .rp-search { display: flex; align-items: center; height: 38px; width: 38px; flex: none; overflow: hidden; border-radius: 10px; border: 1px solid var(--rp-border); background: var(--rp-surface); transition: width .2s ease, border-color .15s; }
 .rp-search.open { width: 240px; max-width: 100%; border-color: var(--rp-accent); }
@@ -681,10 +691,10 @@ export default function Reports() {
     return 'All time';
   }
 
-  function downloadPDF(cols, rowsToExport, summaryItems, reportTitle) {
+  function downloadPDF(cols, rowsToExport, summaryItems, reportTitle, filename) {
     exportReportPdf({
       title: reportTitle || 'Report', columns: cols, rows: rowsToExport, summary: summaryItems,
-      periodLabel: periodText(), filename: active, generatedBy: me?.name,
+      periodLabel: periodText(), filename: filename || active, generatedBy: me?.name,
     });
   }
 
@@ -717,6 +727,9 @@ export default function Reports() {
     } catch (e) { console.error(e); alert('Could not generate statement.'); }
   }
 
+  // Unpaid Rent's own property filter (kept out of `filters` so changing it
+  // narrows the already-loaded data instead of refetching everything).
+  const [unpaidPlot, setUnpaidPlot] = useState('all');
   const [ownerPlot, setOwnerPlot] = useState('all');
   const [ownerMonth, setOwnerMonth] = useState(() => { const d = new Date(); d.setMonth(d.getMonth() - 1); return d.toISOString().slice(0, 7); });
   async function downloadOwnerStatement() {
@@ -1101,7 +1114,9 @@ export default function Reports() {
       // A property-specific revoke of reports.unpaid_rent hides just that
       // property's tenants from this report (trims the data, doesn't hide
       // the whole report) — see canForPlot above.
-      const visibleTenants = tenants.filter(t => canForPlot('reports.unpaid_rent', t.plot_id, plotPermissions));
+      const visibleTenants = tenants
+        .filter(t => canForPlot('reports.unpaid_rent', t.plot_id, plotPermissions))
+        .filter(t => unpaidPlot === 'all' || String(t.plot_id) === String(unpaidPlot));
       const unpaid = filterByPeriod(visibleTenants.filter(t => t.is_active && parseFloat(t.balance || 0) > 0), 'move_in_date');
       const total  = unpaid.reduce((s, t) => s + parseFloat(t.balance || 0), 0);
       const now = new Date();
@@ -1131,7 +1146,8 @@ export default function Reports() {
         { label: '61–90 days', value: bucketCount('61–90 days'), color: '#f97316' },
         { label: '90+ days', value: bucketCount('90+ days'), color: 'var(--red)' },
       ];
-      title = 'Unpaid Rent Report';
+      const unpaidPlotName = unpaidPlot !== 'all' ? plotById[unpaidPlot]?.name || plots.find(p => String(p.id) === String(unpaidPlot))?.name : null;
+      title = unpaidPlotName ? `Unpaid Rent Report — ${unpaidPlotName}` : 'Unpaid Rent Report';
       chart = <HBarChart title="Tenants by aging bucket" series={[{ name: 'Tenants', color: 'var(--red)' }]}
         data={['0–30 days', '31–60 days', '61–90 days', '90+ days'].map(b => ({ label: b, values: [bucketCount(b)] }))} format={v => v} />;
     }
@@ -1365,7 +1381,7 @@ export default function Reports() {
       const visUtil = utilities.filter(u => canForPlot('reports.expenses', u.plot_id, plotPermissions));
       const fUtil   = filterByPeriod(visUtil, 'payment_date');
       const bills   = filterByPeriod(expenses.filter(e => UTIL_CATS.includes(e.category) && canForPlot('reports.expenses', e.plot_id, plotPermissions)), 'expense_date');
-      const recovered = fUtil.reduce((s, u) => s + parseFloat(u.amount || 0), 0);
+      const recovered = fUtil.filter(u => !u.shared_meter_id).reduce((s, u) => s + parseFloat(u.amount || 0), 0);
       const billed    = bills.reduce((s, e) => s + parseFloat(e.amount || 0), 0);
       columns = ['Date', 'Tenant', 'Property / Unit', 'Utility', 'Amount (KES)', 'Method', 'Reference'];
       rows    = fUtil.map(u => ({
@@ -2048,6 +2064,18 @@ export default function Reports() {
             </select>
           )}
 
+              {/* Property filter — Unpaid Rent only. Lists just the properties this
+                  user may see unpaid rent for (same canForPlot check as the rows). */}
+              {active === 'unpaid' && (
+                <select value={unpaidPlot} onChange={e => setUnpaidPlot(e.target.value)} className="rp-select" title="Filter by property">
+                  <option value="all">All properties</option>
+                  {(data.plots || [])
+                    .filter(pl => canForPlot('reports.unpaid_rent', pl.id, data.plotPermissions))
+                    .sort((a, b) => String(a.name).localeCompare(String(b.name)))
+                    .map(pl => <option key={pl.id} value={pl.id}>{pl.name}</option>)}
+                </select>
+              )}
+
               {/* Bulk tenant statements — only where it's meaningful */}
               {active === 'rentroll' && (
                 <button type="button" className="rp-btn" onClick={downloadAllStatements}>📄 All statements (ZIP)</button>
@@ -2067,13 +2095,28 @@ export default function Reports() {
               )}
 
               {/* Print / Save as PDF — browsers' print dialog offers "Save as PDF" */}
-              <button type="button" className="rp-btn" onClick={() => downloadPDF(columns, visibleRows, summary, title)} disabled={!columns.length} style={active === 'ownerstatement' ? { display: 'none' } : undefined}>📄 Download PDF</button>
+              {active !== 'unpaid' && (
+                <button type="button" className="rp-btn" onClick={() => downloadPDF(columns, visibleRows, summary, title)} disabled={!columns.length} style={active === 'ownerstatement' ? { display: 'none' } : undefined}>📄 Download PDF</button>
+              )}
               <button type="button" className="rp-btn" onClick={() => window.print()} title="Browser print of the on-screen page">🖨️ Print</button>
 
-              {/* Download button */}
-              <button type="button" className="rp-btn rp-btn-primary" onClick={() => downloadCSV(visibleRows, active)} disabled={!visibleRows.length}>
-                ⬇ Download CSV
-              </button>
+              {/* Download button — Unpaid Rent gets one button with a CSV / PDF menu;
+                  every other report keeps its separate CSV button for now. */}
+              {active === 'unpaid' ? (() => {
+                const plotName = unpaidPlot !== 'all' ? (data.plots || []).find(p => String(p.id) === String(unpaidPlot))?.name : null;
+                const fileBase = `unpaid-rent${plotName ? `_${String(plotName).replace(/[^\w-]+/g, '-')}` : ''}`;
+                return (
+                  <DownloadMenu
+                    disabled={!visibleRows.length}
+                    onCSV={() => downloadCSV(visibleRows, fileBase)}
+                    onPDF={() => downloadPDF(columns, visibleRows, summary, title, fileBase)}
+                  />
+                );
+              })() : (
+                <button type="button" className="rp-btn rp-btn-primary" onClick={() => downloadCSV(visibleRows, active)} disabled={!visibleRows.length}>
+                  ⬇ Download CSV
+                </button>
+              )}
             </div>
           </div>
 
@@ -2189,6 +2232,45 @@ function ExpandableSearch({ value, onChange }) {
       />
       {value && (
         <button type="button" onClick={() => { onChange(''); inputRef.current?.focus(); }} aria-label="Clear search" style={{ fontSize: 16 }}>×</button>
+      )}
+    </div>
+  );
+}
+
+// One "Download" button that opens a small CSV / PDF menu. Closes on outside
+// click, on Esc, or after picking an option.
+function DownloadMenu({ onCSV, onPDF, disabled }) {
+  const [open, setOpen] = useState(false);
+  const wrapRef = useRef(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e) => { if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false); };
+    const onKey  = (e) => { if (e.key === 'Escape') setOpen(false); };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onKey); };
+  }, [open]);
+
+  const pick = (fn) => { setOpen(false); fn(); };
+
+  return (
+    <div className="rp-dl" ref={wrapRef}>
+      <button type="button" className="rp-btn rp-btn-primary" onClick={() => setOpen(o => !o)} disabled={disabled}
+        aria-haspopup="menu" aria-expanded={open}>
+        ⬇ Download ▾
+      </button>
+      {open && (
+        <div className="rp-dl-menu" role="menu">
+          <button type="button" role="menuitem" className="rp-dl-item" onClick={() => pick(onCSV)}>
+            <span aria-hidden="true">📊</span>
+            <span>CSV<small>Opens in Excel or Google Sheets</small></span>
+          </button>
+          <button type="button" role="menuitem" className="rp-dl-item" onClick={() => pick(onPDF)}>
+            <span aria-hidden="true">📄</span>
+            <span>PDF<small>Ready to print or share</small></span>
+          </button>
+        </div>
       )}
     </div>
   );

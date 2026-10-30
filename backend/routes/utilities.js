@@ -16,16 +16,21 @@ router.get('/', staffAuth, async (req, res) => {
   try {
     const visible = await getVisiblePlotIds(req.user);
     if (visible !== 'ALL' && visible.length === 0) return res.json({ success: true, data: [] });
-    const r = await pool.query(
-      `SELECT u.*, t.full_name AS tenant_name, h.unit_number, p.name AS plot_name
+    const run = (withShared) => pool.query(
+      `SELECT u.*, t.full_name AS tenant_name, h.unit_number, p.name AS plot_name${withShared ? ', sm.id AS shared_meter_id' : ''}
        FROM utility_payments u
        LEFT JOIN tenants t ON u.tenant_id = t.id
        LEFT JOIN houses  h ON u.house_id  = h.id
        LEFT JOIN plots   p ON u.plot_id   = p.id
+       ${withShared ? `LEFT JOIN shared_meter_units smu ON smu.house_id = u.house_id
+       LEFT JOIN shared_meters sm ON sm.id = smu.meter_id AND sm.utility_type = u.utility_type AND sm.active = true AND u.payment_date >= (sm.start_month || '-01')::date` : ''}
        ${visible === 'ALL' ? '' : 'WHERE u.plot_id = ANY($1)'}
        ORDER BY u.payment_date DESC, u.id DESC`,
       visible === 'ALL' ? [] : [visible]
     );
+    // shared_meter_id marks receipts that fund a shared-meter bill (pass-through, not "recovered cost").
+    let r;
+    try { r = await run(true); } catch (e) { if (e.code === '42P01') r = await run(false); else throw e; }
     const data = await filterRowsByPermission(req.user, r.rows, 'expenses.view', (row) => row.plot_id);
     res.json({ success: true, data });
   } catch (err) { res.status(500).json({ error: err.message }); }

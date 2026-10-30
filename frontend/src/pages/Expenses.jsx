@@ -291,7 +291,7 @@ export default function Expenses() {
   const utilExpenses = expenses.filter(e => UTILITY_CATS.includes(e.category) && inUtilScope(e.plot_id, e.expense_date));
   const utilScoped   = utilReceipts.filter(u => inUtilScope(u.plot_id, u.payment_date));
   const utilityCost = utilExpenses.reduce((sum, e) => sum + parseFloat(e.amount || 0), 0);
-  const utilityRecovered = utilScoped.reduce((sum, u) => sum + parseFloat(u.amount || 0), 0);
+  const utilityRecovered = utilScoped.filter(u => !u.shared_meter_id).reduce((sum, u) => sum + parseFloat(u.amount || 0), 0);
   const utilPlotOptions = [...new Map([...expenses, ...utilReceipts].filter(x => x.plot_id).map(x => [String(x.plot_id), x.plot_name || `Plot ${x.plot_id}`])).entries()];
   const utilMonthOptions = [...new Set([
     ...expenses.filter(e => UTILITY_CATS.includes(e.category)).map(e => ym(e.expense_date)),
@@ -347,6 +347,13 @@ export default function Expenses() {
             <div><div style={{ fontSize: 12, color: 'var(--muted)' }}>Utility bills paid</div><div style={{ fontWeight: 700, fontSize: 18, color: 'var(--text)' }}>KES {utilityCost.toLocaleString()}</div></div>
             <div><div style={{ fontSize: 12, color: 'var(--muted)' }}>Recovered from tenants</div><div style={{ fontWeight: 700, fontSize: 18, color: 'var(--green, #16a34a)' }}>KES {utilityRecovered.toLocaleString()}</div></div>
             <div><div style={{ fontSize: 12, color: 'var(--muted)' }}>Net utility cost</div><div style={{ fontWeight: 700, fontSize: 18, color: (utilityCost - utilityRecovered) > 0 ? 'var(--red, #dc2626)' : 'var(--green, #16a34a)' }}>KES {(utilityCost - utilityRecovered).toLocaleString()}</div></div>
+            {utilScoped.some(u => u.shared_meter_id) && (
+              <div title="Tenants' payments toward a shared meter's bill. Pass-through money: not counted here, and not part of your profit and loss.">
+                <div style={{ fontSize: 12, color: 'var(--muted)' }}>Shared-meter contributions</div>
+                <div style={{ fontWeight: 700, fontSize: 18, color: 'var(--muted)' }}>KES {utilScoped.filter(u => u.shared_meter_id).reduce((s, u) => s + parseFloat(u.amount || 0), 0).toLocaleString()}</div>
+                <div style={{ fontSize: 11, color: 'var(--muted)' }}>pass-through, not in profit/loss</div>
+              </div>
+            )}
             {utilScoped.length > 0 && (
               <button onClick={() => setShowUtil(v => !v)} style={{ marginLeft: 'auto', padding: '8px 14px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface2)', color: 'var(--text)', fontWeight: 600, fontSize: 12, cursor: 'pointer' }}>
                 {showUtil ? 'Hide' : 'View'} tenant receipts ({utilScoped.length})

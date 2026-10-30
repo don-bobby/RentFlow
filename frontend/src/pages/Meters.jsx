@@ -4,6 +4,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import API from '../services/api';
 import { useAuth } from '../context/AuthContext';
+import SharedMeter from './SharedMeter';
 
 const thisMonth = () => new Date().toISOString().slice(0, 7);
 const today = () => new Date().toISOString().slice(0, 10);
@@ -74,7 +75,8 @@ export default function Meters() {
   const total = useMemo(() => (sheet?.data || []).reduce((a, r) => a + (r.tenant_id ? (calc(r)?.amount || 0) : 0), 0), [sheet, vals]); // eslint-disable-line
 
   const save = async () => {
-    const readings = Object.entries(vals).filter(([, v]) => v !== '' && v != null).map(([house_id, reading]) => ({ house_id: Number(house_id), reading }));
+    const sharedIds = new Set((sheet?.data || []).filter(r => r.shared_meter_number).map(r => String(r.house_id)));
+    const readings = Object.entries(vals).filter(([id, v]) => v !== '' && v != null && !sharedIds.has(id)).map(([house_id, reading]) => ({ house_id: Number(house_id), reading }));
     if (!readings.length) return setMsg({ ok: '', err: 'Enter at least one reading.' });
     setBusy(true); setMsg({ ok: '', err: '' }); setRowErr({});
     try {
@@ -119,9 +121,15 @@ export default function Meters() {
         <div style={{ flex: 1 }} />
         <button style={tab === 'sheet' ? primary : btn} onClick={() => setTab('sheet')}>📝 Reading sheet</button>
         <button style={tab === 'bills' ? primary : btn} onClick={() => setTab('bills')}>🧾 Bills</button>
+        <button style={tab === 'shared' ? primary : btn} onClick={() => setTab('shared')}>🔗 Shared meter</button>
       </div>
       {msg.err && <div style={{ ...card, color: '#b91c1c', marginBottom: 10 }}>{msg.err}</div>}
       {msg.ok && <div style={{ ...card, color: '#15803d', marginBottom: 10 }}>{msg.ok}</div>}
+
+      {tab === 'shared' && (
+        <SharedMeter plotId={plotId} plotName={plots.find(p => String(p.id) === String(plotId))?.name || ''} type={type} month={month} setMonth={setMonth}
+          styles={{ card, inp, btn, primary, th, td }} />
+      )}
 
       {tab === 'sheet' && sheet && (<>
         <div style={{ ...card, marginBottom: 12, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -145,11 +153,11 @@ export default function Meters() {
                 const c = calc(row); const paid = row.status === 'paid';
                 return (
                   <tr key={row.house_id}>
-                    <td style={td}><b>{row.unit_number}</b></td>
+                    <td style={td}><b>{row.unit_number}</b>{row.shared_meter_number && <div style={{ fontSize: 11, color: '#7c3aed' }} title="Billed through the Shared meter tab">shared meter {row.shared_meter_number}</div>}</td>
                     <td style={td}>{row.tenant_name || <span style={{ color: 'var(--muted, #9ca3af)' }}>Vacant</span>}</td>
                     <td style={td}>{row.previous_reading ?? <span title="First reading for this meter becomes the starting reading" style={{ color: 'var(--muted, #9ca3af)' }}>— start</span>}</td>
                     <td style={td}>
-                      <input style={{ ...inp, width: 100, borderColor: rowErr[row.house_id] ? '#dc2626' : undefined }} type="number" inputMode="decimal" min="0" step="0.01" disabled={!sheet.can_record || paid}
+                      <input style={{ ...inp, width: 100, borderColor: rowErr[row.house_id] ? '#dc2626' : undefined }} type="number" inputMode="decimal" min="0" step="0.01" disabled={!sheet.can_record || paid || !!row.shared_meter_number}
                         value={vals[row.house_id] ?? ''} onChange={e => setVals({ ...vals, [row.house_id]: e.target.value })} />
                       {rowErr[row.house_id] && <div style={{ color: '#dc2626', fontSize: 12, maxWidth: 220 }}>{rowErr[row.house_id]}</div>}
                     </td>

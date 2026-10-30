@@ -30,6 +30,15 @@ async function guard(req, res, plotId, perm) {
   if (!permissions.includes('*') && !permissions.includes(perm)) { res.status(403).json({ error: `Missing permission: ${perm}` }); return false; }
   return true;
 }
+// Units on a shared meter are billed through /api/shared-meters, not by individual readings.
+async function sharedHouses(db, plotId, type) {
+  try {
+    const r = await db.query(
+      `SELECT smu.house_id, sm.meter_number FROM shared_meter_units smu JOIN shared_meters sm ON sm.id = smu.meter_id
+       WHERE sm.plot_id = $1 AND sm.utility_type = $2 AND sm.active = true`, [plotId, type]);
+    return new Map(r.rows.map(x => [x.house_id, x.meter_number]));
+  } catch (e) { if (e.code === '42P01') return new Map(); throw e; }
+}
 const pid = (v) => { const n = parseInt(v, 10); return Number.isInteger(n) && n > 0 ? n : null; };
 
 router.get('/rates', auth, async (req, res) => {
@@ -81,6 +90,7 @@ router.get('/sheet', auth, async (req, res) => {
       pool.query('SELECT rate, standing_charge, unit_label FROM plot_utility_rates WHERE plot_id = $1 AND utility_type = $2', [plotId, type]),
       getPermissions(req.user, plotId),
     ]);
+    const shared = await sharedHouses(pool, plotId, type);
     const num = (v) => (v == null ? null : parseFloat(v));
     const p = perms.permissions;
     res.json({
@@ -88,7 +98,7 @@ router.get('/sheet', auth, async (req, res) => {
       rate: rate.rows[0] ? { rate: num(rate.rows[0].rate), standing_charge: num(rate.rows[0].standing_charge), unit_label: rate.rows[0].unit_label } : null,
       can_record: p.includes('*') || p.includes('meters.record'),
       can_set_rates: p.includes('*') || p.includes('meters.rates'),
-      data: rows.rows.map(r => ({ ...r, previous_reading: num(r.previous_reading), reading: num(r.reading), units: num(r.units), amount: num(r.amount) })),
+      data: rows.rows.map(r => ({ ...r, shared_meter_number: shared.get(r.house_id) || null, previous_reading: num(r.previous_reading), reading: num(r.reading), units: num(r.units), amount: num(r.amount) })),
     });
   } catch (err) { console.error(err); res.status(500).json({ error: err.message }); }
 });
@@ -107,9 +117,11 @@ router.post('/readings', auth, async (req, res) => {
     const rateRow = (await client.query('SELECT rate, standing_charge FROM plot_utility_rates WHERE plot_id = $1 AND utility_type = $2', [plotId, type])).rows[0];
     await client.query('BEGIN');
     const errors = [], saved = [];
+    const sharedMap = await sharedHouses(client, plotId, type);
     for (const item of b.readings) {
       const houseId = pid(item.house_id), val = Number(item.reading);
       if (!houseId || item.reading === '' || item.reading == null || !Number.isFinite(val) || val < 0 || val > 1e9) { errors.push({ house_id: item.house_id, error: 'Reading is not a valid number.' }); continue; }
+      if (sharedMap.has(houseId)) { errors.push({ house_id: houseId, error: `This unit is on shared meter ${sharedMap.get(houseId)}; its water is billed through the shared bill.` }); continue; }
       const h = (await client.query(
         `SELECT h.id, h.unit_number, t.id AS tenant_id FROM houses h LEFT JOIN tenants t ON t.house_id = h.id AND t.is_active = true WHERE h.id = $1 AND h.plot_id = $2 LIMIT 1`, [houseId, plotId])).rows[0];
       if (!h) { errors.push({ house_id: houseId, error: 'That unit is not in this property.' }); continue; }
