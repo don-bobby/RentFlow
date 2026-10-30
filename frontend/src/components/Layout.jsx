@@ -1,4 +1,4 @@
-import { Outlet, NavLink, useNavigate } from 'react-router-dom';
+import { Outlet, NavLink, useNavigate, useLocation } from 'react-router-dom';
 import { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import API, { getPendingLandlordsCount } from '../services/api';
@@ -135,6 +135,16 @@ export default function Layout() {
   useEffect(() => {
     try { localStorage.setItem('sidebarCollapsed', collapsed ? '1' : '0'); } catch {}
   }, [collapsed]);
+
+  // Fold state for sidebar groups (persisted); the group holding the current page auto-opens.
+  const location = useLocation();
+  const [folded, setFolded] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('sidebarFolded') || 'null') || { insight: true, marketing: true, admin: true }; }
+    catch { return { insight: true, marketing: true, admin: true }; }
+  });
+  useEffect(() => { try { localStorage.setItem('sidebarFolded', JSON.stringify(folded)); } catch {} }, [folded]);
+  const [flyout, setFlyout] = useState(null); // { key, top }
+  useEffect(() => { setFlyout(null); }, [location.pathname, collapsed]);
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
@@ -326,6 +336,21 @@ export default function Layout() {
   const topbarNav  = nav.filter(i => i.to === '/messages');
   const sidebarNav = nav.filter(i => i.to !== '/notices' && i.to !== '/messages');
 
+  // ── Sidebar grouping ──
+  // Expanded: foldable headings. Collapsed: one icon per group (pop-out list).
+  const NAV_GROUPS = [
+    { key: 'daily',     label: 'Daily work',    icon: null, open: true,  paths: ['/', '/portal', '/properties', '/building', '/tenants', '/payments', '/maintenance', '/expenses'] },
+    { key: 'billing',   label: 'Billing tools', icon: '💧', open: true,  paths: ['/meters', '/reminders', '/paybill', '/sms'] },
+    { key: 'insight',   label: 'Insight',       icon: '📊', open: false, paths: ['/reports', '/estate'] },
+    { key: 'marketing', label: 'Listings',      icon: '🏷️', open: false, paths: ['/manage/listings', '/specials'] },
+    { key: 'admin',     label: 'Access',        icon: '🛡️', open: false, paths: ['/users', '/roles', '/permission-overrides'] },
+  ];
+  const groupedNav = NAV_GROUPS
+    .map(g => ({ ...g, items: sidebarNav.filter(i => g.paths.includes(i.to) || (g.key === 'daily' && !NAV_GROUPS.some(x => x.paths.includes(i.to)))) }))
+    .filter(g => g.items.length > 0);
+  const unreadFor = (label) => label === 'Messages' ? unreadMsg : label === 'Users' ? pendingLandlords : label === 'Properties' ? pendingUnits : 0;
+  const isRail = collapsed && !isMobile;
+
   // Bottom nav shows max 5 most-used items on mobile
   const bottomNav = sidebarNav.slice(0, 5);
   const roleColor = { admin: '#818cf8', super_admin: '#818cf8', agent: '#f472b6', landlord: '#34d399', caretaker: '#fbbf24' };
@@ -374,11 +399,50 @@ export default function Layout() {
           )}
 
           <nav style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 2, padding: '0 8px', overflowY: 'auto' }}>
-            {sidebarNav.map(({ to, icon, label }) => (
-              <NavItem key={to} to={to} icon={icon} label={label} collapsed={collapsed && !isMobile}
-                unread={label === 'Messages' ? unreadMsg : label === 'Users' ? pendingLandlords : label === 'Properties' ? pendingUnits : 0}
-                onClick={() => isMobile && setSidebarOpen(false)} />
-            ))}
+            {groupedNav.map(g => {
+              const hasActive = g.items.some(i => i.to === '/' ? location.pathname === '/' : location.pathname.startsWith(i.to));
+              const isOpen = g.open && g.key === 'daily' ? true : (!folded[g.key] || hasActive);
+              const badge = g.items.reduce((n, i) => n + unreadFor(i.label), 0);
+              if (isRail) {
+                // Collapsed rail: single-item or daily groups show their own icons; others merge into one icon with a pop-out.
+                if (g.key === 'daily' || g.items.length === 1) {
+                  return g.items.map(({ to, icon, label }) => (
+                    <NavItem key={to} to={to} icon={icon} label={label} collapsed unread={unreadFor(label)} />
+                  ));
+                }
+                return (
+                  <button key={g.key} title={g.label}
+                    onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); setFlyout(f => f && f.key === g.key ? null : { key: g.key, top: r.top }); }}
+                    style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '9px 12px', borderRadius: 10, border: 'none', cursor: 'pointer', position: 'relative',
+                      color: hasActive || flyout?.key === g.key ? '#fff' : 'rgba(255,255,255,0.5)',
+                      background: hasActive || flyout?.key === g.key ? 'rgba(255,255,255,0.15)' : 'transparent',
+                      borderLeft: hasActive ? '3px solid #818cf8' : '3px solid transparent' }}>
+                    <span style={{ fontSize: 18 }}>{g.icon}</span>
+                    <span style={{ position: 'absolute', right: 6, bottom: 6, fontSize: 8, opacity: 0.6 }}>▸</span>
+                    {badge > 0 && <span style={{ position: 'absolute', top: 4, right: 6, background: '#ef4444', width: 8, height: 8, borderRadius: 99 }} />}
+                  </button>
+                );
+              }
+              return (
+                <div key={g.key} style={{ marginBottom: 4 }}>
+                  {g.key === 'daily' ? (
+                    <div style={{ padding: '6px 12px 4px', fontSize: 10, fontWeight: 700, letterSpacing: '0.8px', textTransform: 'uppercase', color: 'rgba(255,255,255,0.3)' }}>{g.label}</div>
+                  ) : (
+                    <button onClick={() => setFolded(f => ({ ...f, [g.key]: isOpen }))}
+                      style={{ display: 'flex', alignItems: 'center', width: '100%', padding: '8px 12px 4px', border: 'none', background: 'transparent', cursor: 'pointer', fontFamily: 'inherit',
+                        fontSize: 10, fontWeight: 700, letterSpacing: '0.8px', textTransform: 'uppercase', color: 'rgba(255,255,255,0.3)' }}>
+                      <span style={{ flex: 1, textAlign: 'left' }}>{g.label}</span>
+                      {!isOpen && badge > 0 && <span style={{ background: '#ef4444', color: '#fff', borderRadius: 99, fontSize: 10, padding: '1px 6px', marginRight: 6 }}>{badge}</span>}
+                      <span style={{ transition: 'transform 0.15s', transform: isOpen ? 'rotate(90deg)' : 'none' }}>▸</span>
+                    </button>
+                  )}
+                  {isOpen && g.items.map(({ to, icon, label }) => (
+                    <NavItem key={to} to={to} icon={icon} label={label} collapsed={false}
+                      unread={unreadFor(label)} onClick={() => isMobile && setSidebarOpen(false)} />
+                  ))}
+                </div>
+              );
+            })}
             <NavAction icon="⚙️" label="Settings" collapsed={collapsed && !isMobile} active={modal === 'settings'}
               onClick={() => { openSettings(); isMobile && setSidebarOpen(false); }} />
           </nav>
@@ -393,6 +457,23 @@ export default function Layout() {
           )}
         </aside>
       )}
+
+      {/* ── Collapsed-rail pop-out for merged groups ── */}
+      {isRail && flyout && (() => {
+        const g = groupedNav.find(x => x.key === flyout.key);
+        if (!g) return null;
+        return (
+          <>
+            <div onClick={() => setFlyout(null)} style={{ position: 'fixed', inset: 0, zIndex: 59 }} />
+            <div style={{ position: 'fixed', left: 70, top: Math.min(flyout.top, window.innerHeight - (g.items.length * 40 + 50)), zIndex: 60, background: '#161a23', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 12, padding: 6, minWidth: 190, boxShadow: '0 12px 40px rgba(0,0,0,0.5)' }}>
+              <div style={{ padding: '6px 10px 4px', fontSize: 10, fontWeight: 700, letterSpacing: '0.8px', textTransform: 'uppercase', color: 'rgba(255,255,255,0.35)' }}>{g.label}</div>
+              {g.items.map(({ to, icon, label }) => (
+                <NavItem key={to} to={to} icon={icon} label={label} collapsed={false} unread={unreadFor(label)} onClick={() => setFlyout(null)} />
+              ))}
+            </div>
+          </>
+        );
+      })()}
 
       {/* ── Main ── */}
       <main style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, paddingBottom: 0 }}>
