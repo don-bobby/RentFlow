@@ -54,6 +54,11 @@ export default function SharedMeter({ plotId, plotName, type, month, setMonth, s
   const meters = (list?.data || []).filter(m => m.utility_type === type);
   const bill = sum?.bills.find(b => b.billing_month === month) || null;
   const canManage = list?.can_manage, canRecord = list?.can_record;
+  const isCat = sum?.meter.split_mode === 'category';
+  // Categories among units occupied right now, with how many of each (what a new bill will charge).
+  const occCats = (() => { const m = new Map(); (sum?.units || []).filter(u => u.tenant_id).forEach(u => { const c = u.category || 'Other'; m.set(c, (m.get(c) || 0) + 1); }); return [...m.entries()]; })();
+  const lastRates = () => (sum?.bills.find(b => b.category_rates)?.category_rates) || {};
+  const billExpected = (f) => occCats.reduce((a, [c, n]) => a + n * (Number(f.rates?.[c]) || 0), 0);
   const err = (e, fallback) => setMsg({ ok: '', err: e.response?.data?.error || fallback });
   const reload = () => { loadSum(); loadList(); };
 
@@ -61,16 +66,16 @@ export default function SharedMeter({ plotId, plotName, type, month, setMonth, s
   const openSetup = (m) => {
     const onOther = new Set(units.filter(u => u.shared_meter_number && (!m || u.shared_meter_number !== m.meter_number)).map(u => u.house_id));
     setSetup({
-      id: m?.id || null, meter_number: m?.meter_number || '', account_number: m?.account_number || '', start_month: m?.start_month || month,
+      id: m?.id || null, split_mode: m?.split_mode || 'weight', meter_number: m?.meter_number || '', account_number: m?.account_number || '', start_month: m?.start_month || month,
       rows: units.filter(u => !onOther.has(u.house_id)).map(u => {
         const cur = m?.units.find(x => x.house_id === u.house_id);
-        return { house_id: u.house_id, unit_number: u.unit_number, tenant_name: u.tenant_name, on: !!cur || (!m), weight: cur ? cur.weight : 1 };
+        return { house_id: u.house_id, unit_number: u.unit_number, tenant_name: u.tenant_name, on: !!cur || (!m), weight: cur ? cur.weight : 1, category: cur?.category || '' };
       }),
     });
   };
   const saveSetup = async () => {
-    const chosen = setup.rows.filter(r => r.on).map(r => ({ house_id: r.house_id, weight: Number(r.weight) }));
-    const body = { meter_number: setup.meter_number, account_number: setup.account_number, start_month: setup.start_month, units: chosen };
+    const chosen = setup.rows.filter(r => r.on).map(r => ({ house_id: r.house_id, weight: Number(r.weight) || 1, category: r.category }));
+    const body = { split_mode: setup.split_mode, meter_number: setup.meter_number, account_number: setup.account_number, start_month: setup.start_month, units: chosen };
     try {
       if (setup.id) await API.put(`/shared-meters/${setup.id}`, body);
       else { const r = await API.post('/shared-meters', { ...body, plot_id: Number(plotId), utility_type: type }); setMeterId(r.data.data.id); }
@@ -81,8 +86,8 @@ export default function SharedMeter({ plotId, plotName, type, month, setMonth, s
   // ── bills ──
   const saveBill = async () => {
     try {
-      if (billForm.id) await API.put(`/shared-meters/bills/${billForm.id}`, { amount: Number(billForm.amount), due_date: billForm.due_date || null, reference: billForm.reference, notes: billForm.notes });
-      else await API.post(`/shared-meters/${meterId}/bills`, { billing_month: month, amount: Number(billForm.amount), due_date: billForm.due_date || null, reference: billForm.reference, notes: billForm.notes });
+      if (billForm.id) await API.put(`/shared-meters/bills/${billForm.id}`, { category_rates: isCat ? billForm.rates : undefined, amount: Number(billForm.amount), due_date: billForm.due_date || null, reference: billForm.reference, notes: billForm.notes });
+      else await API.post(`/shared-meters/${meterId}/bills`, { category_rates: isCat ? billForm.rates : undefined, billing_month: month, amount: Number(billForm.amount), due_date: billForm.due_date || null, reference: billForm.reference, notes: billForm.notes });
       setBillForm(null); setMsg({ ok: 'Bill saved and split between the occupied units.', err: '' }); loadSum();
     } catch (e) { err(e, 'Could not save the bill.'); }
   };
@@ -138,7 +143,15 @@ export default function SharedMeter({ plotId, plotName, type, month, setMonth, s
             <label style={{ fontSize: 13 }}>Account no. (optional)<br /><input style={inp} value={setup.account_number} maxLength={60} onChange={e => setSetup({ ...setup, account_number: e.target.value })} /></label>
             <label style={{ fontSize: 13 }}>Counts payments from<br /><input style={inp} type="month" value={setup.start_month} onChange={e => e.target.value && setSetup({ ...setup, start_month: e.target.value })} /></label>
           </div>
-          <div style={{ fontSize: 13, color: 'var(--muted, #6b7280)', marginBottom: 6 }}>Tick the units on this meter. <b>Weight</b>: 1 = a normal unit, 2 = uses about twice as much (e.g. a salon).</div>
+          <label style={{ fontSize: 13, display: 'block', marginBottom: 8 }}>How is the bill split?<br />
+            <select style={inp} value={setup.split_mode} onChange={e => setSetup({ ...setup, split_mode: e.target.value })}>
+              <option value="weight">Equally (or by weight)</option>
+              <option value="category">By category: a fixed amount per unit (shops, offices, salons…)</option>
+            </select></label>
+          <datalist id="unit-cats"><option value="Shop" /><option value="Office" /><option value="Salon" /><option value="Other" /></datalist>
+          <div style={{ fontSize: 13, color: 'var(--muted, #6b7280)', marginBottom: 6 }}>{setup.split_mode === 'category'
+            ? <>Tick the units on this meter and give each a <b>category</b>. When you enter a bill you'll set how much each category pays per unit.</>
+            : <>Tick the units on this meter. <b>Weight</b>: 1 = a normal unit (everyone equal), 2 = uses about twice as much.</>}</div>
           <div style={{ maxHeight: 300, overflowY: 'auto', border: '1px solid var(--border, #e5e7eb)', borderRadius: 8 }}>
             <table style={{ width: '100%', borderCollapse: 'collapse' }}><tbody>
               {setup.rows.map((r, i) => (
@@ -146,7 +159,9 @@ export default function SharedMeter({ plotId, plotName, type, month, setMonth, s
                   <td style={td}><input type="checkbox" checked={r.on} onChange={e => setSetup({ ...setup, rows: setup.rows.map((x, j) => j === i ? { ...x, on: e.target.checked } : x) })} /></td>
                   <td style={td}><b>{r.unit_number}</b></td>
                   <td style={td}>{r.tenant_name || <span style={{ color: '#9ca3af' }}>Vacant</span>}</td>
-                  <td style={td}><input style={{ ...inp, width: 70 }} type="number" min="0.1" step="0.1" disabled={!r.on} value={r.weight} onChange={e => setSetup({ ...setup, rows: setup.rows.map((x, j) => j === i ? { ...x, weight: e.target.value } : x) })} /></td>
+                  <td style={td}>{setup.split_mode === 'category'
+                    ? <input style={{ ...inp, width: 110 }} list="unit-cats" maxLength={30} placeholder="Category" disabled={!r.on} value={r.category} onChange={e => setSetup({ ...setup, rows: setup.rows.map((x, j) => j === i ? { ...x, category: e.target.value } : x) })} />
+                    : <input style={{ ...inp, width: 70 }} type="number" min="0.1" step="0.1" disabled={!r.on} value={r.weight} onChange={e => setSetup({ ...setup, rows: setup.rows.map((x, j) => j === i ? { ...x, weight: e.target.value } : x) })} />}</td>
                 </tr>))}
             </tbody></table>
           </div>
@@ -157,7 +172,7 @@ export default function SharedMeter({ plotId, plotName, type, month, setMonth, s
       {meters.length > 0 && !setup && (
         <div style={{ ...card, display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center', marginBottom: 12 }}>
           {meters.length > 1 && <select style={inp} value={meterId || ''} onChange={e => setMeterId(Number(e.target.value))}>{meters.map(m => <option key={m.id} value={m.id}>Meter {m.meter_number}</option>)}</select>}
-          {sum && <span>Meter <b>{sum.meter.meter_number}</b>{sum.meter.account_number ? <> · account {sum.meter.account_number}</> : ''} · {sum.units.length} units (total weight {sum.units.reduce((a, u) => a + u.weight, 0)})</span>}
+          {sum && <span>Meter <b>{sum.meter.meter_number}</b>{sum.meter.account_number ? <> · account {sum.meter.account_number}</> : ''} · {sum.units.length} units · {isCat ? 'priced by category' : `split by weight (total ${sum.units.reduce((a, u) => a + u.weight, 0)})`}</span>}
           <div style={{ flex: 1 }} />
           {canManage && sum && <button style={btn} onClick={() => openSetup(meters.find(m => m.id === meterId))}>Edit meter / weights</button>}
           {canManage && <button style={btn} onClick={() => openSetup(null)}>+ Another meter</button>}
@@ -169,7 +184,7 @@ export default function SharedMeter({ plotId, plotName, type, month, setMonth, s
           <div style={{ ...card, marginBottom: 12 }}>
             <b>No bill entered for {monthName(month)}.</b>
             {canRecord
-              ? <div style={{ marginTop: 8 }}><button style={primary} onClick={() => setBillForm({ amount: '', due_date: '', reference: '', notes: '' })}>Enter the {type.toLowerCase()} bill</button></div>
+              ? <div style={{ marginTop: 8 }}><button style={primary} onClick={() => setBillForm({ amount: '', due_date: '', reference: '', notes: '', rates: lastRates() })}>Enter the {type.toLowerCase()} bill</button></div>
               : <div style={{ fontSize: 13, marginTop: 6 }}>Only staff who can record meters may enter the bill.</div>}
           </div>
         )}
@@ -181,7 +196,21 @@ export default function SharedMeter({ plotId, plotName, type, month, setMonth, s
               <label style={{ fontSize: 13 }}>Pay by<br /><input style={inp} type="date" value={billForm.due_date || ''} onChange={e => setBillForm({ ...billForm, due_date: e.target.value })} /></label>
               <label style={{ fontSize: 13 }}>Bill reference<br /><input style={inp} maxLength={100} value={billForm.reference || ''} onChange={e => setBillForm({ ...billForm, reference: e.target.value })} /></label>
             </div>
-            <p style={{ fontSize: 12.5, color: 'var(--muted, #6b7280)' }}>This is split by weight between the units occupied right now. Don't also add it under Expenses: it is the tenants' own bill, so it stays out of your profit and loss.</p>
+            {isCat && (
+              <div style={{ marginTop: 10 }}>
+                <div style={{ fontSize: 13, marginBottom: 6 }}><b>What each unit pays</b> (pre-filled from the last bill)</div>
+                <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                  {occCats.map(([c, n]) => (
+                    <label key={c} style={{ fontSize: 13 }}>{c} ({n} unit{n === 1 ? '' : 's'})<br />
+                      <input style={{ ...inp, width: 110 }} type="number" min="1" step="0.01" value={billForm.rates?.[c] ?? ''} onChange={e => setBillForm({ ...billForm, rates: { ...billForm.rates, [c]: e.target.value } })} />
+                    </label>))}
+                </div>
+                {(() => { const exp = billExpected(billForm), amt = Number(billForm.amount) || 0, gap = Math.round((amt - exp) * 100) / 100;
+                  return <div style={{ fontSize: 13, marginTop: 8, color: gap === 0 ? '#16a34a' : '#b45309' }}>
+                    Units will pay <b>{kes(exp)}</b> in total{amt ? (gap === 0 ? ' — exactly the bill.' : gap > 0 ? ` — ${kes(gap)} short of the bill.` : ` — ${kes(-gap)} more than the bill.`) : '.'}</div>; })()}
+              </div>
+            )}
+            <p style={{ fontSize: 12.5, color: 'var(--muted, #6b7280)' }}>{isCat ? "Each occupied unit pays the amount for its category, and the bill amount above is the target. Vacant units aren't charged." : 'This is split by weight between the units occupied right now.'} Don't also add it under Expenses: it is the tenants' own bill, so it stays out of your profit and loss.</p>
             <div style={{ display: 'flex', gap: 8 }}><button style={primary} onClick={saveBill}>Save bill</button><button style={btn} onClick={() => setBillForm(null)}>Cancel</button></div>
           </div>
         )}
@@ -204,6 +233,7 @@ export default function SharedMeter({ plotId, plotName, type, month, setMonth, s
               <span style={{ color: '#dc2626' }}>✕ {bill.counts.unpaid} not paid</span>
               {bill.due_date && <span>Pay by {new Date(bill.due_date).toLocaleDateString('en-KE')}</span>}
               {bill.reference && <span>Ref {bill.reference}</span>}
+              {isCat && bill.gap !== 0 && <span style={{ color: '#b45309' }}>Shares add up to {kes(bill.expected)} — {bill.gap > 0 ? `${kes(bill.gap)} short of` : `${kes(-bill.gap)} over`} the bill</span>}
             </div>
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 10, alignItems: 'center' }}>
               {bill.provider_paid_on
@@ -213,7 +243,7 @@ export default function SharedMeter({ plotId, plotName, type, month, setMonth, s
                 ? <button style={btn} onClick={() => providerPaid(null)}>Undo</button>
                 : <button style={btn} onClick={() => providerPaid(today())}>Mark paid to utility company</button>)}
               <div style={{ flex: 1 }} />
-              {canRecord && <button style={btn} onClick={() => setBillForm({ id: bill.id, amount: bill.amount, due_date: bill.due_date ? String(bill.due_date).slice(0, 10) : '', reference: bill.reference || '', notes: bill.notes || '' })}>Edit amount</button>}
+              {canRecord && <button style={btn} onClick={() => setBillForm({ id: bill.id, rates: bill.category_rates || lastRates(), amount: bill.amount, due_date: bill.due_date ? String(bill.due_date).slice(0, 10) : '', reference: bill.reference || '', notes: bill.notes || '' })}>Edit amount</button>}
               {canRecord && <button style={btn} onClick={resplit} title="After a move-in or move-out">Re-split</button>}
               {canRecord && <button style={btn} onClick={delBill}>Delete</button>}
             </div>
@@ -227,13 +257,13 @@ export default function SharedMeter({ plotId, plotName, type, month, setMonth, s
               <button style={btn} onClick={downloadCsv} disabled={!bill.rows.some(r => r.status !== 'paid')}>⬇ Not contributed (CSV)</button>
             </div>
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-              <thead><tr><th style={th}>Unit</th><th style={th}>Tenant</th><th style={th}>Weight</th><th style={th}>Share</th><th style={th}>Paid</th><th style={th}>Balance</th><th style={th}>Status</th><th style={th} /></tr></thead>
+              <thead><tr><th style={th}>Unit</th><th style={th}>Tenant</th><th style={th}>{isCat ? 'Category' : 'Weight'}</th><th style={th}>Share</th><th style={th}>Paid</th><th style={th}>Balance</th><th style={th}>Status</th><th style={th} /></tr></thead>
               <tbody>
                 {bill.rows.map(r => {
                   const wa = waNumber(r.tenant_phone);
                   return (
                     <tr key={r.house_id} style={r.status === 'paid' ? undefined : { background: r.status === 'unpaid' ? 'rgba(220,38,38,.05)' : 'rgba(180,83,9,.06)' }}>
-                      <td style={td}><b>{r.unit_number}</b></td><td style={td}>{r.tenant_name || '—'}</td><td style={td}>{r.weight}</td>
+                      <td style={td}><b>{r.unit_number}</b></td><td style={td}>{r.tenant_name || '—'}</td><td style={td}>{isCat ? (r.category || '—') : r.weight}</td>
                       <td style={td}>{kes(r.share)}</td><td style={td}>{kes(r.paid)}</td><td style={td}>{kes(r.balance)}</td>
                       <td style={{ ...td, color: ST[r.status][1], fontWeight: 700 }}>{ST[r.status][0]}</td>
                       <td style={{ ...td, whiteSpace: 'nowrap' }}>

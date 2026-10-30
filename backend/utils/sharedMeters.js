@@ -21,7 +21,7 @@ async function computeMeter(db, meterId) {
   const m = (await db.query('SELECT * FROM shared_meters WHERE id = $1', [meterId])).rows[0];
   if (!m) return null;
   const [units, bills, shares] = await Promise.all([
-    db.query(`SELECT smu.house_id, smu.weight, h.unit_number, t.id AS tenant_id, t.full_name AS tenant_name, t.phone AS tenant_phone
+    db.query(`SELECT smu.*, h.unit_number, t.id AS tenant_id, t.full_name AS tenant_name, t.phone AS tenant_phone
               FROM shared_meter_units smu JOIN houses h ON h.id = smu.house_id
               LEFT JOIN tenants t ON t.house_id = h.id AND t.is_active = true
               WHERE smu.meter_id = $1 ORDER BY h.unit_number`, [meterId]),
@@ -47,20 +47,21 @@ async function computeMeter(db, meterId) {
       const share = parseFloat(s.share);
       const applied = round2(Math.min(rem, share));
       remaining.set(s.house_id, round2(rem - applied));
-      return { house_id: s.house_id, unit_number: s.unit_number, tenant_id: s.tenant_id, tenant_name: s.tenant_name, tenant_phone: s.tenant_phone,
+      return { house_id: s.house_id, unit_number: s.unit_number, category: s.category || null, tenant_id: s.tenant_id, tenant_name: s.tenant_name, tenant_phone: s.tenant_phone,
                weight: parseFloat(s.weight), share, paid: applied, balance: round2(share - applied), status: applied >= share ? 'paid' : applied > 0 ? 'partial' : 'unpaid' };
     });
     const target = parseFloat(b.amount);
     const funded = round2(rows.reduce((a, r) => a + r.paid, 0));
-    return { id: b.id, billing_month: b.billing_month, amount: target, due_date: b.due_date, reference: b.reference, notes: b.notes, provider_paid_on: b.provider_paid_on,
+    const expected = round2(rows.reduce((a, r) => a + r.share, 0));
+    return { id: b.id, billing_month: b.billing_month, amount: target, category_rates: b.category_rates || null, expected, gap: round2(target - expected), due_date: b.due_date, reference: b.reference, notes: b.notes, provider_paid_on: b.provider_paid_on,
              funded, outstanding: round2(target - funded), pct: target > 0 ? Math.min(100, Math.round((funded / target) * 1000) / 10) : 0,
              counts: { paid: rows.filter(r => r.status === 'paid').length, partial: rows.filter(r => r.status === 'partial').length, unpaid: rows.filter(r => r.status === 'unpaid').length },
              rows };
   });
   const credits = [...remaining.entries()].filter(([, v]) => v > 0).map(([house_id, credit]) => ({ house_id, credit: round2(credit) }));
   return {
-    meter: { id: m.id, plot_id: m.plot_id, utility_type: m.utility_type, meter_number: m.meter_number, account_number: m.account_number, start_month: m.start_month, active: m.active },
-    units: units.rows.map(u => ({ house_id: u.house_id, unit_number: u.unit_number, weight: parseFloat(u.weight), tenant_id: u.tenant_id, tenant_name: u.tenant_name, tenant_phone: u.tenant_phone,
+    meter: { id: m.id, plot_id: m.plot_id, utility_type: m.utility_type, meter_number: m.meter_number, account_number: m.account_number, start_month: m.start_month, active: m.active, split_mode: m.split_mode || 'weight' },
+    units: units.rows.map(u => ({ house_id: u.house_id, unit_number: u.unit_number, weight: parseFloat(u.weight), category: u.category || null, tenant_id: u.tenant_id, tenant_name: u.tenant_name, tenant_phone: u.tenant_phone,
                                   total_paid: round2(totalPaid.get(u.house_id) || 0), credit: round2(remaining.get(u.house_id) || 0) })),
     bills: outBills.reverse(), // newest first
     credits,
