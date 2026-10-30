@@ -335,7 +335,7 @@ export default function SharedMeter({ plotId, plotName, type, month, setMonth, s
                     <Fragment key={rk}>
                     <tr style={r.status === 'paid' ? undefined : { background: r.status === 'unpaid' ? 'rgba(220,38,38,.05)' : 'rgba(180,83,9,.06)' }}>
                       <td style={td}><b>{r.unit_number}</b>{r.payer_id && <span title="A second business sharing this unit" style={{ fontSize: 11, color: '#7c3aed' }}> +shared</span>}</td><td style={td}>{r.tenant_name || '—'}</td><td style={td}>{isCat ? (r.category || '—') : r.weight}</td>
-                      <td style={td}>{kes(r.share)}</td><td style={td}>{kes(r.paid)}</td><td style={td}>{kes(r.balance)}</td>
+                      <td style={td}>{kes(r.share)}</td><td style={td}>{kes(r.received ?? r.paid)}{r.extra > 0 && <div style={{ fontSize: 11, color: '#16a34a' }}>incl. {kes(r.extra)} extra, credit for next bill</div>}</td><td style={td}>{kes(r.balance)}</td>
                       <td style={{ ...td, color: ST[r.status][1], fontWeight: 700 }}>{ST[r.status][0]}</td>
                       <td style={{ ...td, whiteSpace: 'nowrap' }}>
                         {r.status !== 'paid' && wa && <a style={{ ...btn, textDecoration: 'none', display: 'inline-block', marginRight: 6 }} href={`https://wa.me/${wa}?text=${encodeURIComponent(reminder(r))}`} target="_blank" rel="noopener noreferrer">💬 Remind</a>}

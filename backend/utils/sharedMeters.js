@@ -53,6 +53,7 @@ async function computeMeter(db, meterId) {
   const sharesByBill = new Map();
   for (const s of shares.rows) { if (!sharesByBill.has(s.bill_id)) sharesByBill.set(s.bill_id, []); sharesByBill.get(s.bill_id).push(s); }
 
+  const lastRowByKey = new Map();
   const outBills = bills.rows.map(b => {
     const rows = (sharesByBill.get(b.id) || []).sort((a, c) => String(a.unit_number).localeCompare(String(c.unit_number), undefined, { numeric: true })).map(s => {
       const key = s.payer_id ? `p${s.payer_id}` : `h${s.house_id}`;
@@ -61,8 +62,10 @@ async function computeMeter(db, meterId) {
       const share = parseFloat(s.share);
       const applied = round2(Math.min(rem, share));
       remaining.set(key, round2(rem - applied));
-      return { house_id: s.house_id, payer_id: s.payer_id || null, unit_number: s.unit_number, category: s.category || null, tenant_id: s.payer_id ? null : s.tenant_id, tenant_name: pinfo ? pinfo.name : s.tenant_name, tenant_phone: pinfo ? pinfo.phone : s.tenant_phone,
-               weight: parseFloat(s.weight), share, paid: applied, balance: round2(share - applied), status: applied >= share ? 'paid' : applied > 0 ? 'partial' : 'unpaid' };
+      const row = { key, house_id: s.house_id, payer_id: s.payer_id || null, unit_number: s.unit_number, category: s.category || null, tenant_id: s.payer_id ? null : s.tenant_id, tenant_name: pinfo ? pinfo.name : s.tenant_name, tenant_phone: pinfo ? pinfo.phone : s.tenant_phone,
+               weight: parseFloat(s.weight), share, paid: applied, extra: 0, received: applied, balance: round2(share - applied), status: applied >= share ? 'paid' : applied > 0 ? 'partial' : 'unpaid' };
+      lastRowByKey.set(key, row);
+      return row;
     });
     const target = parseFloat(b.amount);
     const funded = round2(rows.reduce((a, r) => a + r.paid, 0));
@@ -72,6 +75,13 @@ async function computeMeter(db, meterId) {
              counts: { paid: rows.filter(r => r.status === 'paid').length, partial: rows.filter(r => r.status === 'partial').length, unpaid: rows.filter(r => r.status === 'unpaid').length },
              rows };
   });
+  // Money left over after every bill (an overpayment) is shown on that unit's latest row, so the
+  // Paid column reads as the exact amount received; it still counts as credit for the next bill.
+  for (const [key, row] of lastRowByKey) {
+    const left = remaining.get(key) || 0;
+    if (left > 0) { row.extra = round2(left); row.received = round2(row.paid + left); }
+    delete row.key;
+  }
   const credits = [...remaining.entries()].filter(([k, v]) => k.startsWith('h') && v > 0).map(([k, credit]) => ({ house_id: Number(k.slice(1)), credit: round2(credit) }));
   return {
     meter: { id: m.id, plot_id: m.plot_id, utility_type: m.utility_type, meter_number: m.meter_number, account_number: m.account_number, start_month: m.start_month, active: m.active, split_mode: m.split_mode || 'weight' },
