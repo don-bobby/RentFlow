@@ -2,6 +2,13 @@
 import { useEffect, useState } from 'react';
 import API from '../services/api';
 
+const csv = (t) => {
+  const esc = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+  const text = [t.columns, ...t.rows].map(r => r.map(esc).join(',')).join('\n') + (t.note ? `\n\n${esc(t.note)}` : '');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob(['\ufeff' + text], { type: 'text/csv' }));
+  a.download = `${t.title.replace(/[^A-Za-z0-9]+/g, '-').replace(/^-|-$/g, '').toLowerCase()}.csv`; a.click();
+};
 const cell = (v) => (typeof v === 'number' ? v.toLocaleString('en-KE') : v);
 
 export default function Ask() {
@@ -65,7 +72,10 @@ export default function Ask() {
           {it.answer && <p style={{ margin: '8px 0', lineHeight: 1.5, whiteSpace: 'pre-wrap' }}>{it.answer}</p>}
           {it.tables.map((t, k) => (
             <div key={k} style={{ marginTop: 10, overflowX: 'auto' }}>
-              {it.tables.length > 1 && <div style={{ fontWeight: 600, marginBottom: 4 }}>{t.title}</div>}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                <div style={{ fontWeight: 600, flex: 1 }}>{it.tables.length > 1 || it.answer ? t.title : ''}</div>
+                {t.rows.length > 0 && <button style={{ ...btn, padding: '5px 12px' }} onClick={() => csv(t)}>⬇ Download CSV</button>}
+              </div>
               {t.rows.length ? (
                 <table style={{ borderCollapse: 'collapse', width: '100%' }}>
                   <thead><tr>{t.columns.map(c => <th key={c} style={th}>{c}</th>)}</tr></thead>

@@ -104,6 +104,72 @@ const TOOLS = {
       return { title: 'Tenant lookup', columns: ['Tenant', 'Unit', 'Property', 'Rent (KES)', 'Owes (KES)', 'Moved in'], rows: r.map(x => [x.full_name, x.unit_number, x.plot, money(x.rent_amount), money(x.balance), x.move_in_date ? new Date(x.move_in_date).toISOString().slice(0, 10) : '']) };
     },
   },
+  not_paid_this_month: {
+    description: 'Active tenants who have not made any rent payment in a month. Optional: month (YYYY-MM, default this month), plot.',
+    props: { month: 'YYYY-MM', plot: 'Part of a property name' },
+    perm: 'payments.view',
+    async run(user, a) {
+      const m = MONTH.test(a.month || '') ? a.month : curMonth();
+      const ids = await plotIds(user, 'payments.view', a.plot); if (!ids.length) return none('Not paid');
+      const r = (await pool.query(
+        `SELECT t.full_name, h.unit_number, p.name AS plot, h.rent_amount, t.balance FROM tenants t JOIN houses h ON h.id = t.house_id JOIN plots p ON p.id = h.plot_id
+          WHERE t.is_active = true AND p.id = ANY($1)
+            AND NOT EXISTS (SELECT 1 FROM payments py WHERE py.tenant_id = t.id AND ${VALID_PAYMENT_SQL.replace(/status/g, 'py.status').replace(/method/g, 'py.method')} AND to_char(py.payment_date, 'YYYY-MM') = $2)
+          ORDER BY p.name, h.unit_number LIMIT 300`, [ids, m])).rows;
+      return { title: `No rent payment in ${m}`, columns: ['Tenant', 'Unit', 'Property', 'Rent (KES)', 'Owes (KES)'], rows: r.map(x => [x.full_name, x.unit_number, x.plot, money(x.rent_amount), money(x.balance)]), note: `${r.length} tenants have not paid in ${m}` };
+    },
+  },
+  recent_payments: {
+    description: 'The 25 most recent rent payments.',
+    props: { plot: 'Part of a property name' },
+    perm: 'payments.view',
+    async run(user, a) {
+      const ids = await plotIds(user, 'payments.view', a.plot); if (!ids.length) return none('Recent payments');
+      const r = (await pool.query(
+        `SELECT py.payment_date, t.full_name, h.unit_number, p.name AS plot, py.amount, py.method FROM payments py JOIN houses h ON h.id = py.house_id JOIN plots p ON p.id = h.plot_id LEFT JOIN tenants t ON t.id = py.tenant_id
+          WHERE p.id = ANY($1) AND ${VALID_PAYMENT_SQL.replace(/status/g, 'py.status').replace(/method/g, 'py.method')} ORDER BY py.payment_date DESC, py.id DESC LIMIT 25`, [ids])).rows;
+      return { title: 'Recent payments', columns: ['Date', 'Tenant', 'Unit', 'Property', 'Amount (KES)', 'Method'], rows: r.map(x => [new Date(x.payment_date).toISOString().slice(0, 10), x.full_name || '', x.unit_number, x.plot, money(x.amount), x.method || '']) };
+    },
+  },
+  revenue_by_month: {
+    description: 'Rent received in each month of a year. Optional: year (YYYY, default this year), plot.',
+    props: { year: 'YYYY', plot: 'Part of a property name' },
+    perm: 'payments.view',
+    async run(user, a) {
+      const y = /^\d{4}$/.test(a.year || '') ? a.year : String(new Date().getFullYear());
+      const ids = await plotIds(user, 'payments.view', a.plot); if (!ids.length) return none('Revenue by month');
+      const r = (await pool.query(
+        `SELECT to_char(py.payment_date, 'YYYY-MM') AS month, SUM(py.amount) AS total FROM payments py JOIN houses h ON h.id = py.house_id
+          WHERE h.plot_id = ANY($1) AND ${VALID_PAYMENT_SQL.replace(/status/g, 'py.status').replace(/method/g, 'py.method')} AND to_char(py.payment_date, 'YYYY') = $2 GROUP BY 1 ORDER BY 1`, [ids, y])).rows;
+      const total = r.reduce((s, x) => s + Number(x.total), 0);
+      return { title: `Rent received by month, ${y}`, columns: ['Month', 'Received (KES)'], rows: r.map(x => [x.month, money(x.total)]), note: `Total KES ${money(total)}` };
+    },
+  },
+  expiring_leases: {
+    description: 'Active tenants who have been in their unit 11 months or more (lease renewal due).',
+    props: { plot: 'Part of a property name' },
+    perm: 'tenants.view',
+    async run(user, a) {
+      const ids = await plotIds(user, 'tenants.view', a.plot); if (!ids.length) return none('Leases');
+      const r = (await pool.query(
+        `SELECT t.full_name, h.unit_number, p.name AS plot, t.move_in_date, (EXTRACT(YEAR FROM age(CURRENT_DATE, t.move_in_date)) * 12 + EXTRACT(MONTH FROM age(CURRENT_DATE, t.move_in_date)))::int AS months
+           FROM tenants t JOIN houses h ON h.id = t.house_id JOIN plots p ON p.id = h.plot_id
+          WHERE t.is_active = true AND p.id = ANY($1) AND t.move_in_date <= CURRENT_DATE - INTERVAL '11 months' ORDER BY t.move_in_date LIMIT 200`, [ids])).rows;
+      return { title: 'Tenancies of 11 months or more', columns: ['Tenant', 'Unit', 'Property', 'Moved in', 'Months'], rows: r.map(x => [x.full_name, x.unit_number, x.plot, new Date(x.move_in_date).toISOString().slice(0, 10), x.months]), note: `${r.length} tenancies` };
+    },
+  },
+  recent_move_ins: {
+    description: 'Tenants who moved in during the last 90 days.',
+    props: { plot: 'Part of a property name' },
+    perm: 'tenants.view',
+    async run(user, a) {
+      const ids = await plotIds(user, 'tenants.view', a.plot); if (!ids.length) return none('Move-ins');
+      const r = (await pool.query(
+        `SELECT t.full_name, h.unit_number, p.name AS plot, t.move_in_date, h.rent_amount FROM tenants t JOIN houses h ON h.id = t.house_id JOIN plots p ON p.id = h.plot_id
+          WHERE t.is_active = true AND p.id = ANY($1) AND t.move_in_date >= CURRENT_DATE - INTERVAL '90 days' ORDER BY t.move_in_date DESC LIMIT 200`, [ids])).rows;
+      return { title: 'Moved in during the last 90 days', columns: ['Tenant', 'Unit', 'Property', 'Moved in', 'Rent (KES)'], rows: r.map(x => [x.full_name, x.unit_number, x.plot, new Date(x.move_in_date).toISOString().slice(0, 10), money(x.rent_amount)]), note: `${r.length} new tenants` };
+    },
+  },
 };
 
 // Questions shown as buttons; these run directly without the AI.
@@ -115,6 +181,12 @@ const MENU = [
   { id: 'occupancy', label: 'Occupancy by property', tool: 'occupancy', args: {} },
   { id: 'maint', label: 'Open maintenance requests', tool: 'open_maintenance', args: {} },
   { id: 'exp', label: 'Expenses this month', tool: 'expenses_summary', args: {} },
+  { id: 'exp_last', label: 'Expenses last month', tool: 'expenses_summary', args: { month: 'LAST' } },
+  { id: 'notpaid', label: 'Who has not paid this month?', tool: 'not_paid_this_month', args: {} },
+  { id: 'recent', label: 'Latest 25 payments', tool: 'recent_payments', args: {} },
+  { id: 'revyear', label: 'Rent received by month this year', tool: 'revenue_by_month', args: {} },
+  { id: 'leases', label: 'Tenancies of 11+ months', tool: 'expiring_leases', args: {} },
+  { id: 'movein', label: 'Recent move-ins', tool: 'recent_move_ins', args: {} },
 ];
 
 function lastMonth() { const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - 1); return d.toISOString().slice(0, 7); }
