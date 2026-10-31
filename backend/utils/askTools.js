@@ -5,6 +5,7 @@ const pool = require('../database/db');
 const { getVisiblePlotIds } = require('../middleware/scope');
 const { getPermissionsForPlots } = require('../middleware/permissions');
 const { VALID_PAYMENT_SQL } = require('./rentLedger');
+const { computeMeter } = require('./sharedMeters');
 
 const isAdmin = (u) => ['admin', 'super_admin'].includes(u.role);
 const MONTH = /^\d{4}-(0[1-9]|1[0-2])$/;
@@ -170,11 +171,69 @@ const TOOLS = {
       return { title: 'Moved in during the last 90 days', columns: ['Tenant', 'Unit', 'Property', 'Moved in', 'Rent (KES)'], rows: r.map(x => [x.full_name, x.unit_number, x.plot, new Date(x.move_in_date).toISOString().slice(0, 10), money(x.rent_amount)]), note: `${r.length} new tenants` };
     },
   },
+  collection_by_property: {
+    description: 'For a month, per property: rent expected from occupied units, rent collected, still to collect and percent collected. Optional: month (YYYY-MM, default this month), plot.',
+    props: { month: 'YYYY-MM', plot: 'Part of a property name' },
+    perm: 'payments.view',
+    async run(user, a) {
+      const m = MONTH.test(a.month || '') ? a.month : curMonth();
+      const ids = await plotIds(user, 'payments.view', a.plot); if (!ids.length) return none('Collection by property');
+      const r = (await pool.query(
+        `SELECT p.name AS plot,
+                COALESCE((SELECT SUM(h.rent_amount) FROM houses h WHERE h.plot_id = p.id AND h.status = 'occupied'), 0) AS expected,
+                COALESCE((SELECT SUM(py.amount) FROM payments py JOIN houses h ON h.id = py.house_id WHERE h.plot_id = p.id
+                           AND ${VALID_PAYMENT_SQL.replace(/status/g, 'py.status').replace(/method/g, 'py.method')} AND to_char(py.payment_date, 'YYYY-MM') = $2), 0) AS collected
+           FROM plots p WHERE p.id = ANY($1) ORDER BY p.name`, [ids, m])).rows;
+      const exp = r.reduce((s, x) => s + Number(x.expected), 0), col = r.reduce((s, x) => s + Number(x.collected), 0);
+      return { title: `Rent collected per property, ${m}`, columns: ['Property', 'Expected (KES)', 'Collected (KES)', 'Still to collect (KES)', 'Collected'],
+        rows: r.map(x => [x.plot, money(x.expected), money(x.collected), money(Math.max(0, x.expected - x.collected)), Number(x.expected) > 0 ? `${Math.round(100 * x.collected / x.expected)}%` : '-']),
+        note: `All properties: KES ${money(col)} of KES ${money(exp)} expected. Expected is the rent of occupied units; paying ahead or arrears can make a month differ.` };
+    },
+  },
+  unpaid_utility_bills: {
+    description: 'Tenants (and businesses sharing a unit) who have not paid their water or electricity bill, per property: own-meter bills and shared-meter shares. Optional: utility (Water or Electricity, default Water), plot.',
+    props: { utility: 'Water or Electricity', plot: 'Part of a property name' },
+    perm: 'meters.view',
+    async run(user, a) {
+      const util = /^elec/i.test(a.utility || '') ? 'Electricity' : 'Water';
+      const ids = await plotIds(user, 'meters.view', a.plot); if (!ids.length) return none(`Unpaid ${util.toLowerCase()} bills`);
+      const names = new Map((await pool.query('SELECT id, name FROM plots WHERE id = ANY($1)', [ids])).rows.map(p => [p.id, p.name]));
+      const out = [];
+      if ((await pool.query(`SELECT to_regclass('meter_readings') AS t`)).rows[0].t) {
+        const r = (await pool.query(
+          `SELECT mr.plot_id, h.unit_number, t.full_name, SUM(mr.amount) AS owed, string_agg(mr.billing_month, ', ' ORDER BY mr.billing_month) AS months
+             FROM meter_readings mr JOIN houses h ON h.id = mr.house_id LEFT JOIN tenants t ON t.id = mr.tenant_id
+            WHERE mr.plot_id = ANY($1) AND mr.utility_type = $2 AND mr.status = 'billed' AND mr.amount > 0
+            GROUP BY mr.plot_id, h.unit_number, t.full_name`, [ids, util])).rows;
+        for (const x of r) out.push({ plot: names.get(x.plot_id), unit: x.unit_number, who: x.full_name || '(no tenant)', kind: 'Own meter', months: x.months, owed: Number(x.owed) });
+      }
+      if ((await pool.query(`SELECT to_regclass('shared_meters') AS t`)).rows[0].t) {
+        const ms = (await pool.query(`SELECT id, plot_id FROM shared_meters WHERE plot_id = ANY($1) AND utility_type = $2 AND active = true`, [ids, util])).rows;
+        for (const sm of ms) {
+          const c = await computeMeter(pool, sm.id); if (!c) continue;
+          const agg = new Map();
+          for (const b of c.bills) for (const row of b.rows) {
+            if (row.balance <= 0) continue;
+            const k = `${row.house_id}:${row.payer_id || ''}`;
+            const e = agg.get(k) || { unit: row.unit_number, who: row.tenant_name || '(no tenant)', months: [], owed: 0 };
+            e.months.push(b.billing_month); e.owed += row.balance; agg.set(k, e);
+          }
+          for (const e of agg.values()) out.push({ plot: names.get(sm.plot_id), unit: e.unit, who: e.who, kind: 'Shared meter', months: e.months.sort().join(', '), owed: e.owed });
+        }
+      }
+      out.sort((x, y) => String(x.plot).localeCompare(String(y.plot)) || String(x.unit).localeCompare(String(y.unit), undefined, { numeric: true }));
+      const total = out.reduce((s, x) => s + x.owed, 0);
+      return { title: `Unpaid ${util.toLowerCase()} bills`, columns: ['Property', 'Unit', 'Tenant / business', 'Meter', 'Months unpaid', 'Owes (KES)'],
+        rows: out.map(x => [x.plot, x.unit, x.who, x.kind, x.months, money(x.owed)]), note: `${out.length} unpaid, KES ${money(total)} in total` };
+    },
+  },
 };
 
 // Questions shown as buttons; these run directly without the AI.
 const MENU = [
   { id: 'unpaid', label: 'Who owes rent?', tool: 'unpaid_rent', args: {} },
+  { id: 'collection', label: 'Rent collected this month, per property', tool: 'collection_by_property', args: {} },
+  { id: 'water', label: 'Who has not paid their water bill?', tool: 'unpaid_utility_bills', args: { utility: 'Water' } },
   { id: 'received', label: 'Rent received this month', tool: 'payments_received', args: {} },
   { id: 'received_last', label: 'Rent received last month', tool: 'payments_received', args: { month: 'LAST' } },
   { id: 'vacant', label: 'Vacant units', tool: 'vacant_units', args: {} },
