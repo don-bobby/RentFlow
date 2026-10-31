@@ -21,6 +21,7 @@ app.use('/api/panoramas',   require('./routes/panoramas'));
 app.use('/api/specials',     require('./routes/specials'));
 app.use('/api/meters',       require('./routes/meters'));
 app.use('/api/shared-meters',  require('./routes/sharedMeters'));
+app.use('/api/tax',            require('./routes/tax'));
 app.use('/api/pay',          require('./routes/c2b'));        // Paybill account numbers + Safaricom C2B notices
 app.use('/api/reminders',    require('./routes/reminders'));
 app.use('/api/portal',       require('./routes/portal'));      // read-only owner portal
