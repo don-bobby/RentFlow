@@ -6,6 +6,7 @@ const { getVisiblePlotIds } = require('../middleware/scope');
 const { getPermissionsForPlots } = require('../middleware/permissions');
 const { VALID_PAYMENT_SQL } = require('./rentLedger');
 const { computeMeter } = require('./sharedMeters');
+const { buildPassport } = require('./passport');
 
 const isAdmin = (u) => ['admin', 'super_admin'].includes(u.role);
 const MONTH = /^\d{4}-(0[1-9]|1[0-2])$/;
@@ -227,6 +228,123 @@ const TOOLS = {
         rows: out.map(x => [x.plot, x.unit, x.who, x.kind, x.months, money(x.owed)]), note: `${out.length} unpaid, KES ${money(total)} in total` };
     },
   },
+  owing_two_months: {
+    description: 'Active tenants who owe at least two months of rent, largest balance first. Optional: plot.',
+    props: { plot: 'Part of a property name' },
+    perm: 'payments.view',
+    async run(user, a) {
+      const ids = await plotIds(user, 'payments.view', a.plot); if (!ids.length) return none('Owing 2+ months');
+      const r = (await pool.query(
+        `SELECT t.full_name, h.unit_number, p.name AS plot, h.rent_amount, t.balance, ROUND(t.balance / NULLIF(h.rent_amount, 0), 1) AS months
+           FROM tenants t JOIN houses h ON h.id = t.house_id JOIN plots p ON p.id = h.plot_id
+          WHERE t.is_active = true AND p.id = ANY($1) AND h.rent_amount > 0 AND t.balance >= 2 * h.rent_amount ORDER BY t.balance DESC LIMIT 100`, [ids])).rows;
+      const total = r.reduce((s, x) => s + Number(x.balance), 0);
+      return { title: 'Tenants owing 2 or more months', columns: ['Tenant', 'Unit', 'Property', 'Rent (KES)', 'Owes (KES)', 'Months owed'], rows: r.map(x => [x.full_name, x.unit_number, x.plot, money(x.rent_amount), money(x.balance), Number(x.months)]), note: `${r.length} tenants, KES ${money(total)} in total` };
+    },
+  },
+  payer_ranking: {
+    description: 'Tenants ranked by how reliably they pay rent on time (months of history, on-time percent, late and unpaid months). order = worst (default) or best. Optional: plot.',
+    props: { order: 'worst or best', plot: 'Part of a property name' },
+    perm: 'payments.view',
+    async run(user, a) {
+      const best = /^best/i.test(a.order || '');
+      const ids = await plotIds(user, 'payments.view', a.plot); if (!ids.length) return none('Payment record');
+      const ts = (await pool.query(
+        `SELECT t.id, t.full_name, t.move_in_date, t.rent_due_day, h.unit_number, h.rent_amount, p.name AS plot FROM tenants t JOIN houses h ON h.id = t.house_id JOIN plots p ON p.id = h.plot_id
+          WHERE t.is_active = true AND p.id = ANY($1) AND t.move_in_date IS NOT NULL AND h.rent_amount > 0 LIMIT 400`, [ids])).rows;
+      const pays = ts.length ? (await pool.query(
+        `SELECT tenant_id, COALESCE(amount_allocated, amount) AS amount, payment_date, COALESCE(for_year, EXTRACT(YEAR FROM payment_date)::int) AS year, COALESCE(for_month, EXTRACT(MONTH FROM payment_date)::int) AS month
+           FROM payments py WHERE tenant_id = ANY($1) AND ${VALID_PAYMENT_SQL.replace(/status/g, 'py.status').replace(/method/g, 'py.method')}`, [ts.map(t => t.id)])).rows : [];
+      const by = new Map(); for (const x of pays) { if (!by.has(x.tenant_id)) by.set(x.tenant_id, []); by.get(x.tenant_id).push(x); }
+      const ranked = [];
+      for (const t of ts) {
+        const pp = buildPassport({ rent: t.rent_amount, moveIn: t.move_in_date, dueDay: t.rent_due_day, grace: 3, payments: by.get(t.id) || [] });
+        if (pp.summary && pp.summary.months >= 3) ranked.push({ t, s: pp.summary });
+      }
+      ranked.sort((x, y) => best ? (y.s.on_time_pct - x.s.on_time_pct || y.s.months - x.s.months) : (x.s.on_time_pct - y.s.on_time_pct || y.s.unpaid - x.s.unpaid));
+      const top = ranked.slice(0, 25);
+      return { title: best ? 'Best paying tenants' : 'Worst paying tenants', columns: ['Tenant', 'Unit', 'Property', 'Months', 'On time', 'Late', 'Part/unpaid'],
+        rows: top.map(({ t, s: q }) => [t.full_name, t.unit_number, t.plot, q.months, `${q.on_time_pct}%`, q.late, q.partial + q.unpaid]),
+        note: `Top ${top.length} of ${ranked.length} tenants with at least 3 months of history. On time means paid in full within 3 days of the due day; the current month is not counted.` };
+    },
+  },
+  deposits_held: {
+    description: 'Deposits held from active tenants, per property.',
+    props: { plot: 'Part of a property name' },
+    perm: 'deposits.view',
+    async run(user, a) {
+      const ids = await plotIds(user, 'deposits.view', a.plot); if (!ids.length) return none('Deposits');
+      const r = (await pool.query(
+        `SELECT p.name AS plot, COUNT(*)::int AS n, COALESCE(SUM(t.deposit_paid), 0) AS total, COUNT(*) FILTER (WHERE COALESCE(t.deposit_paid, 0) = 0)::int AS none
+           FROM tenants t JOIN houses h ON h.id = t.house_id JOIN plots p ON p.id = h.plot_id WHERE t.is_active = true AND p.id = ANY($1) GROUP BY p.name ORDER BY p.name`, [ids])).rows;
+      const total = r.reduce((s, x) => s + Number(x.total), 0);
+      return { title: 'Deposits held', columns: ['Property', 'Tenants', 'Deposits held (KES)', 'Tenants with no deposit'], rows: r.map(x => [x.plot, x.n, money(x.total), x.none]), note: `Total KES ${money(total)}` };
+    },
+  },
+  rent_below_average: {
+    description: 'Units whose rent is below the average of the same unit type in the same property.',
+    props: { plot: 'Part of a property name' },
+    perm: 'houses.view',
+    async run(user, a) {
+      const ids = await plotIds(user, 'houses.view', a.plot); if (!ids.length) return none('Rent below average');
+      const r = (await pool.query(
+        `SELECT plot, unit_number, house_type, rent_amount, avg_rent FROM (
+           SELECT p.name AS plot, h.unit_number, h.house_type, h.rent_amount, AVG(h.rent_amount) OVER (PARTITION BY h.plot_id, h.house_type) AS avg_rent, COUNT(*) OVER (PARTITION BY h.plot_id, h.house_type) AS n
+             FROM houses h JOIN plots p ON p.id = h.plot_id WHERE h.plot_id = ANY($1) AND h.house_type IS NOT NULL) x
+          WHERE n >= 2 AND rent_amount < avg_rent - 0.5 ORDER BY (avg_rent - rent_amount) DESC LIMIT 100`, [ids])).rows;
+      return { title: 'Rent below the average for the same type', columns: ['Property', 'Unit', 'Type', 'Rent (KES)', 'Average for type (KES)', 'Below by (KES)'],
+        rows: r.map(x => [x.plot, x.unit_number, x.house_type, money(x.rent_amount), money(x.avg_rent), money(x.avg_rent - x.rent_amount)]), note: `${r.length} units. Only types with at least two units in a property are compared.` };
+    },
+  },
+  properties_by_income: {
+    description: 'Properties ranked by rent received in a year. Optional: year (YYYY, default this year).',
+    props: { year: 'YYYY' },
+    perm: 'payments.view',
+    async run(user, a) {
+      const y = /^\d{4}$/.test(a.year || '') ? a.year : String(new Date().getFullYear());
+      const ids = await plotIds(user, 'payments.view'); if (!ids.length) return none('Income by property');
+      const r = (await pool.query(
+        `SELECT p.name AS plot, COALESCE(SUM(py.amount), 0) AS total, (SELECT COUNT(*) FROM houses h2 WHERE h2.plot_id = p.id)::int AS units
+           FROM plots p LEFT JOIN houses h ON h.plot_id = p.id
+           LEFT JOIN payments py ON py.house_id = h.id AND ${VALID_PAYMENT_SQL.replace(/status/g, 'py.status').replace(/method/g, 'py.method')} AND to_char(py.payment_date, 'YYYY') = $2
+          WHERE p.id = ANY($1) GROUP BY p.id, p.name ORDER BY total DESC`, [ids, y])).rows;
+      const total = r.reduce((s, x) => s + Number(x.total), 0);
+      return { title: `Properties ranked by rent received, ${y}`, columns: ['Rank', 'Property', 'Units', 'Received (KES)', 'Share'], rows: r.map((x, i) => [i + 1, x.plot, x.units, money(x.total), total > 0 ? `${Math.round(100 * x.total / total)}%` : '-']), note: `Total KES ${money(total)}` };
+    },
+  },
+  vendor_spend: {
+    description: 'Vendors ranked by what was spent on their maintenance jobs (confirmed expenses).',
+    props: {},
+    perm: 'maintenance.view',
+    async run(user) {
+      const ids = await plotIds(user, 'maintenance.view'); if (!ids.length) return none('Vendor spend');
+      if (!(await pool.query(`SELECT to_regclass('vendors') AS t`)).rows[0].t) return { title: 'Vendor spend', columns: [], rows: [], note: 'The vendor directory is not set up yet.' };
+      const r = (await pool.query(
+        `SELECT v.name, v.trade, COUNT(DISTINCT m.id)::int AS jobs, COALESCE(SUM(e.amount) FILTER (WHERE e.status = 'confirmed'), 0) AS spent
+           FROM vendors v JOIN maintenance_requests m ON m.vendor_id = v.id JOIN houses h ON h.id = m.house_id LEFT JOIN expenses e ON e.maintenance_request_id = m.id
+          WHERE h.plot_id = ANY($1) GROUP BY v.id, v.name, v.trade ORDER BY spent DESC, jobs DESC LIMIT 50`, [ids])).rows;
+      const total = r.reduce((s, x) => s + Number(x.spent), 0);
+      return { title: 'Vendor spend', columns: ['Vendor', 'Trade', 'Jobs', 'Spent (KES)'], rows: r.map(x => [x.name, x.trade || '', x.jobs, money(x.spent)]), note: `Total KES ${money(total)}` };
+    },
+  },
+  net_income_by_property: {
+    description: 'For a month, per property: rent received, expenses and the difference. Optional: month (YYYY-MM, default this month).',
+    props: { month: 'YYYY-MM' },
+    perm: 'expenses.view',
+    async run(user, a) {
+      const m = MONTH.test(a.month || '') ? a.month : curMonth();
+      const pay = await plotIds(user, 'payments.view'), exp = await plotIds(user, 'expenses.view');
+      const ids = pay.filter(i => exp.includes(i)); if (!ids.length) return none('Net income');
+      const r = (await pool.query(
+        `SELECT p.name AS plot,
+                COALESCE((SELECT SUM(py.amount) FROM payments py JOIN houses h ON h.id = py.house_id WHERE h.plot_id = p.id AND ${VALID_PAYMENT_SQL.replace(/status/g, 'py.status').replace(/method/g, 'py.method')} AND to_char(py.payment_date, 'YYYY-MM') = $2), 0) AS income,
+                COALESCE((SELECT SUM(e.amount) FROM expenses e WHERE e.plot_id = p.id AND to_char(e.expense_date, 'YYYY-MM') = $2 AND COALESCE(e.status, 'confirmed') <> 'pending'), 0) AS spent
+           FROM plots p WHERE p.id = ANY($1) ORDER BY p.name`, [ids, m])).rows;
+      const inc = r.reduce((s, x) => s + Number(x.income), 0), sp = r.reduce((s, x) => s + Number(x.spent), 0);
+      return { title: `Net income per property, ${m}`, columns: ['Property', 'Rent received (KES)', 'Expenses (KES)', 'Net (KES)'], rows: r.map(x => [x.plot, money(x.income), money(x.spent), money(x.income - x.spent)]),
+        note: `All properties: KES ${money(inc)} received, KES ${money(sp)} spent, KES ${money(inc - sp)} net. Utility bills passed on to tenants are not counted as income.` };
+    },
+  },
 };
 
 // Questions shown as buttons; these run directly without the AI.
@@ -241,6 +359,14 @@ const MENU = [
   { id: 'maint', label: 'Open maintenance requests', tool: 'open_maintenance', args: {} },
   { id: 'exp', label: 'Expenses this month', tool: 'expenses_summary', args: {} },
   { id: 'exp_last', label: 'Expenses last month', tool: 'expenses_summary', args: { month: 'LAST' } },
+  { id: 'owing2', label: 'Tenants owing 2+ months', tool: 'owing_two_months', args: {} },
+  { id: 'worst', label: 'Worst paying tenants', tool: 'payer_ranking', args: { order: 'worst' } },
+  { id: 'best', label: 'Best paying tenants', tool: 'payer_ranking', args: { order: 'best' } },
+  { id: 'deposits', label: 'Deposits held per property', tool: 'deposits_held', args: {} },
+  { id: 'below', label: 'Rent below property average', tool: 'rent_below_average', args: {} },
+  { id: 'rank', label: 'Properties ranked by income', tool: 'properties_by_income', args: {} },
+  { id: 'vendors', label: 'Vendor spend ranking', tool: 'vendor_spend', args: {} },
+  { id: 'net', label: 'Net income per property this month', tool: 'net_income_by_property', args: {} },
   { id: 'notpaid', label: 'Who has not paid this month?', tool: 'not_paid_this_month', args: {} },
   { id: 'recent', label: 'Latest 25 payments', tool: 'recent_payments', args: {} },
   { id: 'revyear', label: 'Rent received by month this year', tool: 'revenue_by_month', args: {} },
