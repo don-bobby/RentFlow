@@ -10,6 +10,7 @@ import Tax              from './pages/Tax';
 import Documents        from './pages/Documents';
 import Vendors          from './pages/Vendors';
 import Passport         from './pages/Passport';
+import Ask              from './pages/Ask';
 import Reminders        from './pages/Reminders';
 import PaybillAccounts  from './pages/PaybillAccounts';
 import OwnerPortal      from './pages/OwnerPortal';
@@ -112,6 +113,11 @@ function AppRoutes() {
         <Route path="passport" element={
           <ProtectedRoute allowedRoles={['admin', 'super_admin', 'agent', 'landlord']}>
             <Passport />
+          </ProtectedRoute>
+        } />
+        <Route path="ask" element={
+          <ProtectedRoute allowedRoles={['admin', 'super_admin', 'agent', 'landlord']}>
+            <Ask />
           </ProtectedRoute>
         } />
         <Route path="tax" element={

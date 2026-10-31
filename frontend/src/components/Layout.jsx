@@ -307,6 +307,7 @@ export default function Layout() {
     { to: '/reminders',   icon: '🔔', label: 'Reminders',  permission: 'reminders.send',   roles: ['admin','super_admin'] },
     { to: '/paybill',      icon: '🏦', label: 'Paybill',    roles: ['admin','super_admin','agent','landlord'] },
     { to: '/tax',         icon: '🧮', label: 'Tax (MRI)', permission: 'tax.view', roles: ['admin','super_admin'] },
+    { to: '/ask',         icon: '💬', label: 'Ask your data', permission: 'payments.view', roles: ['admin','super_admin'] },
     { to: '/reports',     icon: '📊', label: 'Reports',    roles: ['admin','super_admin','agent','landlord'] },
     { to: '/users',       icon: '👤', label: 'Users',      roles: ['admin','super_admin','agent','landlord'] },
     { to: '/roles',       icon: '🛡️', label: 'Roles & Permissions', roles: ['admin','super_admin'] },
@@ -345,7 +346,7 @@ export default function Layout() {
   const NAV_GROUPS = [
     { key: 'daily',     label: 'Daily work',    icon: null, open: true,  paths: ['/', '/portal', '/properties', '/building', '/tenants', '/documents', '/passport', '/payments', '/maintenance', '/vendors', '/expenses'] },
     { key: 'billing',   label: 'Billing tools', icon: '💧', open: true,  paths: ['/meters', '/reminders', '/paybill', '/sms'] },
-    { key: 'insight',   label: 'Insight',       icon: '📊', open: false, paths: ['/reports', '/tax', '/estate'] },
+    { key: 'insight',   label: 'Insight',       icon: '📊', open: false, paths: ['/ask', '/reports', '/tax', '/estate'] },
     { key: 'marketing', label: 'Listings',      icon: '🏷️', open: false, paths: ['/manage/listings', '/specials'] },
     { key: 'admin',     label: 'Access',        icon: '🛡️', open: false, paths: ['/users', '/roles', '/permission-overrides'] },
   ];

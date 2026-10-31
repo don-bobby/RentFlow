@@ -25,6 +25,7 @@ app.use('/api/tax',            require('./routes/tax'));
 app.use('/api/documents',      require('./routes/documents'));
 app.use('/api/vendors',        require('./routes/vendors'));
 app.use('/api/passport',       require('./routes/passport'));
+app.use('/api/ask',            require('./routes/ask'));
 app.use('/api/pay',          require('./routes/c2b'));        // Paybill account numbers + Safaricom C2B notices
 app.use('/api/reminders',    require('./routes/reminders'));
 app.use('/api/portal',       require('./routes/portal'));      // read-only owner portal
