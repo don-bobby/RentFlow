@@ -1,14 +1,19 @@
 import axios from 'axios';
+import * as offline from './offline';
 
 // Base URL of your backend server
-const API = axios.create({ baseURL: process.env.REACT_APP_API_URL || 'http://localhost:5000/api' });
+const API = axios.create({ baseURL: process.env.REACT_APP_API_URL || 'http://localhost:5000/api', timeout: 45000 });
 
 // Auto-attach the login token to every request
 API.interceptors.request.use((config) => {
   const token = localStorage.getItem('token');
   if (token) config.headers.Authorization = `Bearer ${token}`;
-  return config;
+  return offline.prepare(config);
 });
+
+// Offline support: saved copies of key lists, and a queue for writes made without signal.
+API.interceptors.response.use(offline.onSuccess, offline.onError);
+offline.attach(API);
 
 export default API;
 

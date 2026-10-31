@@ -9,3 +9,8 @@ root.render(
     <App />
   </React.StrictMode>
 );
+
+// Lets the app open without signal: the service worker keeps a copy of the app itself.
+if ('serviceWorker' in navigator && process.env.NODE_ENV === 'production') {
+  window.addEventListener('load', () => { navigator.serviceWorker.register('/sw.js').catch(() => {}); });
+}

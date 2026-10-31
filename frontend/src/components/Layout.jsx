@@ -1,3 +1,4 @@
+import OfflineBar from './OfflineBar';
 import { Outlet, NavLink, useNavigate, useLocation } from 'react-router-dom';
 import { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
@@ -627,6 +628,7 @@ export default function Layout() {
 
         {/* ── Page content ── */}
         <div style={{ flex: 1, padding: isMobile ? '16px 14px calc(84px + env(safe-area-inset-bottom, 0px))' : 28, overflow: 'auto' }}>
+          <OfflineBar />
           <Outlet />
           <QuickSearch />
         </div>

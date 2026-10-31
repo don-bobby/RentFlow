@@ -12,6 +12,10 @@ app.use(cors({
 app.use(express.json());                 // Parse JSON request bodies
 app.use('/uploads', express.static('uploads')); // Serve uploaded files
 
+// Safe retries for writes sent from phones (payments, maintenance, meter readings, utilities).
+const idempotency = require('./middleware/idempotency');
+app.use(['/api/payments', '/api/maintenance', '/api/meters', '/api/utilities'], idempotency);
+
 // Import route files (we'll create these next)
 app.use('/api/auth',        require('./routes/auth'));
 app.use('/api/plots',       require('./routes/plots'));

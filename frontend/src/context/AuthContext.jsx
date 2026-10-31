@@ -7,6 +7,7 @@
 
 import { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import API from '../services/api';
+import { clearCache as clearOfflineCache } from '../services/offline';
 
 const AuthContext = createContext(null);
 
@@ -42,9 +43,10 @@ export function AuthProvider({ children }) {
         // role/global permissions list, same as before this existed.
         setPlotPermissions({});
       }
-    } catch {
-      // Token invalid/expired/user deleted — log them out client-side.
-      localStorage.removeItem('token');
+    } catch (e) {
+      // Only a real answer from the server (401, 403, 404...) means the login is no good.
+      // No answer at all means no signal: keep the token so the user is not logged out offline.
+      if (e.response) localStorage.removeItem('token');
       setUser(null);
       setPlotPermissions({});
     } finally {
@@ -111,6 +113,7 @@ export function AuthProvider({ children }) {
   );
 
   const logout = useCallback(() => {
+    clearOfflineCache();   // saved copies of lists must not stay on a shared phone
     localStorage.removeItem('token');
     setUser(null);
     setPlotPermissions({});
