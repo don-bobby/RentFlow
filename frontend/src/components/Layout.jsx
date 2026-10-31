@@ -300,6 +300,7 @@ export default function Layout() {
     { to: '/documents',   icon: '📄', label: 'Notices & leases', permission: 'tenants.view', roles: ['admin','super_admin'] },
     { to: '/payments',    icon: '💳', label: 'Payments',   permission: 'payments.view',    roles: ['admin','super_admin'] },
     { to: '/maintenance', icon: '🔧', label: 'Maintenance',permission: 'maintenance.view', roles: ['admin','super_admin'] },
+    { to: '/vendors',     icon: '🧰', label: 'Vendors',    permission: 'maintenance.view', roles: ['admin','super_admin'] },
     { to: '/expenses',    icon: '🧾', label: 'Expenses',   permission: 'expenses.view',    roles: ['admin','super_admin'] },
     { to: '/meters',      icon: '💧', label: 'Meters',     permission: 'meters.view',      roles: ['admin','super_admin'] },
     { to: '/reminders',   icon: '🔔', label: 'Reminders',  permission: 'reminders.send',   roles: ['admin','super_admin'] },
@@ -341,7 +342,7 @@ export default function Layout() {
   // ── Sidebar grouping ──
   // Expanded: foldable headings. Collapsed: one icon per group (pop-out list).
   const NAV_GROUPS = [
-    { key: 'daily',     label: 'Daily work',    icon: null, open: true,  paths: ['/', '/portal', '/properties', '/building', '/tenants', '/documents', '/payments', '/maintenance', '/expenses'] },
+    { key: 'daily',     label: 'Daily work',    icon: null, open: true,  paths: ['/', '/portal', '/properties', '/building', '/tenants', '/documents', '/payments', '/maintenance', '/vendors', '/expenses'] },
     { key: 'billing',   label: 'Billing tools', icon: '💧', open: true,  paths: ['/meters', '/reminders', '/paybill', '/sms'] },
     { key: 'insight',   label: 'Insight',       icon: '📊', open: false, paths: ['/reports', '/tax', '/estate'] },
     { key: 'marketing', label: 'Listings',      icon: '🏷️', open: false, paths: ['/manage/listings', '/specials'] },

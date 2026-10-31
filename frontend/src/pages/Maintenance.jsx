@@ -160,6 +160,7 @@ export default function Maintenance() {
   const [costForm, setCostForm] = useState({ amount: '', category: 'Repairs', description: '' });
   const [costSaving, setCostSaving] = useState(false);
   const [costError, setCostError] = useState('');
+  const [vendors, setVendors] = useState([]);
   const COST_CATEGORIES = ['Repairs', 'Cleaning', 'Security', 'Other'];
 
   // Previously this page fetched GET /auth/me itself and built its own
@@ -179,6 +180,8 @@ export default function Maintenance() {
       ]);
       setRequests(Array.isArray(mr.data) ? mr.data : (mr.data.data || []));
       setTenants(Array.isArray(tr.data) ? tr.data : (tr.data.data || []));
+      // Vendor directory is optional: ignore if it is not set up or not visible.
+      API.get('/vendors').then(v => setVendors((v.data.data || []).filter(x => x.is_active))).catch(() => {});
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
   }
@@ -194,6 +197,15 @@ export default function Maintenance() {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [modal]);
+
+  async function assignVendor(id, vendorId) {
+    setActionError('');
+    try {
+      await API.patch(`/vendors/assign/${id}`, { vendor_id: vendorId || null });
+      const v = vendors.find(x => String(x.id) === String(vendorId));
+      setRequests(rs => rs.map(r => r.id === id ? { ...r, vendor_id: v ? v.id : null, vendor_name: v ? v.name : null, vendor_phone: v ? v.phone : null } : r));
+    } catch (e) { setActionError(e.response?.data?.error || 'Could not assign the vendor.'); }
+  }
 
   function openNew() {
     // Default to the first ACTIVE tenant — the dropdown below only ever
@@ -341,6 +353,20 @@ export default function Maintenance() {
                     )}
                   </div>
                 )}
+                {(() => {
+                  const mine = vendors.filter(v => v.landlord_id === r.landlord_id);
+                  const canAssign = r.status !== 'completed' && can('maintenance.update', r.plot_id) && mine.length > 0;
+                  if (canAssign) return (
+                    <div className="mt-meta" style={{ marginBottom: 6 }}>
+                      🔧 <select value={r.vendor_id || ''} onChange={e => assignVendor(r.id, e.target.value)} style={{ maxWidth: '100%', padding: '3px 6px', borderRadius: 6, border: '1px solid var(--mt-border)', background: 'transparent', color: 'inherit' }}>
+                        <option value="">No vendor assigned</option>
+                        {mine.map(v => <option key={v.id} value={v.id}>{v.name}{v.trade ? ` (${v.trade})` : ''}</option>)}
+                        {r.vendor_id && !mine.some(v => v.id === r.vendor_id) && <option value={r.vendor_id}>{r.vendor_name}</option>}
+                      </select>
+                      {r.vendor_phone && <a href={`tel:${r.vendor_phone}`} style={{ marginLeft: 8 }}>{r.vendor_phone}</a>}
+                    </div>);
+                  return r.vendor_name ? <div className="mt-meta" style={{ marginBottom: 6 }}>🔧 {r.vendor_name}{r.vendor_phone && <> · <a href={`tel:${r.vendor_phone}`}>{r.vendor_phone}</a></>}</div> : null;
+                })()}
                 <div className="mt-meta">
                   <div>
                     Reported {fmtDate(r.reported_at)}

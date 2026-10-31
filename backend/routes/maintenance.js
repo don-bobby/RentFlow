@@ -26,17 +26,32 @@ router.get('/', staffAuth, async (req, res) => {
     const visible = await getVisiblePlotIds(req.user);
     if (visible !== 'ALL' && visible.length === 0) return res.json({ success: true, data: [] });
 
-    const query = `
-      SELECT m.*, h.plot_id, t.full_name AS tenant_name, h.unit_number
-      FROM maintenance_requests m
-      LEFT JOIN tenants t ON m.tenant_id = t.id
-      LEFT JOIN houses  h ON m.house_id  = h.id
-      LEFT JOIN plots   p ON h.plot_id   = p.id
-      ${visible === 'ALL' ? '' : 'WHERE p.id = ANY($1)'}
-      ORDER BY m.reported_at DESC
-    `;
+    // vendor_* come from the vendor directory (migration 032). Until that has run
+    // the first query fails with a missing-column/table error, so fall back to the old shape.
+    const where = visible === 'ALL' ? '' : 'WHERE p.id = ANY($1)';
     const params = visible === 'ALL' ? [] : [visible];
-    const result = await pool.query(query, params);
+    let result;
+    try {
+      result = await pool.query(`
+        SELECT m.*, h.plot_id, p.user_id AS landlord_id, t.full_name AS tenant_name, h.unit_number, vd.name AS vendor_name, vd.phone AS vendor_phone
+        FROM maintenance_requests m
+        LEFT JOIN tenants t ON m.tenant_id = t.id
+        LEFT JOIN houses  h ON m.house_id  = h.id
+        LEFT JOIN plots   p ON h.plot_id   = p.id
+        LEFT JOIN vendors vd ON vd.id = m.vendor_id
+        ${where}
+        ORDER BY m.reported_at DESC`, params);
+    } catch (e) {
+      if (e.code !== '42P01' && e.code !== '42703') throw e;
+      result = await pool.query(`
+        SELECT m.*, h.plot_id, t.full_name AS tenant_name, h.unit_number
+        FROM maintenance_requests m
+        LEFT JOIN tenants t ON m.tenant_id = t.id
+        LEFT JOIN houses  h ON m.house_id  = h.id
+        LEFT JOIN plots   p ON h.plot_id   = p.id
+        ${where}
+        ORDER BY m.reported_at DESC`, params);
+    }
     // getVisiblePlotIds (above) answers "can this user see this property at
     // all" — it doesn't know about a per-property maintenance.view grant or
     // revoke. This is now the ONLY permission check on this list: it
