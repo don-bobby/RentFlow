@@ -345,14 +345,19 @@ export default function Layout() {
   // ── Sidebar grouping ──
   // Expanded: foldable headings. Collapsed: one icon per group (pop-out list).
   const NAV_GROUPS = [
-    { key: 'daily',     label: 'Daily work',    icon: null, open: true,  paths: ['/', '/portal', '/properties', '/building', '/tenants', '/documents', '/passport', '/payments', '/maintenance', '/vendors', '/expenses'] },
+    { key: 'daily',     label: 'Daily work',    icon: null, open: true,  paths: ['/', '/portal', '/properties', '/building', '/tenants', '/payments', '/maintenance', '/expenses'] },
+    { key: 'records',   label: 'Documents & vendors', icon: '📄', open: false, paths: ['/documents', '/passport', '/vendors'] },
     { key: 'billing',   label: 'Billing tools', icon: '💧', open: true,  paths: ['/meters', '/reminders', '/paybill', '/sms'] },
     { key: 'insight',   label: 'Insight',       icon: '📊', open: false, paths: ['/ask', '/reports', '/tax', '/estate'] },
     { key: 'marketing', label: 'Listings',      icon: '🏷️', open: false, paths: ['/manage/listings', '/specials'] },
     { key: 'admin',     label: 'Access',        icon: '🛡️', open: false, paths: ['/users', '/roles', '/permission-overrides'] },
   ];
   const groupedNav = NAV_GROUPS
-    .map(g => ({ ...g, items: sidebarNav.filter(i => g.paths.includes(i.to) || (g.key === 'daily' && !NAV_GROUPS.some(x => x.paths.includes(i.to)))) }))
+    .map(g => ({ ...g, items: [
+      // follow the order listed in `paths`, then (daily only) anything not placed in a group
+      ...g.paths.map(p => sidebarNav.find(i => i.to === p)).filter(Boolean),
+      ...(g.key === 'daily' ? sidebarNav.filter(i => !NAV_GROUPS.some(x => x.paths.includes(i.to))) : []),
+    ] }))
     .filter(g => g.items.length > 0);
   const unreadFor = (label) => label === 'Messages' ? unreadMsg : label === 'Users' ? pendingLandlords : label === 'Properties' ? pendingUnits : 0;
   const isRail = collapsed && !isMobile;
@@ -407,7 +412,7 @@ export default function Layout() {
           <nav style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 2, padding: '0 8px', overflowY: 'auto' }}>
             {groupedNav.map(g => {
               const hasActive = g.items.some(i => i.to === '/' ? location.pathname === '/' : location.pathname.startsWith(i.to));
-              const isOpen = g.open && g.key === 'daily' ? true : (!folded[g.key] || hasActive);
+              const isOpen = g.open && g.key === 'daily' ? true : (!(folded[g.key] ?? !g.open) || hasActive);
               const badge = g.items.reduce((n, i) => n + unreadFor(i.label), 0);
               if (isRail) {
                 // Collapsed rail: single-item or daily groups show their own icons; others merge into one icon with a pop-out.
