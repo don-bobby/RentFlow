@@ -9,6 +9,7 @@ import Meters           from './pages/Meters';
 import Tax              from './pages/Tax';
 import Documents        from './pages/Documents';
 import Vendors          from './pages/Vendors';
+import Passport         from './pages/Passport';
 import Reminders        from './pages/Reminders';
 import PaybillAccounts  from './pages/PaybillAccounts';
 import OwnerPortal      from './pages/OwnerPortal';
@@ -106,6 +107,11 @@ function AppRoutes() {
         <Route path="vendors" element={
           <ProtectedRoute allowedRoles={['admin', 'super_admin', 'agent', 'landlord', 'caretaker']}>
             <Vendors />
+          </ProtectedRoute>
+        } />
+        <Route path="passport" element={
+          <ProtectedRoute allowedRoles={['admin', 'super_admin', 'agent', 'landlord']}>
+            <Passport />
           </ProtectedRoute>
         } />
         <Route path="tax" element={
