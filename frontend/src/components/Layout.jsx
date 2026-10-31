@@ -297,6 +297,7 @@ export default function Layout() {
        the moment an admin grants or revokes an override. Admin/super_admin
        always pass (they carry the '*' wildcard), so they're unaffected. */
     { to: '/tenants',     icon: '👥', label: 'Tenants',    permission: 'tenants.view',     roles: ['admin','super_admin'] },
+    { to: '/documents',   icon: '📄', label: 'Notices & leases', permission: 'tenants.view', roles: ['admin','super_admin'] },
     { to: '/payments',    icon: '💳', label: 'Payments',   permission: 'payments.view',    roles: ['admin','super_admin'] },
     { to: '/maintenance', icon: '🔧', label: 'Maintenance',permission: 'maintenance.view', roles: ['admin','super_admin'] },
     { to: '/expenses',    icon: '🧾', label: 'Expenses',   permission: 'expenses.view',    roles: ['admin','super_admin'] },
@@ -340,7 +341,7 @@ export default function Layout() {
   // ── Sidebar grouping ──
   // Expanded: foldable headings. Collapsed: one icon per group (pop-out list).
   const NAV_GROUPS = [
-    { key: 'daily',     label: 'Daily work',    icon: null, open: true,  paths: ['/', '/portal', '/properties', '/building', '/tenants', '/payments', '/maintenance', '/expenses'] },
+    { key: 'daily',     label: 'Daily work',    icon: null, open: true,  paths: ['/', '/portal', '/properties', '/building', '/tenants', '/documents', '/payments', '/maintenance', '/expenses'] },
     { key: 'billing',   label: 'Billing tools', icon: '💧', open: true,  paths: ['/meters', '/reminders', '/paybill', '/sms'] },
     { key: 'insight',   label: 'Insight',       icon: '📊', open: false, paths: ['/reports', '/tax', '/estate'] },
     { key: 'marketing', label: 'Listings',      icon: '🏷️', open: false, paths: ['/manage/listings', '/specials'] },

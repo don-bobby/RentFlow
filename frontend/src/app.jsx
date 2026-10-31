@@ -7,6 +7,7 @@ import EstateMap        from './pages/EstateMap';
 import Specials         from './pages/Specials';
 import Meters           from './pages/Meters';
 import Tax              from './pages/Tax';
+import Documents        from './pages/Documents';
 import Reminders        from './pages/Reminders';
 import PaybillAccounts  from './pages/PaybillAccounts';
 import OwnerPortal      from './pages/OwnerPortal';
@@ -94,6 +95,11 @@ function AppRoutes() {
         <Route path="specials" element={
           <ProtectedRoute allowedRoles={['admin', 'super_admin']}>
             <Specials />
+          </ProtectedRoute>
+        } />
+        <Route path="documents" element={
+          <ProtectedRoute allowedRoles={['admin', 'super_admin', 'agent', 'landlord']}>
+            <Documents />
           </ProtectedRoute>
         } />
         <Route path="tax" element={
