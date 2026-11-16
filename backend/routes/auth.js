@@ -237,11 +237,24 @@ router.post('/users', authMiddleware, async (req, res) => {
 
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    // For landlords creating caretakers, auto-assign to their first plot if no plot_id given
+    // A landlord adding a caretaker without choosing a property: only the properties the
+    // landlord runs HIMSELF (no agent on them) are candidates, because agent-managed
+    // properties are staffed by their agent/admin. One candidate -> use it. Several ->
+    // make the landlord choose (the old code silently took an arbitrary "first" plot, which
+    // could be a property an agent manages). None -> the caretaker is created unassigned.
     let assignedPlot = plot_id || null;
     if (requesterRole === 'landlord' && !assignedPlot) {
-      const plotRes = await pool.query('SELECT id FROM plots WHERE user_id = $1 LIMIT 1', [requesterId]);
-      if (plotRes.rows.length > 0) assignedPlot = plotRes.rows[0].id;
+      const own = await pool.query(
+        'SELECT id, name FROM plots WHERE user_id = $1 AND agent_id IS NULL ORDER BY name',
+        [requesterId]
+      );
+      if (own.rows.length === 1) {
+        assignedPlot = own.rows[0].id;
+      } else if (own.rows.length > 1) {
+        return res.status(400).json({
+          error: 'Please choose which property this caretaker will work on: ' + own.rows.map(p => p.name).join(', ') + '.',
+        });
+      }
     }
 
     // Previously an explicitly-supplied plot_id was trusted outright — a
@@ -299,8 +312,8 @@ router.get('/users', authMiddleware, async (req, res) => {
                 lp.plot_names AS landlord_plots,
                 -- For caretakers: all assigned plot names (multi-plot support)
                 ctp.plot_names AS caretaker_plots,
-                -- For agents: every plot currently pointing at them via
-                -- plots.agent_id (direct assignment or cascaded landlord default)
+                -- For agents: every plot assigned to them through plots.agent_id
+                -- (assignment is per property; a landlord's own agent_id does not cascade)
                 ap.plot_names AS agent_plots
          FROM users u
          LEFT JOIN plots cp ON u.plot_id = cp.id AND u.role = 'caretaker'
@@ -471,9 +484,8 @@ router.patch('/users/:id/reject', authMiddleware, requireAdmin, async (req, res)
     // stuck pointing at a suspended agent.
     if (result.rows[0].role === 'agent') {
       await pool.query(`UPDATE users SET agent_id = NULL WHERE agent_id = $1`, [req.params.id]);
-      // Plots individually assigned to this agent (the exception case, not
-      // following their landlord's own agent_id) need releasing too —
-      // otherwise one stays silently stuck pointing at a suspended agent.
+      // Release every plot assigned to this agent too, otherwise it would stay
+      // silently stuck pointing at a suspended agent.
       await pool.query(`UPDATE plots SET agent_id = NULL WHERE agent_id = $1`, [req.params.id]);
     }
 

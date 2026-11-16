@@ -33,3 +33,7 @@ _permission-update-backup-*/
 
 # Any other local SQL dumps/scratch files not already covered above
 *.sql
+rentflow_live.sql
+
+#live_backup.dump shows as untracked, so Git could pick it up
+live_backup.dump

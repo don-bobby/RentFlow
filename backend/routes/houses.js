@@ -367,6 +367,35 @@ router.patch('/:id/description', auth, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// PATCH /api/houses/:id/tags — staff-entered listing tags ("Parking", "Borehole water", ...).
+// Same permission + scope rules as the description route above. Tags are cleaned here
+// (trimmed, de-duplicated, max 12, max 30 characters each) so the public page can trust them.
+router.patch('/:id/tags', auth, async (req, res) => {
+  try {
+    const scope = await assertHouseInScope(req, req.params.id);
+    if (scope.notFound) return res.status(404).json({ error: 'House not found' });
+
+    const { permissions } = await getPermissions(req.user, scope.plotId);
+    if (!permissions.includes('*') && !permissions.includes('houses.edit')) {
+      return res.status(403).json({ error: 'Missing permission: houses.edit' });
+    }
+    if (!scope.ok) return res.status(403).json({ error: 'Access denied' });
+
+    const raw = Array.isArray(req.body.tags) ? req.body.tags : [];
+    const seen = new Set();
+    const tags = [];
+    for (const t of raw) {
+      const v = String(t ?? '').replace(/\s+/g, ' ').trim().slice(0, 30);
+      const key = v.toLowerCase();
+      if (v && !seen.has(key)) { seen.add(key); tags.push(v); }
+      if (tags.length >= 12) break;
+    }
+
+    await pool.query('UPDATE houses SET tags = $1::jsonb WHERE id = $2', [JSON.stringify(tags), req.params.id]);
+    res.json({ success: true, tags });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // DELETE house — was hardcoded to 'admin' (not super_admin-aware). No
 // profile in the matrix has houses.delete, so this stays effectively
 // admin-only, but now driven by the matrix like every other DELETE route.

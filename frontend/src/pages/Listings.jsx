@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react';
 import API from '../services/api';
 
 const BASE = (process.env.REACT_APP_API_URL || 'http://localhost:5000/api').replace('/api', '');
+// Cloud files (Supabase) already carry a full https:// address; local files need the backend address in front
+const mediaSrc = (u) => (/^https?:/.test(u) ? u : `${BASE}${u}`);
 
 // ── Theme-safe colours ───────────────────────────────────────────────────────
 // Same token system as Reports.jsx, for visual consistency across the app.
@@ -87,6 +89,12 @@ const STYLES = `
 .ls-mini.has-value { background: color-mix(in srgb, var(--ls-primary) 14%, transparent); color: var(--ls-primary); border-color: transparent; }
 .ls-toggle { padding: 5px 14px; border-radius: 8px; font-size: 12px; font-weight: 600; border: 1px solid var(--ls-tone); background: color-mix(in srgb, var(--ls-tone) 14%, transparent); color: var(--ls-tone); }
 
+.ls-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 14px; min-height: 28px; align-items: center; }
+.ls-chip { padding: 5px 12px; border-radius: 99px; border: 1px solid var(--ls-border); background: var(--ls-surface2); color: var(--ls-text); font-size: 12.5px; font-weight: 600; }
+.ls-chip:hover { border-color: var(--ls-accent); }
+.ls-chip.on { background: color-mix(in srgb, var(--ls-primary) 16%, transparent); color: var(--ls-primary); border-color: transparent; }
+.ls-sec { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .4px; color: var(--ls-muted); margin-top: 4px; }
+.ls-input { flex: 1; padding: 9px 12px; border-radius: 8px; border: 1px solid var(--ls-border); background: var(--ls-surface2); color: var(--ls-text); font-size: 14px; font-family: inherit; outline: none; }
 .ls-state { text-align: center; padding: 60px 20px; color: var(--ls-muted); font-size: 14px; }
 
 /* Modals */
@@ -104,6 +112,10 @@ const STYLES = `
 `;
 
 // Maps a semantic color name to the --ls-tone custom property a card/tab/badge reads.
+// Used only when the listing_tag_presets table is empty or cannot be read
+const FALLBACK_TAGS = ['Water 24/7', 'Borehole water', 'Parking', 'Security', 'Fenced compound', 'Tiled floor', 'Balcony', 'Prepaid electricity', 'Own bathroom', 'Near school', 'Near stage', 'Wi-Fi ready'];
+const MAX_TAGS = 12;
+
 const toneVar = (name) => ({
   primary: 'var(--ls-primary)', green: 'var(--ls-green)', amber: 'var(--ls-amber)', muted: 'var(--ls-muted)',
 }[name] || 'var(--ls-primary)');
@@ -122,6 +134,12 @@ export default function Listings() {
   const [descText,   setDescText]   = useState('');
   const [descSaving, setDescSaving] = useState(false);
   const [descMsg,    setDescMsg]    = useState('');
+  const [tagUnit,    setTagUnit]    = useState(null);
+  const [tagList,    setTagList]    = useState([]);
+  const [tagInput,   setTagInput]   = useState('');
+  const [tagSaving,  setTagSaving]  = useState(false);
+  const [tagMsg,     setTagMsg]     = useState('');
+  const [presets,    setPresets]    = useState([]);
 
   async function load() {
     setLoading(true);
@@ -134,6 +152,9 @@ export default function Listings() {
   }
 
   useEffect(() => { load(); }, []);
+  useEffect(() => {
+    API.get('/listings/tag-presets').then(r => setPresets((r.data.data || []).map(x => x.tag))).catch(() => {});
+  }, []);
 
   // ── Filtering ────────────────────────────────────────────────────────────────
   const filtered = houses.filter(h => {
@@ -219,6 +240,36 @@ export default function Listings() {
     finally { setDescSaving(false); }
   }
 
+  // ── Tags ─────────────────────────────────────────────────────────────────
+  const tagsOf = (h) => (Array.isArray(h.tags) ? h.tags.filter(t => typeof t === 'string') : []);
+  function openTags(house) { setTagUnit(house); setTagList(tagsOf(house)); setTagInput(''); setTagMsg(''); }
+  const hasTag = (t) => tagList.some(x => x.toLowerCase() === t.toLowerCase());
+  function toggleTag(t) {
+    setTagMsg('');
+    if (hasTag(t)) { setTagList(l => l.filter(x => x.toLowerCase() !== t.toLowerCase())); return; }
+    if (tagList.length >= MAX_TAGS) { setTagMsg(`You can add up to ${MAX_TAGS} tags.`); return; }
+    setTagList(l => [...l, t]);
+  }
+  function addCustomTag() {
+    const v = tagInput.replace(/\s+/g, ' ').trim().slice(0, 30);
+    if (v) toggleTag(v);
+    setTagInput('');
+  }
+  async function saveTags() {
+    if (!tagUnit) return;
+    setTagSaving(true); setTagMsg('');
+    try {
+      const res = await API.patch(`/houses/${tagUnit.id}/tags`, { tags: tagList });
+      const saved = res.data.tags || tagList;
+      setHouses(hs => hs.map(h => h.id === tagUnit.id ? { ...h, tags: saved } : h));
+      setTagList(saved);
+      setTagMsg('Saved!');
+      setTimeout(() => setTagMsg(''), 2000);
+    } catch (e) { setTagMsg(e.response?.data?.error || 'Failed to save.'); }
+    finally { setTagSaving(false); }
+  }
+  const suggestions = (presets.length ? presets : FALLBACK_TAGS).filter(t => !hasTag(t));
+
   // ── Stats ────────────────────────────────────────────────────────────────
   const totalVacant   = houses.filter(h => h.status === 'vacant').length;
   const totalListed   = houses.filter(h => h.status === 'vacant' && h.listed !== false).length;
@@ -301,7 +352,7 @@ export default function Listings() {
               <table className="ls-table">
                 <thead>
                   <tr>
-                    {['Unit', 'Type', 'Rent', 'Deposit', 'Status', 'Description', 'Media', 'Listing'].map(h => (
+                    {['Unit', 'Type', 'Rent', 'Deposit', 'Status', 'Description', 'Tags', 'Media', 'Listing'].map(h => (
                       <th key={h}>{h}</th>
                     ))}
                   </tr>
@@ -328,6 +379,11 @@ export default function Listings() {
                         <td>
                           <button onClick={() => openDesc(house)} className={`ls-mini${house.description ? ' has-value' : ''}`}>
                             {house.description ? '✏️ Edit' : '+ Add'}
+                          </button>
+                        </td>
+                        <td>
+                          <button onClick={() => openTags(house)} className={`ls-mini${tagsOf(house).length ? ' has-value' : ''}`}>
+                            {tagsOf(house).length ? `🏷️ ${tagsOf(house).length}` : '+ Add'}
                           </button>
                         </td>
                         <td>
@@ -385,6 +441,46 @@ export default function Listings() {
         </div>
       )}
 
+      {/* ── Tags Modal ── */}
+      {tagUnit && (
+        <div className="ls-modal-backdrop">
+          <div className="ls-card" style={{ width: '100%', maxWidth: 520, maxHeight: '88vh', overflowY: 'auto' }}>
+            <div className="ls-modal-head">
+              <h3 className="ls-modal-title">🏷️ Tags — Unit {tagUnit.unit_number}</h3>
+              <button onClick={() => setTagUnit(null)} className="ls-modal-close">×</button>
+            </div>
+            <div style={{ padding: 22 }}>
+              <p style={{ fontSize: 13, color: 'var(--ls-muted)', marginBottom: 12 }}>
+                Tags show on the public listings page and become filter buttons for renters. Only add what is true for this unit.
+              </p>
+              <div className="ls-sec">On this unit ({tagList.length}/{MAX_TAGS})</div>
+              <div className="ls-chips">
+                {tagList.length === 0 && <span style={{ fontSize: 13, color: 'var(--ls-muted)' }}>No tags yet.</span>}
+                {tagList.map(t => <button key={t} className="ls-chip on" onClick={() => toggleTag(t)} title="Remove">{t} ×</button>)}
+              </div>
+              <div className="ls-sec">Suggestions</div>
+              <div className="ls-chips">
+                {suggestions.map(t => <button key={t} className="ls-chip" onClick={() => toggleTag(t)}>+ {t}</button>)}
+              </div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <input className="ls-input" value={tagInput} maxLength={30}
+                  onChange={e => setTagInput(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addCustomTag(); } }}
+                  placeholder="Add your own, e.g. Near Olkalou stage" />
+                <button onClick={addCustomTag} className="ls-btn">Add</button>
+              </div>
+              {tagMsg && (
+                <div style={{ marginTop: 10, fontSize: 13, fontWeight: 600, color: tagMsg === 'Saved!' ? 'var(--ls-green)' : 'var(--ls-red)' }}>{tagMsg}</div>
+              )}
+              <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 16 }}>
+                <button onClick={() => setTagUnit(null)} className="ls-btn">Close</button>
+                <button onClick={saveTags} disabled={tagSaving} className="ls-btn ls-btn-primary">{tagSaving ? 'Saving...' : 'Save Tags'}</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ── Media Modal ── */}
       {mediaUnit && (
         <div className="ls-modal-backdrop">
@@ -419,8 +515,8 @@ export default function Listings() {
                   {media.map(m => (
                     <div key={m.id} style={{ position: 'relative', borderRadius: 10, overflow: 'hidden', background: '#000', aspectRatio: '4/3' }}>
                       {m.media_type === 'video'
-                        ? <video src={`${BASE}${m.url}`} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                        : <img src={`${BASE}${m.url}`} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />}
+                        ? <video src={`${mediaSrc(m.url)}`} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                        : <img src={`${mediaSrc(m.url)}`} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />}
                       <div style={{ position: 'absolute', inset: 0 }}>
                         <button onClick={() => deleteMedia(m.id)} style={{ position: 'absolute', top: 6, right: 6, background: 'rgba(239,68,68,0.85)', color: '#fff', border: 'none', borderRadius: 6, width: 28, height: 28, cursor: 'pointer', fontSize: 16, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>×</button>
                         <span style={{ position: 'absolute', bottom: 6, left: 6, background: 'rgba(0,0,0,0.6)', color: '#fff', fontSize: 10, fontWeight: 700, padding: '2px 6px', borderRadius: 4 }}>{m.media_type === 'video' ? '🎬' : '📷'}</span>
