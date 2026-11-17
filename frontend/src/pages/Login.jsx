@@ -1,15 +1,84 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { login } from '../services/api';
 import API from '../services/api';
+
+// ── Design tokens (match the RentFlow landing page) ──────────────────────────
+const C = {
+  ink:      '#0f1f17',
+  forest:   '#123524',
+  green:    '#1b6b45',
+  mint:     '#8fd1ad',
+  sage:     '#f1f4f1',
+  field:    '#f7faf7',
+  border:   '#cdd8d0',
+  label:    '#2b3a31',
+  muted:    '#55645b',
+  errBg:    '#fdecec',
+  errBd:    '#f5b5b5',
+  errText:  '#9b1c1c',
+};
+const DISPLAY = "'Bricolage Grotesque', sans-serif";
+const BODY    = "'DM Sans', sans-serif";
+
+// Same skyline photo the landing page hero uses. Point this at that file/URL
+// (search your landing page component for "Vacant homes from").
+const HERO_IMAGE = '/lgn.jpg';
+
+// Dark-green overlay, heaviest behind the text so it stays readable
+const HERO_OVERLAY = 'linear-gradient(90deg, rgba(18,53,36,0.94) 0%, rgba(18,53,36,0.80) 45%, rgba(18,53,36,0.62) 100%)';
+
+// Set this to wherever your tenant sign-in lives
+const TENANT_LOGIN_PATH = '/tenant-login';
+
+const inputStyle = {
+  width: '100%', boxSizing: 'border-box', height: 48, padding: '0 14px',
+  borderRadius: 10, border: `1px solid ${C.border}`, background: C.field,
+  fontFamily: BODY, fontSize: 15, color: C.ink,
+};
+const labelStyle = { fontSize: 13, fontWeight: 600, color: C.label };
+const primaryBtn = (disabled) => ({
+  width: '100%', height: 50, border: 'none', borderRadius: 10,
+  background: C.forest, opacity: disabled ? 0.65 : 1,
+  color: '#fff', fontFamily: BODY, fontWeight: 700, fontSize: 15,
+  cursor: disabled ? 'default' : 'pointer',
+});
+const linkBtn = {
+  background: 'none', border: 'none', padding: 0, cursor: 'pointer',
+  color: C.green, fontFamily: BODY, fontSize: 13, fontWeight: 600,
+};
+
+// ── Small inline icons ───────────────────────────────────────────────────────
+const Svg = ({ children, size = 20, stroke = C.muted }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={stroke}
+    strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{children}</svg>
+);
+const CheckIcon = () => <Svg stroke={C.mint}><path d="M5 12.5l4.5 4.5L19 7.5" /></Svg>;
+const EyeIcon   = () => <Svg><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z" /><circle cx="12" cy="12" r="3" /></Svg>;
+const EyeOffIcon = () => <Svg><path d="M3 3l18 18" /><path d="M10.6 5.1A10.6 10.6 0 0112 5c6.4 0 10 7 10 7a17 17 0 01-3.2 4M6.5 6.6C3.7 8.4 2 12 2 12s3.6 7 10 7c1.7 0 3.2-.4 4.5-1" /><path d="M9.9 9.9a3 3 0 004.2 4.2" /></Svg>;
+const UserIcon  = () => <Svg stroke={C.green}><circle cx="12" cy="8" r="4" /><path d="M4 21c0-4 3.6-7 8-7s8 3 8 7" /></Svg>;
+const MailIcon  = () => <Svg stroke={C.green}><rect x="3" y="5" width="18" height="14" rx="2" /><path d="M3 7l9 6 9-6" /></Svg>;
+const PhoneIcon = () => <Svg stroke={C.green}><path d="M5 4h4l2 5-2.5 1.5a11 11 0 005 5L15 13l5 2v4a2 2 0 01-2 2A16 16 0 013 6a2 2 0 012-2z" /></Svg>;
 
 export default function Login() {
   const [form,    setForm]    = useState({ email: '', password: '' });
   const [error,   setError]   = useState('');
   const [loading, setLoading] = useState(false);
+  const [showPw,  setShowPw]  = useState(false);
   const [view,    setView]    = useState('login'); // 'login' | 'forgot' | 'sent' | 'contact'
   const [fpEmail, setFpEmail] = useState('');
   const [contact, setContact] = useState(null);
+
+  // Load brand fonts if the app doesn't already
+  useEffect(() => {
+    const id = 'rentflow-fonts';
+    if (document.getElementById(id)) return;
+    const link = document.createElement('link');
+    link.id = id;
+    link.rel = 'stylesheet';
+    link.href = 'https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700&family=DM+Sans:wght@400;500;600;700&display=swap';
+    document.head.appendChild(link);
+  }, []);
 
   async function handleSubmit(e) {
     e.preventDefault();
@@ -44,182 +113,208 @@ export default function Login() {
     } finally { setLoading(false); }
   }
 
+  function backToLogin(clearEmail) {
+    setView('login'); setError('');
+    if (clearEmail) setFpEmail('');
+  }
+
+  const features = [
+    'Rent payments matched to tenants automatically',
+    'Vacant units listed with real photos and rent',
+    'Tenant balances always up to date',
+  ];
+
+  const errorBox = error && (
+    <div role="alert" style={{
+      background: C.errBg, border: `1px solid ${C.errBd}`, borderRadius: 10,
+      padding: '10px 14px', marginBottom: 20, color: C.errText, fontSize: 13,
+    }}>{error}</div>
+  );
+
   return (
-    <div style={{
-      minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center',
-      background: 'linear-gradient(135deg, #0f1623 0%, #1e1b4b 50%, #0f1623 100%)',
-      padding: 20,
-    }}>
-      {/* Background orbs */}
-      <div style={{ position: 'fixed', inset: 0, overflow: 'hidden', pointerEvents: 'none' }}>
-        <div style={{ position: 'absolute', top: '15%', left: '10%', width: 400, height: 400, borderRadius: '50%', background: 'rgba(79,70,229,0.15)', filter: 'blur(80px)' }} />
-        <div style={{ position: 'absolute', bottom: '15%', right: '10%', width: 300, height: 300, borderRadius: '50%', background: 'rgba(16,185,129,0.1)', filter: 'blur(80px)' }} />
-      </div>
+    <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', background: C.sage, fontFamily: BODY, color: C.forest }}>
+      <style>{`
+        .rf-login input:focus, .rf-login button:focus-visible, .rf-login a:focus-visible {
+          outline: 2px solid ${C.green}; outline-offset: 2px;
+        }
+        .rf-login a:hover { opacity: .85; }
+      `}</style>
 
-      <div style={{
-        background: 'rgba(255,255,255,0.04)', backdropFilter: 'blur(20px)',
-        border: '1px solid rgba(255,255,255,0.08)', borderRadius: 20,
-        padding: '48px 40px', width: '100%', maxWidth: 420, position: 'relative',
+      {/* ── Top nav ── */}
+      <header style={{
+        height: 58, boxSizing: 'border-box', padding: '0 clamp(16px, 4vw, 40px)',
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        background: '#fff', borderBottom: '1px solid #e3e9e4',
       }}>
-        {/* Logo */}
-        <div style={{ textAlign: 'center', marginBottom: 36 }}>
-          <div style={{
-            width: 56, height: 56, borderRadius: 16, margin: '0 auto 16px',
-            background: 'linear-gradient(135deg, #4f46e5, #818cf8)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 28,
-          }}>🏠</div>
-          <h1 style={{ fontFamily: 'Space Grotesk', fontSize: 26, fontWeight: 700, color: '#fff', marginBottom: 6 }}>RentFlow</h1>
-          <p style={{ color: 'rgba(255,255,255,0.4)', fontSize: 14 }}>Sign in to your dashboard</p>
-        </div>
+        <Link to="/" style={{ fontFamily: DISPLAY, fontWeight: 700, fontSize: 18, color: C.ink, textDecoration: 'none' }}>RentFlow</Link>
+        <nav style={{ display: 'flex', alignItems: 'center', gap: 20 }}>
+          <Link to={TENANT_LOGIN_PATH} style={{ fontSize: 13, color: C.label, textDecoration: 'none', minHeight: 44, display: 'flex', alignItems: 'center' }}>Tenant login</Link>
+          <span aria-current="page" style={{
+            fontSize: 13, fontWeight: 700, color: '#fff', background: C.forest,
+            padding: '0 18px', minHeight: 44, borderRadius: 10, display: 'flex', alignItems: 'center',
+          }}>Staff login</span>
+        </nav>
+      </header>
 
-        {error && (
-          <div style={{
-            background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)',
-            borderRadius: 10, padding: '10px 14px', marginBottom: 20,
-            color: '#fca5a5', fontSize: 13,
-          }}>{error}</div>
-        )}
+      {/* ── Hero + card ── */}
+      <main className="rf-login" style={{
+        flex: 1, backgroundColor: C.forest,
+        backgroundImage: `${HERO_OVERLAY}, url(${HERO_IMAGE})`,
+        backgroundSize: 'cover', backgroundPosition: 'center',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        padding: '56px clamp(16px, 4vw, 40px)', boxSizing: 'border-box',
+      }}>
+        <div style={{ width: '100%', maxWidth: 1120, display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: 56 }}>
 
-        <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-          <div>
-            <label style={{ display: 'block', color: 'rgba(255,255,255,0.6)', fontSize: 12, fontWeight: 600, marginBottom: 8, letterSpacing: '0.5px', textTransform: 'uppercase' }}>Email</label>
-            <input
-              type="email" required value={form.email}
-              onChange={e => setForm(f => ({ ...f, email: e.target.value }))}
-              placeholder="admin@rentflow.co.ke"
-              style={{
-                width: '100%', padding: '12px 14px', borderRadius: 10,
-                background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)',
-                color: '#fff', fontSize: 14, outline: 'none',
-              }}
-            />
-          </div>
-          <div>
-            <label style={{ display: 'block', color: 'rgba(255,255,255,0.6)', fontSize: 12, fontWeight: 600, marginBottom: 8, letterSpacing: '0.5px', textTransform: 'uppercase' }}>Password</label>
-            <input
-              type="password" required value={form.password}
-              onChange={e => setForm(f => ({ ...f, password: e.target.value }))}
-              placeholder="••••••••"
-              style={{
-                width: '100%', padding: '12px 14px', borderRadius: 10,
-                background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)',
-                color: '#fff', fontSize: 14, outline: 'none',
-              }}
-            />
-          </div>
-          {/* Forgot password link */}
-          <div style={{ textAlign: 'right', marginTop: -4 }}>
-            <button type="button" onClick={() => { setView('forgot'); setError(''); setFpEmail(form.email); }}
-              style={{ background: 'none', border: 'none', color: 'rgba(129,140,248,0.9)', fontSize: 13, fontWeight: 600, cursor: 'pointer', padding: 0 }}>
-              Forgot password?
-            </button>
-          </div>
+          <section style={{ flex: '1 1 380px', maxWidth: 520, color: '#fff' }}>
+            <h1 style={{ margin: '0 0 16px', fontFamily: DISPLAY, fontWeight: 700, fontSize: 'clamp(34px, 5vw, 52px)', lineHeight: 1.06, letterSpacing: -0.5 }}>
+              Every unit, tenant and payment in one place
+            </h1>
+            <p style={{ margin: '0 0 36px', fontSize: 17, lineHeight: 1.5, color: '#d6e4da' }}>
+              Sign in to manage rent collection, vacancies and balances for your properties.
+            </p>
+            <ul style={{ margin: 0, padding: 0, listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 14 }}>
+              {features.map(f => (
+                <li key={f} style={{ display: 'flex', alignItems: 'center', gap: 12, fontSize: 15 }}>
+                  <CheckIcon />{f}
+                </li>
+              ))}
+            </ul>
+          </section>
 
-          <button type="submit" disabled={loading} style={{
-            marginTop: 8, padding: '13px', borderRadius: 10, border: 'none',
-            background: loading ? 'rgba(79,70,229,0.5)' : 'linear-gradient(135deg, #4f46e5, #6366f1)',
-            color: '#fff', fontWeight: 700, fontSize: 15,
-            fontFamily: 'Space Grotesk', letterSpacing: '0.3px',
-            transition: 'opacity 0.15s',
+          <section style={{
+            flex: '0 1 440px', width: '100%', maxWidth: 440, boxSizing: 'border-box',
+            background: '#fff', borderRadius: 20, padding: '40px 36px',
+            boxShadow: '0 24px 60px rgba(0,0,0,0.28)',
           }}>
-            {loading ? 'Signing in...' : 'Sign In →'}
-          </button>
-        </form>
+            <h2 style={{ margin: '0 0 6px', fontFamily: DISPLAY, fontWeight: 700, fontSize: 28, color: C.ink }}>Staff login</h2>
+            <p style={{ margin: '0 0 28px', fontSize: 14, color: C.muted }}>Sign in to your dashboard</p>
 
-        <p style={{ textAlign: 'center', marginTop: 20, fontSize: 13, color: 'rgba(255,255,255,0.4)' }}>
-          Own a property? <Link to="/register" style={{ color: 'rgba(129,140,248,0.9)', fontWeight: 600, textDecoration: 'none' }}>Sign up as a landlord</Link>
-        </p>
-      </div>
+            {error && view === 'login' && errorBox}
 
-      {/* ── Forgot password overlay views ── */}
-      {view !== 'login' && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, padding: 20 }}>
-          <div style={{ background: '#1a1d2e', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 20, padding: '40px 36px', width: '100%', maxWidth: 420 }}>
+            <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                <label htmlFor="email" style={labelStyle}>Email</label>
+                <input
+                  id="email" type="email" required autoComplete="email" value={form.email}
+                  onChange={e => setForm(f => ({ ...f, email: e.target.value }))}
+                  placeholder="admin@rentflow.co.ke" style={inputStyle}
+                />
+              </div>
 
-            {/* Forgot — enter email */}
-            {view === 'forgot' && (
-              <form onSubmit={handleForgotPassword}>
-                <h2 style={{ fontFamily: 'Space Grotesk', color: '#fff', fontWeight: 700, fontSize: 20, marginBottom: 8 }}>Reset Password</h2>
-                <p style={{ color: 'rgba(255,255,255,0.4)', fontSize: 13, marginBottom: 24, lineHeight: 1.6 }}>
-                  Enter your email. Admins get a reset link. Other staff will see admin contact details.
-                </p>
-                {error && <div style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: 8, padding: '9px 14px', marginBottom: 16, color: '#fca5a5', fontSize: 13 }}>{error}</div>}
-                <label style={{ display: 'block', color: 'rgba(255,255,255,0.5)', fontSize: 12, fontWeight: 600, marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Email</label>
-                <input type="email" value={fpEmail} onChange={e => setFpEmail(e.target.value)} placeholder="you@example.com" autoFocus
-                  style={{ width: '100%', padding: '12px 14px', borderRadius: 10, background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', color: '#fff', fontSize: 14, outline: 'none', boxSizing: 'border-box', marginBottom: 20 }} />
-                <button type="submit" disabled={loading}
-                  style={{ width: '100%', padding: 13, borderRadius: 10, border: 'none', background: 'linear-gradient(135deg, #4f46e5, #6366f1)', color: '#fff', fontWeight: 700, fontSize: 15, cursor: 'pointer', marginBottom: 14 }}>
-                  {loading ? 'Sending...' : 'Continue'}
-                </button>
-                <div style={{ textAlign: 'center' }}>
-                  <button type="button" onClick={() => { setView('login'); setError(''); }}
-                    style={{ background: 'none', border: 'none', color: 'rgba(129,140,248,0.8)', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>← Back to Sign In</button>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <label htmlFor="password" style={labelStyle}>Password</label>
+                  <button type="button" style={linkBtn}
+                    onClick={() => { setView('forgot'); setError(''); setFpEmail(form.email); }}>
+                    Forgot password?
+                  </button>
                 </div>
-              </form>
-            )}
-
-            {/* Sent — confirmation */}
-            {view === 'sent' && (
-              <div style={{ textAlign: 'center' }}>
-                <div style={{ fontSize: 48, marginBottom: 16 }}>📧</div>
-                <h2 style={{ fontFamily: 'Space Grotesk', color: '#fff', fontWeight: 700, fontSize: 20, marginBottom: 10 }}>Check your email</h2>
-                <p style={{ color: 'rgba(255,255,255,0.4)', fontSize: 14, lineHeight: 1.6, marginBottom: 8 }}>
-                  We sent a reset link to <span style={{ color: '#818cf8', fontWeight: 600 }}>{fpEmail}</span>.
-                </p>
-                <p style={{ color: 'rgba(255,255,255,0.3)', fontSize: 13, marginBottom: 28 }}>The link expires in 1 hour. Check your spam folder if you don't see it.</p>
-                <button onClick={() => { setView('login'); setError(''); setFpEmail(''); }}
-                  style={{ width: '100%', padding: 13, borderRadius: 10, border: 'none', background: 'linear-gradient(135deg, #4f46e5, #6366f1)', color: '#fff', fontWeight: 700, fontSize: 15, cursor: 'pointer' }}>
-                  Back to Sign In
-                </button>
+                <div style={{ position: 'relative' }}>
+                  <input
+                    id="password" type={showPw ? 'text' : 'password'} required autoComplete="current-password"
+                    value={form.password}
+                    onChange={e => setForm(f => ({ ...f, password: e.target.value }))}
+                    placeholder="Enter your password" style={{ ...inputStyle, paddingRight: 48 }}
+                  />
+                  <button type="button" onClick={() => setShowPw(s => !s)}
+                    aria-label={showPw ? 'Hide password' : 'Show password'}
+                    style={{ position: 'absolute', right: 2, top: 2, width: 44, height: 44, border: 'none', background: 'transparent', borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
+                    {showPw ? <EyeOffIcon /> : <EyeIcon />}
+                  </button>
+                </div>
               </div>
-            )}
 
-            {/* Contact — non-admin staff */}
-            {view === 'contact' && (
-              <div>
-                <h2 style={{ fontFamily: 'Space Grotesk', color: '#fff', fontWeight: 700, fontSize: 20, marginBottom: 8 }}>Contact Admin</h2>
-                <p style={{ color: 'rgba(255,255,255,0.4)', fontSize: 13, marginBottom: 24, lineHeight: 1.6 }}>
-                  Staff password resets are handled by your administrator. Contact them directly:
-                </p>
-                {contact && (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 24 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 16px', background: 'rgba(255,255,255,0.05)', borderRadius: 10, border: '1px solid rgba(255,255,255,0.08)' }}>
-                      <span style={{ fontSize: 20 }}>👤</span>
-                      <div>
-                        <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.3)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.4px' }}>Administrator</div>
-                        <div style={{ fontWeight: 700, fontSize: 15, color: '#fff' }}>{contact.name}</div>
-                      </div>
-                    </div>
-                    {contact.email && (
-                      <a href={`mailto:${contact.email}`} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 16px', background: 'rgba(255,255,255,0.05)', borderRadius: 10, border: '1px solid rgba(255,255,255,0.08)', textDecoration: 'none' }}>
-                        <span style={{ fontSize: 20 }}>📧</span>
-                        <div>
-                          <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.3)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.4px' }}>Email</div>
-                          <div style={{ fontWeight: 600, fontSize: 14, color: '#818cf8' }}>{contact.email}</div>
-                        </div>
-                      </a>
-                    )}
-                    {contact.phone && (
-                      <a href={`tel:${contact.phone}`} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 16px', background: 'rgba(255,255,255,0.05)', borderRadius: 10, border: '1px solid rgba(255,255,255,0.08)', textDecoration: 'none' }}>
-                        <span style={{ fontSize: 20 }}>📞</span>
-                        <div>
-                          <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.3)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.4px' }}>Phone</div>
-                          <div style={{ fontWeight: 600, fontSize: 14, color: '#818cf8' }}>{contact.phone}</div>
-                        </div>
-                      </a>
-                    )}
-                  </div>
-                )}
-                <button onClick={() => { setView('login'); setError(''); }}
-                  style={{ width: '100%', padding: 13, borderRadius: 10, border: 'none', background: 'linear-gradient(135deg, #4f46e5, #6366f1)', color: '#fff', fontWeight: 700, fontSize: 15, cursor: 'pointer' }}>
-                  Back to Sign In
-                </button>
-              </div>
-            )}
+              <button type="submit" disabled={loading} style={{ ...primaryBtn(loading), marginTop: 6 }}>
+                {loading ? 'Signing in...' : 'Sign in'}
+              </button>
+            </form>
 
-          </div>
+            <p style={{ margin: '24px 0 0', textAlign: 'center', fontSize: 14, color: C.muted }}>
+              Own a property?{' '}
+              <Link to="/register" style={{ color: C.green, fontWeight: 700, textDecoration: 'none' }}>Sign up as a landlord</Link>
+            </p>
+          </section>
         </div>
-      )}
+
+        {/* ── Forgot password overlay views ── */}
+        {view !== 'login' && (
+          <div style={{ position: 'fixed', inset: 0, background: 'rgba(8,20,14,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, padding: 20 }}>
+            <div role="dialog" aria-modal="true" style={{ background: '#fff', borderRadius: 20, padding: '40px 36px', width: '100%', maxWidth: 440, boxSizing: 'border-box', boxShadow: '0 24px 60px rgba(0,0,0,0.35)' }}>
+
+              {/* Forgot — enter email */}
+              {view === 'forgot' && (
+                <form onSubmit={handleForgotPassword}>
+                  <h2 style={{ margin: '0 0 8px', fontFamily: DISPLAY, color: C.ink, fontWeight: 700, fontSize: 24 }}>Reset password</h2>
+                  <p style={{ margin: '0 0 24px', color: C.muted, fontSize: 14, lineHeight: 1.6 }}>
+                    Enter your email. Admins get a reset link. Other staff will see admin contact details.
+                  </p>
+                  {errorBox}
+                  <label htmlFor="fp-email" style={{ ...labelStyle, display: 'block', marginBottom: 8 }}>Email</label>
+                  <input id="fp-email" type="email" value={fpEmail} onChange={e => setFpEmail(e.target.value)}
+                    placeholder="you@example.com" autoFocus style={{ ...inputStyle, marginBottom: 20 }} />
+                  <button type="submit" disabled={loading} style={{ ...primaryBtn(loading), marginBottom: 14 }}>
+                    {loading ? 'Sending...' : 'Continue'}
+                  </button>
+                  <div style={{ textAlign: 'center' }}>
+                    <button type="button" onClick={() => backToLogin(false)} style={linkBtn}>← Back to sign in</button>
+                  </div>
+                </form>
+              )}
+
+              {/* Sent — confirmation */}
+              {view === 'sent' && (
+                <div style={{ textAlign: 'center' }}>
+                  <div style={{ width: 56, height: 56, borderRadius: 16, background: C.sage, margin: '0 auto 16px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <MailIcon />
+                  </div>
+                  <h2 style={{ margin: '0 0 10px', fontFamily: DISPLAY, color: C.ink, fontWeight: 700, fontSize: 24 }}>Check your email</h2>
+                  <p style={{ margin: '0 0 8px', color: C.muted, fontSize: 14, lineHeight: 1.6 }}>
+                    We sent a reset link to <span style={{ color: C.green, fontWeight: 700 }}>{fpEmail}</span>.
+                  </p>
+                  <p style={{ margin: '0 0 28px', color: C.muted, fontSize: 13 }}>The link expires in 1 hour. Check your spam folder if you don't see it.</p>
+                  <button onClick={() => backToLogin(true)} style={primaryBtn(false)}>Back to sign in</button>
+                </div>
+              )}
+
+              {/* Contact — non-admin staff */}
+              {view === 'contact' && (
+                <div>
+                  <h2 style={{ margin: '0 0 8px', fontFamily: DISPLAY, color: C.ink, fontWeight: 700, fontSize: 24 }}>Contact admin</h2>
+                  <p style={{ margin: '0 0 24px', color: C.muted, fontSize: 14, lineHeight: 1.6 }}>
+                    Staff password resets are handled by your administrator. Contact them directly:
+                  </p>
+                  {contact && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 24 }}>
+                      <ContactRow icon={<UserIcon />} label="Administrator" value={contact.name} />
+                      {contact.email && <ContactRow icon={<MailIcon />} label="Email" value={contact.email} href={`mailto:${contact.email}`} />}
+                      {contact.phone && <ContactRow icon={<PhoneIcon />} label="Phone" value={contact.phone} href={`tel:${contact.phone}`} />}
+                    </div>
+                  )}
+                  <button onClick={() => backToLogin(false)} style={primaryBtn(false)}>Back to sign in</button>
+                </div>
+              )}
+
+            </div>
+          </div>
+        )}
+      </main>
     </div>
+  );
+}
+
+function ContactRow({ icon, label, value, href }) {
+  const Tag = href ? 'a' : 'div';
+  return (
+    <Tag href={href} style={{
+      display: 'flex', alignItems: 'center', gap: 12, padding: '12px 16px',
+      background: C.field, borderRadius: 10, border: `1px solid ${C.border}`, textDecoration: 'none',
+    }}>
+      {icon}
+      <div>
+        <div style={{ fontSize: 12, color: C.muted, fontWeight: 600 }}>{label}</div>
+        <div style={{ fontWeight: 700, fontSize: 15, color: href ? C.green : C.ink }}>{value}</div>
+      </div>
+    </Tag>
   );
 }
