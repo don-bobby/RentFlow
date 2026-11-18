@@ -4,8 +4,9 @@ import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContai
 import { MapContainer, TileLayer, Marker, Popup } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import API from '../services/api';
+import API, { getPendingLandlordsCount } from '../services/api';
 import { useAuth } from '../context/AuthContext';
+import Icon from '../components/Icon';
 // PendingLandlordsAlert / PendingUnitsAlert banners moved to Layout.jsx as
 // floating, dismissible toasts (bottom-right, global across every page)
 // instead of two permanent full-width rows at the top of just this page.
@@ -25,7 +26,7 @@ L.Icon.Default.mergeOptions({
 // index.css defines it) plus a guaranteed hex fallback (so it never renders
 // invisible/flat if the variable is missing).
 const PALETTE = {
-  primary: { c: 'var(--primary, #7c3aed)', l: 'var(--primary-light, #ede9fe)', hex: '#7c3aed' },
+  primary: { c: 'var(--primary, #1b6b45)', l: 'var(--primary-light, #e6efe8)', hex: '#1b6b45' },
   green:   { c: 'var(--green, #16a34a)',   l: 'var(--green-light, #dcfce7)',   hex: '#16a34a' },
   amber:   { c: 'var(--amber, #d97706)',   l: 'var(--amber-light, #fef3c7)',   hex: '#d97706' },
   blue:    { c: 'var(--blue, #2563eb)',    l: 'var(--blue-light, #dbeafe)',    hex: '#2563eb' },
@@ -51,33 +52,32 @@ function useIsDarkMode() {
   return isDark;
 }
 
-function StatCard({ label, value, icon, colorKey, onClick, sub }) {
-  const { c: color, l: light, hex } = PALETTE[colorKey];
-  const isDark = useIsDarkMode();
-  // Light mode: soft pastel tint (unchanged). Dark mode: a translucent wash
-  // of the accent color instead — the pastel swatch read as a washed-out
-  // bright smudge against a dark surface, so this keeps the same "colorful
-  // corner" effect without looking muddy.
-  const tint = isDark ? hexToRgba(hex, 0.22) : light;
-  const labelColor = isDark ? 'rgba(255,255,255,0.62)' : 'var(--muted)';
+function StatCard({ label, value, icon, colorKey, onClick, sub, extra }) {
+  // Calm by default: white card + sage icon tile. Only "red" (money owed,
+  // expenses, things awaiting action) keeps a warning color, so it stands out.
+  const alert = colorKey === 'red';
+  const tileBg = alert ? PALETTE.red.l : 'var(--primary-light, #e6efe8)';
+  const tileFg = alert ? PALETTE.red.c : 'var(--primary, #1b6b45)';
   return (
-    <div onClick={onClick} style={{
-      background: `linear-gradient(135deg, ${tint} 0%, var(--surface) 65%)`, borderRadius: 'var(--radius)',
-      padding: '20px 22px', boxShadow: 'var(--shadow)',
-      border: '1px solid var(--border)', borderLeft: `4px solid ${color}`,
-      display: 'flex', alignItems: 'center', gap: 14,
-      cursor: 'pointer', transition: 'all 0.18s',
-    }}
-      onMouseEnter={e => { e.currentTarget.style.boxShadow = 'var(--shadow-lg)'; e.currentTarget.style.transform = 'translateY(-3px)'; }}
-      onMouseLeave={e => { e.currentTarget.style.boxShadow = 'var(--shadow)'; e.currentTarget.style.transform = 'translateY(0)'; }}
+    <div onClick={onClick} role="button" tabIndex={0}
+      onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick && onClick(); } }}
+      style={{
+        background: 'var(--surface)', borderRadius: 'var(--radius, 14px)', padding: 20,
+        border: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: 6,
+        cursor: 'pointer', transition: 'border-color 0.15s, box-shadow 0.15s',
+      }}
+      onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--primary, #1b6b45)'; e.currentTarget.style.boxShadow = 'var(--shadow)'; }}
+      onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.boxShadow = 'none'; }}
     >
-      <div style={{ width: 48, height: 48, borderRadius: 12, flexShrink: 0, background: color, boxShadow: `0 4px 10px ${hex}55`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 22 }}>{icon}</div>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontSize: 12, color: labelColor, fontWeight: 600, marginBottom: 2, textTransform: 'uppercase', letterSpacing: '0.3px' }}>{label}</div>
-        <div style={{ fontSize: 22, fontWeight: 800, fontFamily: 'Space Grotesk', color, lineHeight: 1.2 }}>{value}</div>
-        {sub && <div style={{ fontSize: 11, color: labelColor, marginTop: 2 }}>{sub}</div>}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+        <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--muted)' }}>{label}</span>
+        <span style={{ width: 40, height: 40, borderRadius: 10, flexShrink: 0, background: tileBg, color: tileFg, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <Icon name={icon} size={20} />
+        </span>
       </div>
-      <span style={{ color, fontSize: 18, fontWeight: 700, flexShrink: 0 }}>›</span>
+      <div style={{ fontSize: 26, fontWeight: 700, fontFamily: 'Bricolage Grotesque', color: alert ? PALETTE.red.c : 'var(--text)', lineHeight: 1.15, letterSpacing: '-0.3px' }}>{value}</div>
+      {sub && <div style={{ fontSize: 13, color: 'var(--muted)' }}>{sub}</div>}
+      {extra}
     </div>
   );
 }
@@ -88,7 +88,7 @@ function Modal({ title, onClose, children }) {
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, padding: 20 }}>
       <div style={{ background: isDark ? '#242a3d' : 'var(--surface)', borderRadius: 16, width: '100%', maxWidth: 720, maxHeight: '85vh', display: 'flex', flexDirection: 'column', boxShadow: 'var(--shadow-lg)', border: isDark ? '1px solid #383f57' : 'none' }}>
         <div style={{ padding: '20px 24px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0 }}>
-          <h2 style={{ fontFamily: 'Space Grotesk', fontWeight: 700, fontSize: 18, color: 'var(--text)' }}>{title}</h2>
+          <h2 style={{ fontFamily: 'Bricolage Grotesque', fontWeight: 700, fontSize: 18, color: 'var(--text)' }}>{title}</h2>
           <button onClick={onClose} style={{ width: 32, height: 32, borderRadius: '50%', border: 'none', background: isDark ? '#383f57' : 'var(--surface2)', cursor: 'pointer', fontSize: 18, color: 'var(--muted)' }}>×</button>
         </div>
         <div style={{ overflowY: 'auto', flex: 1 }}>{children}</div>
@@ -101,7 +101,7 @@ function SeeMoreFooter({ onClick, label = 'See More →' }) {
   return (
     <div style={{ padding: '16px 20px', display: 'flex', justifyContent: 'center', borderTop: '1px solid var(--border)' }}>
       <button onClick={onClick} style={{
-        padding: '9px 20px', borderRadius: 8, border: 'none', background: 'var(--primary, #7c3aed)',
+        padding: '9px 20px', borderRadius: 8, border: 'none', background: 'var(--primary, #1b6b45)',
         color: '#fff', fontWeight: 600, fontSize: 13, cursor: 'pointer',
       }}>
         {label}
@@ -120,7 +120,7 @@ function SummaryBar({ isDark, stats }) {
       {stats.map((s, i) => (
         <div key={s.label} style={{ flex: '1 1 120px', padding: '13px 16px', borderRight: i < stats.length - 1 ? (isDark ? '1px solid rgba(255,255,255,0.07)' : '1px solid #e2e8f0') : 'none' }}>
           <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: isDark ? 'rgba(255,255,255,0.38)' : '#94a3b8', marginBottom: 3 }}>{s.label}</div>
-          <div style={{ fontFamily: 'Space Grotesk', fontWeight: 800, fontSize: 17, color: s.color }}>{s.value}</div>
+          <div style={{ fontFamily: 'Bricolage Grotesque', fontWeight: 800, fontSize: 17, color: s.color }}>{s.value}</div>
         </div>
       ))}
     </div>
@@ -132,8 +132,8 @@ function MetricsGrid({ isDark, metrics }) {
     <div style={{ display: 'grid', gridTemplateColumns: `repeat(${metrics.length}, 1fr)`, gap: 8 }}>
       {metrics.map(m => (
         <div key={m.label} style={{ background: isDark ? 'rgba(255,255,255,0.07)' : '#f8fafc', borderRadius: 9, padding: '10px 12px', border: isDark ? '1px solid rgba(255,255,255,0.09)' : '1px solid #e2e8f0', textAlign: 'center' }}>
-          <div style={{ fontSize: 14, marginBottom: 4 }}>{m.icon}</div>
-          <div style={{ fontFamily: 'Space Grotesk', fontWeight: 800, fontSize: m.small ? 12 : 15, color: m.color, lineHeight: 1.2, wordBreak: 'break-word' }}>{m.value}</div>
+          <div style={{ marginBottom: 4, display: 'flex', justifyContent: 'center', color: 'var(--muted)' }}><Icon name={m.icon} size={16} /></div>
+          <div style={{ fontFamily: 'Bricolage Grotesque', fontWeight: 800, fontSize: m.small ? 12 : 15, color: m.color, lineHeight: 1.2, wordBreak: 'break-word' }}>{m.value}</div>
           <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: isDark ? 'rgba(255,255,255,0.35)' : '#94a3b8', marginTop: 3 }}>{m.label}</div>
         </div>
       ))}
@@ -144,7 +144,7 @@ function MetricsGrid({ isDark, metrics }) {
 function EmptyState({ icon, title, sub }) {
   return (
     <div style={{ padding: 48, textAlign: 'center' }}>
-      <div style={{ fontSize: 36, marginBottom: 12 }}>{icon}</div>
+      <div style={{ marginBottom: 12, display: 'flex', justifyContent: 'center', color: 'var(--muted)' }}><Icon name={icon} size={36} /></div>
       <div style={{ fontWeight: 700, fontSize: 15, color: 'var(--text)', marginBottom: 6 }}>{title}</div>
       {sub && <div style={{ fontSize: 13, color: 'var(--muted)' }}>{sub}</div>}
     </div>
@@ -165,7 +165,7 @@ function ListCard({ i, isDark, avatarIcon, avatarBg, avatarBorder, avatarColor, 
         <div style={{ display: 'flex', alignItems: 'center', gap: 11, minWidth: 0 }}>
           {avatarIcon && (
             <div style={{ width: 40, height: 40, borderRadius: '50%', flexShrink: 0, background: avatarBg, border: avatarBorder, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 15, fontWeight: 800, color: avatarColor }}>
-              {avatarIcon}
+              {avatarIcon === '🏠' ? <Icon name="🏠" size={18} /> : avatarIcon}
             </div>
           )}
           <div style={{ minWidth: 0 }}>
@@ -260,7 +260,7 @@ function PropertyMap({ properties, isDark }) {
 
   const shellStyle = { background: 'var(--surface)', borderRadius: 'var(--radius)', boxShadow: 'var(--shadow)', border: '1px solid var(--border)', height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' };
   const headerStyle = { padding: '14px 16px', borderBottom: '1px solid var(--border)', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'space-between' };
-  const titleStyle = { fontFamily: 'Space Grotesk', fontWeight: 700, fontSize: 14, color: isDark ? 'var(--blue, #2563eb)' : 'var(--text)' };
+  const titleStyle = { fontFamily: 'Bricolage Grotesque', fontWeight: 700, fontSize: 14, color: 'var(--text)' };
   const expandBtnStyle = {
     border: '1px solid var(--border)', background: 'var(--surface2)', borderRadius: 7, padding: '4px 9px',
     fontSize: 12, fontWeight: 600, color: 'var(--muted)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4,
@@ -304,7 +304,7 @@ function PropertyMap({ properties, isDark }) {
       <div style={shellStyle}>
         <div style={headerStyle}>
           <h2 style={titleStyle}>Property Map</h2>
-          <button onClick={() => setExpanded(true)} style={expandBtnStyle} title="Enlarge map">⛶ Enlarge</button>
+          <button onClick={() => setExpanded(true)} style={expandBtnStyle} title="Enlarge map"><Icon name="⛶" size={14} /> Enlarge</button>
         </div>
         {!expanded && (
           // position:relative + an explicit z-index gives this div its own
@@ -384,6 +384,14 @@ export default function Dashboard() {
   const isDark = useIsDarkMode();
   const navigate = useNavigate();
   const { user: me, can } = useAuth();
+  // Count of landlords waiting for approval (admins only) — shown in "Today at a glance"
+  const [pendingLandlords, setPendingLandlords] = useState(0);
+  useEffect(() => {
+    if (!(me?.role === 'admin' || me?.role === 'super_admin')) return;
+    let live = true;
+    getPendingLandlordsCount().then(r => { if (live) setPendingLandlords(r.data.count || 0); }).catch(() => {});
+    return () => { live = false; };
+  }, [me?.role]);
   // The caretaker badge/tile is for the people who actually manage
   // caretakers day to day (landlords, and agents acting on their behalf) —
   // not admin, who oversees every landlord's caretakers at once and has
@@ -604,7 +612,7 @@ export default function Dashboard() {
     const GREEN = 'var(--green, #16a34a)', GREEN_L = 'var(--green-light, #dcfce7)';
     const AMBER = 'var(--amber, #d97706)', AMBER_L = 'var(--amber-light, #fef3c7)';
     const BLUE = 'var(--blue, #2563eb)', BLUE_L = 'var(--blue-light, #dbeafe)';
-    const PRIMARY = 'var(--primary, #7c3aed)', PRIMARY_L = 'var(--primary-light, #ede9fe)';
+    const PRIMARY = 'var(--primary, #1b6b45)', PRIMARY_L = 'var(--primary-light, #e6efe8)';
     const GREY = 'var(--muted, #6b7280)', GREY_L = 'var(--surface2, #f3f4f6)';
 
     const statusColor = isFailed ? RED : isPending ? AMBER : GREEN;
@@ -614,7 +622,7 @@ export default function Dashboard() {
     const methodLight  = method === 'mpesa' ? GREEN_L : method === 'bank_transfer' ? BLUE_L : method === 'cash' ? PRIMARY_L : GREY_L;
     return (
       <TR key={p.id} i={i} failed={isFailed} pending={isPending} cells={[
-        { value: p.tenant_name || '—', style: { fontWeight: 600, color: isDark ? 'var(--blue, #2563eb)' : 'var(--text)' } },
+        { value: p.tenant_name || '—', style: { fontWeight: 600, color: 'var(--text)' } },
         { value: `KES ${parseFloat(p.amount).toLocaleString()}`, style: { fontWeight: 700, color: isFailed ? RED : isPending ? AMBER : GREEN, textDecoration: isFailed ? 'line-through' : 'none' } },
         { value: <span style={{ background: methodLight, color: methodColor, padding: '3px 10px', borderRadius: 99, fontSize: 12, fontWeight: 600 }}>{p.method || 'mpesa'}</span> },
         { value: (
@@ -623,67 +631,39 @@ export default function Dashboard() {
             {p.status}
           </span>
         ) },
-        { value: new Date(p.payment_date).toLocaleDateString('en-KE'), style: { color: isDark ? '#2dd4bf' : 'var(--muted)', fontWeight: 700 } },
+        { value: new Date(p.payment_date).toLocaleDateString('en-KE', { day: 'numeric', month: 'short', year: 'numeric' }), style: { color: 'var(--muted)', fontWeight: 500 } },
       ]} />
     );
   }
 
   return (
     <div style={{ marginTop: -24 }}>
-      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16, marginBottom: 28 }}>
-        <div>
-          <h1 style={{
-            fontFamily: 'Space Grotesk', fontSize: 26, fontWeight: 800, marginBottom: 6,
-            color: 'var(--primary, #7c3aed)', display: 'inline-flex', alignItems: 'center', gap: 10,
-          }}>
-            Dashboard
-            <span style={{ display: 'inline-block', width: 34, height: 5, borderRadius: 99, background: 'linear-gradient(90deg, var(--primary, #7c3aed), var(--blue, #2563eb))' }} />
-          </h1>
-          <p style={{ color: 'var(--muted)', fontSize: 14 }}>Welcome back. Here's what's happening today.</p>
-        </div>
+      {/* ── Page header: title + greeting on the left, quick actions on the right ── */}
+      {(() => {
+        const now = new Date();
+        const hr = now.getHours();
+        const hello = hr < 12 ? 'Good morning' : hr < 17 ? 'Good afternoon' : 'Good evening';
+        const btn = { display: 'flex', alignItems: 'center', gap: 8, padding: '0 18px', minHeight: 44, borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontWeight: 600, fontSize: 14, cursor: 'pointer' };
+        return (
+          <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: 16, marginBottom: 20 }}>
+            <div>
+              <h1 style={{ fontFamily: 'Bricolage Grotesque', fontSize: 32, fontWeight: 700, margin: '0 0 4px', letterSpacing: '-0.4px', color: 'var(--text)' }}>Dashboard</h1>
+              <p style={{ margin: 0, color: 'var(--muted)', fontSize: 15 }}>{hello}{me?.name ? `, ${String(me.name).split(' ')[0]}` : ''} · {now.toLocaleDateString('en-KE', { weekday: 'long', day: 'numeric', month: 'long' })}</p>
+            </div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
+              <button onClick={() => navigate('/tenants', { state: { openAddModal: true } })} style={{ ...btn, background: 'var(--primary, #1b6b45)', borderColor: 'var(--primary, #1b6b45)', color: '#fff' }}><Icon name="👥" size={16} /> Add tenant</button>
+              <button onClick={() => navigate('/payments')} style={btn}><Icon name="💳" size={16} /> Record payment</button>
+              <button onClick={() => navigate('/users')} style={btn}><Icon name="🧑‍🔧" size={16} /> Assign caretaker</button>
+              <button onClick={() => navigate('/reports')} style={btn}><Icon name="📄" size={16} /> Export report</button>
+              {showCaretakerBadge && caretakers.length > 0 && (
+                <button onClick={() => setModal('caretakers')} style={btn}><Icon name="🧑‍🔧" size={16} /> {caretakers.length} caretaker{caretakers.length !== 1 ? 's' : ''}</button>
+              )}
+            </div>
+          </div>
+        );
+      })()}
 
-        {/* Caretaker badge — a quick-glance, always-visible shortcut to the
-            same details the Caretaker Workload tile below opens, for anyone
-            who manages caretakers and wants it without scanning the grid. */}
-        {showCaretakerBadge && caretakers.length > 0 && (
-          <button onClick={() => setModal('caretakers')} style={{
-            display: 'flex', alignItems: 'center', gap: 8, padding: '10px 18px', borderRadius: 12,
-            border: '1px solid var(--green, #16a34a)', background: isDark ? 'rgba(52,211,153,0.12)' : 'var(--green-light, #dcfce7)',
-            color: isDark ? '#34d399' : 'var(--green, #16a34a)', fontWeight: 700, fontSize: 13, cursor: 'pointer',
-            boxShadow: 'var(--shadow)', whiteSpace: 'nowrap', flexShrink: 0,
-          }}>
-            🧑‍🔧 {caretakers.length} Caretaker{caretakers.length !== 1 ? 's' : ''}
-            <span style={{ fontSize: 11, fontWeight: 600, opacity: 0.8 }}>· view</span>
-          </button>
-        )}
-      </div>
-
-
-
-      {/* Quick Actions */}
-      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 28 }}>
-        {/* Previously just navigated to the (often empty) tenants list,
-            leaving the user to find + click "Add Tenant" again themselves.
-            Passes a flag in router state, same convention Properties.jsx
-            already uses (highlightPlotId/highlightHouseId) for "land here
-            and immediately do X" navigation — Tenants.jsx needs a small
-            effect reading `location.state?.openAddModal` to open its own
-            add-tenant modal on mount (see note sent with this fix). */}
-        <button onClick={() => navigate('/tenants', { state: { openAddModal: true } })} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '11px 18px', borderRadius: 10, border: 'none', background: 'var(--primary, #7c3aed)', color: '#fff', fontWeight: 600, fontSize: 13, cursor: 'pointer' }}>
-          + Add Tenant
-        </button>
-        <button onClick={() => navigate('/payments')} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '11px 18px', borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontWeight: 600, fontSize: 13, cursor: 'pointer' }}>
-          💳 Record Payment
-        </button>
-        <button onClick={() => navigate('/users')} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '11px 18px', borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontWeight: 600, fontSize: 13, cursor: 'pointer' }}>
-          🧑‍🔧 Assign Caretaker
-        </button>
-        <button onClick={() => navigate('/reports')} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '11px 18px', borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontWeight: 600, fontSize: 13, cursor: 'pointer' }}>
-          📄 Export Report
-        </button>
-      </div>
-
-      {/* Daily briefing — what needs attention today, each item links to where to act */}
+      {/* ── Today at a glance: one strip of what needs attention ── */}
       {(() => {
         const today = new Date();
         const dayOfMonth = today.getDate();
@@ -698,78 +678,86 @@ export default function Dashboard() {
         const overdue = unpaidTenants.filter(t => (Math.min(28, parseInt(t.rent_due_day) || 1)) < dayOfMonth);
         const staleMaint = data.requests.filter(r => r.status !== 'completed' && (today - new Date(r.reported_at)) / 86400000 > 7);
         const needsMatching = payments.filter(p => p.status === 'unmatched' || p.status === 'review');
+        const pendUnits = (pendingUnits || []).filter(h => !h.rejection_reason).length;
+        const s_ = (n) => (n !== 1 ? 's' : '');
         const items = [
-          { icon: '💰', text: `${paidToday.length} payment${paidToday.length !== 1 ? 's' : ''} received today`, sub: paidToday.length ? `KES ${paidTodayTotal.toLocaleString()}` : null, to: '/payments', state: { highlightIds: paidToday.map(p => p.id) }, show: true, tone: 'green' },
-          { icon: '⏰', text: `${dueSoon.length} tenant${dueSoon.length !== 1 ? 's' : ''} with rent due in the next 3 days`, to: '/tenants', show: dueSoon.length > 0, tone: 'amber' },
-          { icon: '⚠️', text: `${overdue.length} tenant${overdue.length !== 1 ? 's' : ''} past their due day with a balance`, sub: `KES ${overdue.reduce((a, t) => a + parseFloat(t.balance || 0), 0).toLocaleString()} owed`, to: '/reports', show: overdue.length > 0, tone: 'red' },
-          { icon: '🔀', text: `${needsMatching.length} M-Pesa payment${needsMatching.length !== 1 ? 's' : ''} need matching`, to: '/payments', show: needsMatching.length > 0, tone: 'red' },
-          { icon: '📅', text: `${expiringLeases.length} lease${expiringLeases.length !== 1 ? 's' : ''} at 11+ months`, to: '/reports', show: expiringLeases.length > 0, tone: 'amber' },
-          { icon: '🔧', text: `${staleMaint.length} maintenance request${staleMaint.length !== 1 ? 's' : ''} open for over a week`, to: '/maintenance', show: staleMaint.length > 0, tone: 'red' },
-          { icon: '🏠', text: `${vacantHouses.length} vacant unit${vacantHouses.length !== 1 ? 's' : ''}`, to: '/properties', show: vacantHouses.length > 0, tone: 'muted' },
+          { dot: '#1b6b45', text: `${paidToday.length} payment${s_(paidToday.length)} received today`, sub: paidToday.length ? `KES ${paidTodayTotal.toLocaleString()}` : null, to: '/payments', state: { highlightIds: paidToday.map(p => p.id) }, show: true },
+          { dot: '#b45309', text: `${dueSoon.length} tenant${s_(dueSoon.length)} with rent due in the next 3 days`, to: '/tenants', show: dueSoon.length > 0 },
+          { dot: '#b42318', text: `${overdue.length} tenant${s_(overdue.length)} ${overdue.length === 1 ? 'has' : 'have'} an outstanding balance`, sub: `KES ${overdue.reduce((a, t) => a + parseFloat(t.balance || 0), 0).toLocaleString()} in total`, to: '/reports', show: overdue.length > 0 },
+          { dot: '#b42318', text: `${needsMatching.length} M-Pesa payment${s_(needsMatching.length)} need matching`, to: '/payments', show: needsMatching.length > 0 },
+          { dot: '#b45309', text: `${expiringLeases.length} lease${s_(expiringLeases.length)} at 11+ months`, to: '/reports', show: expiringLeases.length > 0 },
+          { dot: '#b42318', text: `${staleMaint.length} maintenance request${s_(staleMaint.length)} open for over a week`, to: '/maintenance', show: staleMaint.length > 0 },
+          { dot: '#b45309', text: `${vacantHouses.length} vacant unit${s_(vacantHouses.length)}`, sub: `Across ${plots.length} propert${plots.length === 1 ? 'y' : 'ies'}`, to: '/properties', show: vacantHouses.length > 0 },
+          { dot: '#2563a8', text: `${pendingLandlords} landlord${s_(pendingLandlords)} awaiting approval`, sub: 'Needs your review', to: '/users', show: pendingLandlords > 0 },
+          { dot: '#2563a8', text: `${pendUnits} unit${s_(pendUnits)} awaiting approval`, sub: 'Needs your review', modal: 'pending_units', show: pendUnits > 0 },
         ].filter(i => i.show);
-        const hour = today.getHours();
-        const greet = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
-        const toneColor = { green: 'var(--green, #16a34a)', amber: 'var(--amber, #d97706)', red: 'var(--red, #dc2626)', muted: 'var(--muted)' };
         return (
-          <div style={{ marginBottom: 20, padding: 18, borderRadius: 14, border: '1px solid var(--border)', background: 'var(--surface)', boxShadow: 'var(--shadow)' }}>
-            <div style={{ fontWeight: 700, fontSize: 16, color: 'var(--text)', marginBottom: 2 }}>{greet}{me?.name ? `, ${String(me.name).split(' ')[0]}` : ''} 👋</div>
-            <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 12 }}>Today's briefing — {today.toLocaleDateString('en-KE', { weekday: 'long', day: 'numeric', month: 'long' })}</div>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
-              {items.map((i, k) => (
-                <button key={k} onClick={() => navigate(i.to, i.state ? { state: i.state } : undefined)} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '9px 14px', borderRadius: 10, border: '1px solid var(--border)', borderLeft: `4px solid ${toneColor[i.tone]}`, background: 'var(--surface2)', color: 'var(--text)', fontSize: 13, cursor: 'pointer', textAlign: 'left' }}>
-                  <span>{i.icon}</span>
-                  <span><span style={{ fontWeight: 600 }}>{i.text}</span>{i.sub && <span style={{ color: 'var(--muted)' }}> · {i.sub}</span>}</span>
-                </button>
-              ))}
-              {items.length === 0 && <span style={{ color: 'var(--muted)', fontSize: 13 }}>All quiet — nothing needs attention right now. 🎉</span>}
-            </div>
-          </div>
+          <section aria-label="Today at a glance" style={{ background: 'var(--surface)', borderRadius: 'var(--radius, 14px)', border: '1px solid var(--border)', overflow: 'hidden', marginBottom: 20 }}>
+            {items.length === 0 ? (
+              <div style={{ padding: '16px 20px', color: 'var(--muted)', fontSize: 14 }}>All quiet — nothing needs attention right now.</div>
+            ) : (
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: 1, background: 'var(--border)' }}>
+                {items.map((i, k) => (
+                  <button key={k} onClick={() => i.modal ? setModal(i.modal) : navigate(i.to, i.state ? { state: i.state } : undefined)}
+                    style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '16px 20px', border: 'none', background: 'var(--surface)', cursor: 'pointer', textAlign: 'left', fontFamily: 'inherit', color: 'var(--text)' }}>
+                    <span aria-hidden="true" style={{ width: 10, height: 10, borderRadius: '50%', background: i.dot, flexShrink: 0 }} />
+                    <span>
+                      <span style={{ display: 'block', fontSize: 14, fontWeight: 600 }}>{i.text}</span>
+                      {i.sub && <span style={{ display: 'block', fontSize: 13, color: 'var(--muted)', marginTop: 2 }}>{i.sub}</span>}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </section>
         );
       })()}
 
-      {/* Stats Grid + Property Map */}
-      <div style={{ display: 'flex', gap: 16, marginBottom: 28, alignItems: 'stretch', flexWrap: 'wrap' }}>
-        <div style={{ flex: '1 1 600px', display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 14 }}>
-          <StatCard label="Active Tenants"    value={activeTenants.length}   icon="👥" colorKey="primary" onClick={() => setModal('tenants')} />
-          <StatCard label="Occupied Units"    value={occupiedHouses.length}  icon="🏠" colorKey="green"   onClick={() => setModal('occupied')} />
-          <StatCard label="Vacant Units"      value={vacantHouses.length}    icon="🔑" colorKey="amber"   onClick={() => setModal('vacant')} />
-          <StatCard label="Revenue (Month)"   value={`KES ${monthRevenue.toLocaleString()}`}  icon="💰" colorKey="blue"    onClick={() => setModal('revenue')} />
-          <StatCard label="Unpaid Rent"       value={`KES ${totalUnpaid.toLocaleString()}`}   icon="⚠️" colorKey="red"     onClick={() => setModal('unpaid')}  sub={`${unpaidTenants.length} tenant${unpaidTenants.length !== 1 ? 's' : ''}`} />
-          <StatCard label="Total Revenue"     value={`KES ${totalRevenue.toLocaleString()}`}  icon="📈" colorKey="blue"    onClick={() => setModal('allrevenue')} />
-          <StatCard label="Maintenance"       value={pendingRequests.length} icon="🔧" colorKey="primary" onClick={() => setModal('maintenance')} sub="pending requests" />
-          {can('expenses.view') && (
-            <StatCard label="Expenses (Month)" value={`KES ${monthExpensesTotal.toLocaleString()}`} icon="🧾" colorKey="red" onClick={() => setModal('expenses')}
-              sub={allPendingExpenses.length > 0 ? `${allPendingExpenses.length} awaiting confirmation` : 'confirmed this month'} />
-          )}
-          {can('expenses.view') && (
-            <StatCard label="Net Income (Month)" value={`KES ${netIncomeMonth.toLocaleString()}`} icon={netIncomeMonth >= 0 ? '📈' : '📉'} colorKey={netIncomeMonth >= 0 ? 'green' : 'red'} onClick={() => setModal('net_income')}
-              sub="revenue minus expenses" />
-          )}
-          {maintenanceExpenses.length > 0 && (
-            <StatCard label="Maintenance Spend (Month)" value={`KES ${monthMaintenanceSpend.toLocaleString()}`} icon="🔧" colorKey="amber" onClick={() => setModal('maintenance_spend')}
-              sub={pendingMaintenanceExpenses.length > 0 ? `${pendingMaintenanceExpenses.length} awaiting confirmation` : 'confirmed this month'} />
-          )}
-          {pendingUnits?.filter(h => !h.rejection_reason).length > 0 && (
-            <StatCard label="Pending Units" value={pendingUnits.filter(h => !h.rejection_reason).length} icon="⏳" colorKey="red" onClick={() => setModal('pending_units')} sub="awaiting approval" />
-          )}
-          <StatCard label="Total Properties"  value={plots.length}           icon="🏢" colorKey="primary" onClick={() => setModal('plots')} sub={`${houses.length} total units`} />
-          <StatCard label="Expiring Leases"   value={expiringLeases.length}  icon="📅" colorKey="amber"   onClick={() => setModal('expiring')} sub="11+ months tenancy" />
-          {showCaretakerBadge && caretakers.length > 0 && (
-            <StatCard label="Caretaker Workload" value={caretakers.length} icon="🧑‍🔧" colorKey="green" onClick={() => setModal('caretakers')} sub={`across ${plots.length} plot${plots.length !== 1 ? 's' : ''}`} />
-          )}
-        </div>
-        <div style={{ flex: '0 0 300px', minHeight: 300 }}>
-          <PropertyMap properties={propertiesOverview} isDark={isDark} />
-        </div>
+      {/* ── Key figures ── */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 16, marginBottom: 20 }}>
+        <StatCard label="Collected this month" value={`KES ${monthRevenue.toLocaleString()}`} icon="💳" colorKey="primary" onClick={() => setModal('revenue')}
+          sub={can('expenses.view') ? (monthExpensesTotal > 0 ? `KES ${monthExpensesTotal.toLocaleString()} in expenses` : 'No expenses recorded') : undefined} />
+        <StatCard label="Outstanding rent" value={`KES ${totalUnpaid.toLocaleString()}`} icon="⚠️" colorKey="red" onClick={() => setModal('unpaid')}
+          sub={`Owed by ${unpaidTenants.length} tenant${unpaidTenants.length !== 1 ? 's' : ''}`} />
+        <StatCard label="Occupancy" value={`${occupancyRate}%`} icon="🏢" colorKey="primary" onClick={() => setModal('occupancy')}
+          sub={`${occupiedHouses.length} of ${houses.length} units occupied · ${vacantHouses.length} vacant`}
+          extra={<div style={{ height: 6, borderRadius: 9, background: 'var(--border)', overflow: 'hidden', marginTop: 8 }}><div style={{ width: `${occupancyRate}%`, height: '100%', background: 'var(--primary, #1b6b45)', borderRadius: 9 }} /></div>} />
+        <StatCard label="Active tenants" value={activeTenants.length} icon="👥" colorKey="primary" onClick={() => setModal('tenants')}
+          sub={`Across ${plots.length} propert${plots.length === 1 ? 'y' : 'ies'}`} />
       </div>
 
-      {/* Analytics row: Monthly Revenue + Occupancy Rate */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: 16, marginBottom: 16 }}>
-        <div style={{ background: 'var(--surface)', borderRadius: 'var(--radius)', boxShadow: 'var(--shadow)', border: '1px solid var(--border)', padding: '20px 24px', minWidth: 0 }}>
-          <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 16 }}>
-            <h2 style={{ fontFamily: 'Space Grotesk', fontWeight: 700, fontSize: 16, color: isDark ? 'var(--blue, #2563eb)' : 'var(--text)' }}>Monthly Revenue</h2>
+      {/* ── Portfolio strip ── */}
+      {(() => {
+        const stats = [
+          { label: 'Properties', value: `${plots.length} · ${houses.length} units`, modal: 'plots' },
+          { label: 'Total revenue', value: `KES ${totalRevenue.toLocaleString()}`, modal: 'allrevenue' },
+          can('expenses.view') && { label: 'Expenses this month', value: `KES ${monthExpensesTotal.toLocaleString()}`, modal: 'expenses' },
+          can('expenses.view') && { label: 'Net income this month', value: `KES ${netIncomeMonth.toLocaleString()}`, modal: 'net_income', bad: netIncomeMonth < 0 },
+          { label: 'Open maintenance', value: `${pendingRequests.length} request${pendingRequests.length !== 1 ? 's' : ''}`, modal: 'maintenance' },
+          maintenanceExpenses.length > 0 && { label: 'Maintenance spend', value: `KES ${monthMaintenanceSpend.toLocaleString()}`, modal: 'maintenance_spend' },
+          { label: 'Expiring leases', value: expiringLeases.length, modal: 'expiring' },
+        ].filter(Boolean);
+        return (
+          <section aria-label="Portfolio" style={{ background: 'var(--surface)', borderRadius: 'var(--radius, 14px)', border: '1px solid var(--border)', overflow: 'hidden', marginBottom: 20 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 1, background: 'var(--border)' }}>
+              {stats.map(st => (
+                <button key={st.label} onClick={() => setModal(st.modal)} style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 6, padding: '18px 20px', border: 'none', background: 'var(--surface)', cursor: 'pointer', textAlign: 'left', fontFamily: 'inherit' }}>
+                  <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--muted)' }}>{st.label}</span>
+                  <span style={{ fontFamily: 'Bricolage Grotesque', fontWeight: 700, fontSize: 18, color: st.bad ? 'var(--red, #b42318)' : 'var(--text)' }}>{st.value}</span>
+                </button>
+              ))}
+            </div>
+          </section>
+        );
+      })()}
+
+      {/* ── Revenue trend + unpaid rent by property ── */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.6fr) minmax(0, 1fr)', gap: 16, marginBottom: 20 }}>
+        <div style={{ background: 'var(--surface)', borderRadius: 'var(--radius, 14px)', border: '1px solid var(--border)', padding: '20px 24px', minWidth: 0, gridColumn: 'span 1' }}>
+          <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 12, marginBottom: 16 }}>
+            <h2 style={{ fontFamily: 'Bricolage Grotesque', fontWeight: 700, fontSize: 18, margin: 0, color: 'var(--text)' }}>Monthly revenue</h2>
             {revenueChangePct !== null && (
-              <span style={{ fontSize: 12, fontWeight: 700, color: revenueChangePct >= 0 ? (isDark ? '#34d399' : '#16a34a') : (isDark ? '#f87171' : '#dc2626') }}>
+              <span style={{ fontSize: 12, fontWeight: 700, color: revenueChangePct >= 0 ? (isDark ? '#34d399' : '#16a34a') : 'var(--muted)' }}>
                 {revenueChangePct >= 0 ? '▲' : '▼'} {Math.abs(revenueChangePct)}% vs last month
               </span>
             )}
@@ -780,62 +768,35 @@ export default function Dashboard() {
               <XAxis dataKey="month" tick={{ fontSize: 12, fill: isDark ? 'rgba(255,255,255,0.5)' : '#64748b' }} axisLine={false} tickLine={false} />
               <YAxis tick={{ fontSize: 11, fill: isDark ? 'rgba(255,255,255,0.4)' : '#94a3b8' }} axisLine={false} tickLine={false} tickFormatter={v => v >= 1000 ? `${(v / 1000).toFixed(0)}k` : v} width={40} />
               <Tooltip formatter={v => [`KES ${Number(v).toLocaleString()}`, 'Revenue']} contentStyle={{ background: isDark ? '#242a3d' : '#fff', border: isDark ? '1px solid #383f57' : '1px solid #e2e8f0', borderRadius: 8, fontSize: 13 }} labelStyle={{ color: isDark ? '#f1f5f9' : '#0f172a' }} />
-              <Line type="monotone" dataKey="revenue" stroke={isDark ? '#60a5fa' : '#2563eb'} strokeWidth={2.5} dot={{ r: 4, fill: isDark ? '#60a5fa' : '#2563eb' }} activeDot={{ r: 6 }} />
+              <Line type="monotone" dataKey="revenue" stroke={isDark ? '#8fd1ad' : '#1b6b45'} strokeWidth={2.5} dot={{ r: 4, fill: isDark ? '#8fd1ad' : '#1b6b45' }} activeDot={{ r: 6 }} />
             </LineChart>
           </ResponsiveContainer>
         </div>
 
-        <div onClick={() => setModal('occupancy')} style={{ background: 'var(--surface)', borderRadius: 'var(--radius)', boxShadow: 'var(--shadow)', border: '1px solid var(--border)', padding: '20px 24px', display: 'flex', flexDirection: 'column', cursor: 'pointer', minWidth: 0 }}>
-          <h2 style={{ fontFamily: 'Space Grotesk', fontWeight: 700, fontSize: 16, color: isDark ? 'var(--blue, #2563eb)' : 'var(--text)', marginBottom: 8 }}>Occupancy Rate <span style={{ fontSize: 12, fontWeight: 500, color: 'var(--muted)' }}>(click for details)</span></h2>
-          <div style={{ position: 'relative', flex: 1, minHeight: 180 }}>
-            <ResponsiveContainer width="100%" height={180}>
-              <PieChart>
-                <Pie data={[{ name: 'Occupied', value: occupiedHouses.length }, { name: 'Vacant', value: vacantHouses.length }]}
-                  dataKey="value" innerRadius={55} outerRadius={78} paddingAngle={3} stroke="none">
-                  <Cell fill={OCC_COLORS[0]} />
-                  <Cell fill={OCC_COLORS[1]} />
-                </Pie>
-                <Tooltip formatter={(v, n) => [v, n]} contentStyle={{ background: isDark ? '#242a3d' : '#fff', border: isDark ? '1px solid #383f57' : '1px solid #e2e8f0', borderRadius: 8, fontSize: 13 }} />
-              </PieChart>
-            </ResponsiveContainer>
-            <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', textAlign: 'center', pointerEvents: 'none' }}>
-              <div style={{ fontFamily: 'Space Grotesk', fontWeight: 800, fontSize: 24, color: isDark ? '#f1f5f9' : '#0f172a' }}>{occupancyRate}%</div>
-              <div style={{ fontSize: 11, color: isDark ? 'rgba(255,255,255,0.45)' : '#94a3b8' }}>{occupiedHouses.length} / {houses.length} units</div>
+        <div style={{ background: 'var(--surface)', borderRadius: 'var(--radius, 14px)', border: '1px solid var(--border)', padding: '20px 24px', minWidth: 0 }}>
+          <h2 style={{ fontFamily: 'Bricolage Grotesque', fontWeight: 700, fontSize: 18, margin: '0 0 20px', color: 'var(--text)' }}>Unpaid rent by property</h2>
+          {unpaidByPlotData.length === 0 ? (
+            <div style={{ color: 'var(--muted)', fontSize: 14 }}>Everyone's paid up.</div>
+          ) : unpaidByPlotData.map(d => (
+            <div key={d.name} onClick={() => setModal('unpaid')} style={{ marginBottom: 18, cursor: 'pointer' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, fontSize: 14, color: 'var(--text)' }}>
+                <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.name}</span>
+                <b style={{ flexShrink: 0 }}>KES {d.amount.toLocaleString()}</b>
+              </div>
+              <div style={{ height: 6, borderRadius: 9, background: 'var(--border)', overflow: 'hidden', marginTop: 8 }}>
+                <div style={{ width: `${Math.max(4, (d.amount / unpaidByPlotData[0].amount) * 100)}%`, height: '100%', background: '#b42318', borderRadius: 9 }} />
+              </div>
             </div>
-          </div>
-          <div style={{ display: 'flex', justifyContent: 'center', gap: 20, marginTop: 8 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 600, color: isDark ? '#f1f5f9' : '#0f172a' }}>
-              <span style={{ width: 9, height: 9, borderRadius: '50%', background: OCC_COLORS[0] }} /> Occupied ({occupiedHouses.length})
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 600, color: isDark ? '#f1f5f9' : '#0f172a' }}>
-              <span style={{ width: 9, height: 9, borderRadius: '50%', background: OCC_COLORS[1] }} /> Vacant ({vacantHouses.length})
-            </div>
-          </div>
+          ))}
         </div>
       </div>
-
-      {/* Unpaid Rent by Property */}
-      {unpaidByPlotData.length > 0 && (
-        <div style={{ background: 'var(--surface)', borderRadius: 'var(--radius)', boxShadow: 'var(--shadow)', border: '1px solid var(--border)', padding: '20px 24px', marginBottom: 16, minWidth: 0 }}>
-          <h2 style={{ fontFamily: 'Space Grotesk', fontWeight: 700, fontSize: 16, color: isDark ? 'var(--blue, #2563eb)' : 'var(--text)', marginBottom: 16 }}>Unpaid Rent by Property</h2>
-          <ResponsiveContainer width="100%" height={200}>
-            <BarChart data={unpaidByPlotData} margin={{ top: 4, right: 8, left: -12, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke={isDark ? 'rgba(255,255,255,0.08)' : '#e2e8f0'} vertical={false} />
-              <XAxis dataKey="name" tick={{ fontSize: 12, fill: isDark ? 'rgba(255,255,255,0.5)' : '#64748b' }} axisLine={false} tickLine={false} />
-              <YAxis tick={{ fontSize: 11, fill: isDark ? 'rgba(255,255,255,0.4)' : '#94a3b8' }} axisLine={false} tickLine={false} tickFormatter={v => v >= 1000 ? `${(v / 1000).toFixed(0)}k` : v} width={40} />
-              <Tooltip formatter={v => [`KES ${Number(v).toLocaleString()}`, 'Unpaid']} contentStyle={{ background: isDark ? '#242a3d' : '#fff', border: isDark ? '1px solid #383f57' : '1px solid #e2e8f0', borderRadius: 8, fontSize: 13 }} labelStyle={{ color: isDark ? '#f1f5f9' : '#0f172a' }} />
-              <Bar dataKey="amount" fill={isDark ? '#f87171' : '#dc2626'} radius={[6, 6, 0, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
-      )}
 
       {/* Properties Overview — stands in for a map (no lat/lng data or mapping
           library set up yet); shows the same at-a-glance info per property */}
       {propertiesOverview.length > 0 && (
-        <div style={{ background: 'var(--surface)', borderRadius: 'var(--radius)', boxShadow: 'var(--shadow)', border: '1px solid var(--border)', overflow: 'hidden', marginBottom: 16 }}>
+        <div style={{ background: 'var(--surface)', borderRadius: 'var(--radius)', border: '1px solid var(--border)', overflow: 'hidden', marginBottom: 16 }}>
           <div style={{ padding: '20px 24px', borderBottom: '1px solid var(--border)' }}>
-            <h2 style={{ fontFamily: 'Space Grotesk', fontWeight: 700, fontSize: 16, color: isDark ? 'var(--blue, #2563eb)' : 'var(--text)' }}>Properties Overview</h2>
+            <h2 style={{ fontFamily: 'Bricolage Grotesque', fontWeight: 700, fontSize: 16, color: 'var(--text)' }}>Properties overview</h2>
           </div>
           <div style={{ display: 'flex', gap: 14, overflowX: 'auto', padding: 20 }}>
             {propertiesOverview.map(p => (
@@ -869,11 +830,16 @@ export default function Dashboard() {
         </div>
       )}
 
+      {/* Property map */}
+      <div style={{ background: 'var(--surface)', borderRadius: 'var(--radius, 14px)', border: '1px solid var(--border)', overflow: 'hidden', marginBottom: 20, height: 380 }}>
+        <PropertyMap properties={propertiesOverview} isDark={isDark} />
+      </div>
+
       {/* Recent Payments + Pending Dues */}
       <div style={{ display: 'grid', gridTemplateColumns: '1.3fr 1fr', gap: 16, marginBottom: 16 }}>
-        <div style={{ background: 'var(--surface)', borderRadius: 'var(--radius)', boxShadow: 'var(--shadow)', border: '1px solid var(--border)', overflow: 'hidden' }}>
-          <div style={{ padding: '20px 24px', borderBottom: '1px solid var(--border)', borderTop: '3px solid var(--primary)', display: 'flex', alignItems: 'center', gap: 10 }}>
-            <h2 style={{ fontFamily: 'Space Grotesk', fontWeight: 700, fontSize: 16, color: isDark ? 'var(--blue, #2563eb)' : 'var(--text)' }}>Recent Payments</h2>
+        <div style={{ background: 'var(--surface)', borderRadius: 'var(--radius)', border: '1px solid var(--border)', overflow: 'hidden' }}>
+          <div style={{ padding: '20px 24px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 10 }}>
+            <h2 style={{ fontFamily: 'Bricolage Grotesque', fontWeight: 700, fontSize: 16, color: 'var(--text)' }}>Recent payments</h2>
             {payments.length > 0 && (
               <span style={{ background: isDark ? 'rgba(37,99,235,0.18)' : 'var(--primary-light)', color: isDark ? 'var(--blue, #2563eb)' : 'var(--primary)', fontSize: 11, fontWeight: 700, padding: '2px 9px', borderRadius: 99 }}>{payments.length}</span>
             )}
@@ -888,12 +854,12 @@ export default function Dashboard() {
           )}
         </div>
 
-        <div style={{ background: 'var(--surface)', borderRadius: 'var(--radius)', boxShadow: 'var(--shadow)', border: '1px solid var(--border)', overflow: 'hidden' }}>
-          <div style={{ padding: '20px 24px', borderBottom: '1px solid var(--border)', borderTop: '3px solid var(--red, #dc2626)' }}>
-            <h2 style={{ fontFamily: 'Space Grotesk', fontWeight: 700, fontSize: 16, color: isDark ? 'var(--blue, #2563eb)' : 'var(--text)' }}>Pending Dues</h2>
+        <div style={{ background: 'var(--surface)', borderRadius: 'var(--radius)', border: '1px solid var(--border)', overflow: 'hidden' }}>
+          <div style={{ padding: '20px 24px', borderBottom: '1px solid var(--border)',  }}>
+            <h2 style={{ fontFamily: 'Bricolage Grotesque', fontWeight: 700, fontSize: 16, color: 'var(--text)' }}>Pending dues</h2>
           </div>
           {pendingDues.length === 0 ? (
-            <div style={{ padding: 40, textAlign: 'center', color: 'var(--muted)' }}>Everyone's paid up. 🎉</div>
+            <div style={{ padding: 40, textAlign: 'center', color: 'var(--muted)' }}>Everyone's paid up.</div>
           ) : (
             <div>
               {pendingDues.map((t, i) => (
@@ -909,7 +875,7 @@ export default function Dashboard() {
                     </div>
                   </div>
                   <span style={{ flexShrink: 0, fontSize: 11, fontWeight: 700, padding: '3px 10px', borderRadius: 99, background: isDark ? 'rgba(248,113,113,0.15)' : '#fee2e2', color: isDark ? '#f87171' : '#dc2626' }}>
-                    {t.monthsBehind} mo{t.monthsBehind !== 1 ? 's' : ''} behind
+                    {t.monthsBehind} month{t.monthsBehind !== 1 ? 's' : ''} behind
                   </span>
                 </div>
               ))}
@@ -938,7 +904,7 @@ export default function Dashboard() {
                   return (
                     <ListCard key={t.id} i={i} isDark={isDark}
                       avatarIcon={initialsOf(t.full_name)}
-                      avatarBg={isDark ? 'rgba(124,58,237,0.2)' : '#ede9fe'} avatarBorder={isDark ? '1.5px solid rgba(124,58,237,0.4)' : '1.5px solid #c4b5fd'} avatarColor={isDark ? '#c4b5fd' : '#7c3aed'}
+                      avatarBg={isDark ? 'rgba(124,58,237,0.2)' : '#e6efe8'} avatarBorder={isDark ? '1.5px solid rgba(124,58,237,0.4)' : '1.5px solid #c4b5fd'} avatarColor={isDark ? '#c4b5fd' : '#1b6b45'}
                       title={t.full_name} subtitle={t.phone || t.email || `Unit ${t.unit_number || t.house_id}`}
                       badge={<Badge isDark={isDark} tone={owing ? 'red' : 'green'} label={owing ? `KES ${parseFloat(t.balance).toLocaleString()} owed` : 'Paid Up'} />}
                     >
@@ -1036,7 +1002,7 @@ export default function Dashboard() {
           {unpaidLoading ? (
             <div style={{ padding: 40, textAlign: 'center', color: 'var(--muted)' }}>Loading breakdown...</div>
           ) : unpaidMonths.length === 0 ? (
-            <EmptyState icon="🎉" title="All Tenants Are Up To Date" />
+            <EmptyState icon="✅" title="All Tenants Are Up To Date" />
           ) : (
             <>
               <SummaryBar isDark={isDark} stats={[
@@ -1139,8 +1105,8 @@ export default function Dashboard() {
       {modal === 'revenue' && (
         <Modal title={`This Month's Payments (${thisMonth.length})`} onClose={() => setModal(null)}>
           <div style={{ padding: '14px 24px', background: 'var(--surface2)', borderBottom: '1px solid var(--border)', display: 'flex', gap: 32 }}>
-            <div><div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 4 }}>TOTAL</div><div style={{ fontFamily: 'Space Grotesk', fontWeight: 800, fontSize: 20, color: 'var(--green)' }}>KES {monthRevenue.toLocaleString()}</div></div>
-            <div><div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 4 }}>TRANSACTIONS</div><div style={{ fontFamily: 'Space Grotesk', fontWeight: 800, fontSize: 20, color: 'var(--blue)' }}>{thisMonth.length}</div></div>
+            <div><div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 4 }}>TOTAL</div><div style={{ fontFamily: 'Bricolage Grotesque', fontWeight: 800, fontSize: 20, color: 'var(--green)' }}>KES {monthRevenue.toLocaleString()}</div></div>
+            <div><div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 4 }}>TRANSACTIONS</div><div style={{ fontFamily: 'Bricolage Grotesque', fontWeight: 800, fontSize: 20, color: 'var(--blue)' }}>{thisMonth.length}</div></div>
           </div>
           <Table headers={['Tenant', 'Amount', 'Method', 'Status', 'Date']} rows={thisMonth.map((p, i) => PaymentRow(p, i))} />
           <SeeMoreFooter onClick={() => navigate('/payments')} />
@@ -1150,8 +1116,8 @@ export default function Dashboard() {
       {modal === 'allrevenue' && (
         <Modal title={`All Time Revenue — KES ${totalRevenue.toLocaleString()}`} onClose={() => setModal(null)}>
           <div style={{ padding: '14px 24px', background: 'var(--surface2)', borderBottom: '1px solid var(--border)', display: 'flex', gap: 32 }}>
-            <div><div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 4 }}>TOTAL COLLECTED</div><div style={{ fontFamily: 'Space Grotesk', fontWeight: 800, fontSize: 20, color: 'var(--red, #dc2626)' }}>KES {totalRevenue.toLocaleString()}</div></div>
-            <div><div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 4 }}>TOTAL TRANSACTIONS</div><div style={{ fontFamily: 'Space Grotesk', fontWeight: 800, fontSize: 20, color: 'var(--red, #dc2626)' }}>{payments.length}</div></div>
+            <div><div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 4 }}>TOTAL COLLECTED</div><div style={{ fontFamily: 'Bricolage Grotesque', fontWeight: 800, fontSize: 20, color: 'var(--red, #dc2626)' }}>KES {totalRevenue.toLocaleString()}</div></div>
+            <div><div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 4 }}>TOTAL TRANSACTIONS</div><div style={{ fontFamily: 'Bricolage Grotesque', fontWeight: 800, fontSize: 20, color: 'var(--red, #dc2626)' }}>{payments.length}</div></div>
           </div>
           <Table headers={['Tenant', 'Amount', 'Method', 'Status', 'Date']} rows={payments.map((p, i) => PaymentRow(p, i))} />
           <SeeMoreFooter onClick={() => navigate('/payments')} />
@@ -1341,9 +1307,9 @@ export default function Dashboard() {
         <Modal title={`Occupancy Rate — ${occupancyRate}%`} onClose={() => setModal(null)}>
           <div style={{ padding: '20px 24px', borderBottom: '1px solid var(--border)', background: 'var(--surface2)' }}>
             <div style={{ display: 'flex', gap: 32, marginBottom: 16 }}>
-              <div><div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 4 }}>OCCUPIED</div><div style={{ fontFamily: 'Space Grotesk', fontWeight: 800, fontSize: 20, color: 'var(--green)' }}>{occupiedHouses.length}</div></div>
-              <div><div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 4 }}>VACANT</div><div style={{ fontFamily: 'Space Grotesk', fontWeight: 800, fontSize: 20, color: 'var(--amber)' }}>{vacantHouses.length}</div></div>
-              <div><div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 4 }}>TOTAL</div><div style={{ fontFamily: 'Space Grotesk', fontWeight: 800, fontSize: 20, color: 'var(--blue)' }}>{houses.length}</div></div>
+              <div><div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 4 }}>OCCUPIED</div><div style={{ fontFamily: 'Bricolage Grotesque', fontWeight: 800, fontSize: 20, color: 'var(--green)' }}>{occupiedHouses.length}</div></div>
+              <div><div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 4 }}>VACANT</div><div style={{ fontFamily: 'Bricolage Grotesque', fontWeight: 800, fontSize: 20, color: 'var(--amber)' }}>{vacantHouses.length}</div></div>
+              <div><div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 4 }}>TOTAL</div><div style={{ fontFamily: 'Bricolage Grotesque', fontWeight: 800, fontSize: 20, color: 'var(--blue)' }}>{houses.length}</div></div>
             </div>
             <div style={{ height: 12, borderRadius: 99, background: 'var(--border)', overflow: 'hidden' }}>
               <div style={{ height: '100%', width: `${occupancyRate}%`, background: 'linear-gradient(90deg, var(--green), #34d399)', borderRadius: 99, transition: 'width 0.5s' }} />
@@ -1417,7 +1383,7 @@ export default function Dashboard() {
                       ].map((s,i) => (
                         <div key={s.label} style={{ flex:1, padding:'13px 16px', borderRight: i<3?(isDark?'1px solid rgba(255,255,255,0.07)':'1px solid #e2e8f0'):'none' }}>
                           <div style={{ fontSize:10, fontWeight:700, letterSpacing:'0.08em', textTransform:'uppercase', color: isDark?'rgba(255,255,255,0.38)':'#94a3b8', marginBottom:3 }}>{s.label}</div>
-                          <div style={{ fontFamily:'Space Grotesk', fontWeight:800, fontSize:17, color:s.color }}>{s.value}</div>
+                          <div style={{ fontFamily:'Bricolage Grotesque', fontWeight:800, fontSize:17, color:s.color }}>{s.value}</div>
                         </div>
                       ))}
                     </div>
@@ -1480,7 +1446,7 @@ export default function Dashboard() {
                           ].map(m => (
                             <div key={m.label} style={{ background: isDark?'rgba(255,255,255,0.07)':'#f8fafc', borderRadius:9, padding:'10px 12px', border: isDark?'1px solid rgba(255,255,255,0.09)':'1px solid #e2e8f0', textAlign:'center' }}>
                               <div style={{ fontSize:14, marginBottom:4 }}>{m.icon}</div>
-                              <div style={{ fontFamily:'Space Grotesk', fontWeight:800, fontSize:15, color:m.color, lineHeight:1 }}>{m.value}</div>
+                              <div style={{ fontFamily:'Bricolage Grotesque', fontWeight:800, fontSize:15, color:m.color, lineHeight:1 }}>{m.value}</div>
                               <div style={{ fontSize:9, fontWeight:700, letterSpacing:'0.06em', textTransform:'uppercase', color: isDark?'rgba(255,255,255,0.35)':'#94a3b8', marginTop:3 }}>{m.label}</div>
                             </div>
                           ))}

@@ -5,6 +5,7 @@ import { createPortal } from 'react-dom';
 import API, { getPendingLandlordsCount } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import QuickSearch from './QuickSearch';
+import Icon from './Icon';
 
 // ── Responsive hook ───────────────────────────────────────────────────────────
 function useBreakpoint() {
@@ -80,7 +81,7 @@ export default function Layout() {
   useEffect(() => {
     function tick() {
       const now = new Date();
-      setClock(now.toLocaleDateString('en-KE', { weekday: 'short', day: 'numeric', month: 'short' }) + ' · ' + now.toLocaleTimeString('en-KE', { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
+      setClock(now.toLocaleDateString('en-KE', { weekday: 'short', day: 'numeric', month: 'short' }) + ' · ' + now.toLocaleTimeString('en-KE', { hour: '2-digit', minute: '2-digit' }));
     }
     tick();
     const id = setInterval(tick, 1000);
@@ -147,6 +148,18 @@ export default function Layout() {
   const [flyout, setFlyout] = useState(null); // { key, top }
   useEffect(() => { setFlyout(null); }, [location.pathname, collapsed]);
 
+  // RentFlow brand fonts (same as the landing + login pages)
+  useEffect(() => {
+    const id = 'rentflow-fonts';
+    if (!document.getElementById(id)) {
+      const link = document.createElement('link');
+      link.id = id; link.rel = 'stylesheet';
+      link.href = 'https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700;12..96,800&family=DM+Sans:wght@400;500;600;700&display=swap';
+      document.head.appendChild(link);
+    }
+    document.body.style.fontFamily = "'DM Sans', sans-serif";
+  }, []);
+
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
     localStorage.setItem('theme', theme);
@@ -157,13 +170,17 @@ export default function Layout() {
       document.documentElement.style.setProperty('--border',  '#2a2f45');
       document.documentElement.style.setProperty('--text',    '#e8eaf6');
       document.documentElement.style.setProperty('--muted',   '#6b7194');
+      document.documentElement.style.setProperty('--primary', '#8fd1ad');
+      document.documentElement.style.setProperty('--primary-light', 'rgba(143,209,173,0.14)');
     } else {
-      document.documentElement.style.setProperty('--bg',      '#f0f2f7');
+      document.documentElement.style.setProperty('--bg',      '#f1f4f1');
       document.documentElement.style.setProperty('--surface', '#ffffff');
-      document.documentElement.style.setProperty('--surface2','#f8f9fc');
-      document.documentElement.style.setProperty('--border',  '#e4e8f0');
-      document.documentElement.style.setProperty('--text',    '#0f1623');
-      document.documentElement.style.setProperty('--muted',   '#6b7694');
+      document.documentElement.style.setProperty('--surface2','#f7faf7');
+      document.documentElement.style.setProperty('--border',  '#e3e9e4');
+      document.documentElement.style.setProperty('--text',    '#0f1f17');
+      document.documentElement.style.setProperty('--muted',   '#55645b');
+      document.documentElement.style.setProperty('--primary', '#1b6b45');
+      document.documentElement.style.setProperty('--primary-light', '#e6efe8');
     }
   }, [theme]);
 
@@ -364,10 +381,10 @@ export default function Layout() {
 
   // Bottom nav shows max 5 most-used items on mobile
   const bottomNav = sidebarNav.slice(0, 5);
-  const roleColor = { admin: '#818cf8', super_admin: '#818cf8', agent: '#f472b6', landlord: '#34d399', caretaker: '#fbbf24' };
+  const roleColor = { admin: '#8fd1ad', super_admin: '#8fd1ad', agent: '#f472b6', landlord: '#34d399', caretaker: '#fbbf24' };
 
   const Avatar = ({ size = 30, fontSize = 13 }) => (
-    <div style={{ width: size, height: size, borderRadius: '50%', overflow: 'hidden', flexShrink: 0, background: 'linear-gradient(135deg, #4f46e5, #818cf8)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontWeight: 700, fontSize }}>
+    <div style={{ width: size, height: size, borderRadius: '50%', overflow: 'hidden', flexShrink: 0, background: 'linear-gradient(135deg, #123524, #1b6b45)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontWeight: 700, fontSize }}>
       {photo ? <img src={photo} alt="avatar" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : ((displayName || user?.name)?.[0]?.toUpperCase() || 'U')}
     </div>
   );
@@ -385,7 +402,7 @@ export default function Layout() {
         <aside className="app-chrome" style={{
           width: isMobile ? 260 : collapsed ? 64 : 212,
           minHeight: '100vh',
-          background: '#0f1117',
+          background: '#0e2219',
           display: 'flex', flexDirection: 'column',
           padding: '14px 0',
           transition: 'width 0.2s ease',
@@ -398,14 +415,14 @@ export default function Layout() {
           boxShadow: isMobile ? '0 0 40px rgba(0,0,0,0.45)' : '1px 0 0 rgba(255,255,255,0.04)',
         }}>
           <div style={{ padding: '0 14px 18px', display: 'flex', alignItems: 'center', gap: 10 }}>
-            <div style={{ width: 36, height: 36, borderRadius: 10, flexShrink: 0, background: 'linear-gradient(135deg, #4f46e5, #818cf8)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18 }}>🏠</div>
-            {(!collapsed || isMobile) && <span style={{ fontFamily: 'Space Grotesk', fontWeight: 700, fontSize: 18, color: '#fff', whiteSpace: 'nowrap' }}>RentFlow</span>}
-            {isMobile && <button onClick={() => setSidebarOpen(false)} style={{ marginLeft: 'auto', background: 'transparent', border: 'none', color: 'rgba(255,255,255,0.5)', fontSize: 20, cursor: 'pointer' }}>×</button>}
+            <div style={{ width: 36, height: 36, borderRadius: 10, flexShrink: 0, background: 'linear-gradient(135deg, #123524, #1b6b45)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18, fontWeight: 700, color: '#fff', fontFamily: 'Bricolage Grotesque' }}>R</div>
+            {(!collapsed || isMobile) && <span style={{ fontFamily: 'Bricolage Grotesque', fontWeight: 700, fontSize: 18, color: '#fff', whiteSpace: 'nowrap' }}>RentFlow</span>}
+            {isMobile && <button onClick={() => setSidebarOpen(false)} style={{ marginLeft: 'auto', background: 'transparent', border: 'none', color: 'rgba(255,255,255,0.68)', fontSize: 20, cursor: 'pointer' }}>×</button>}
           </div>
 
           {(!collapsed || isMobile) && (
             <div style={{ padding: '0 16px 16px' }}>
-              <span style={{ background: 'rgba(255,255,255,0.08)', color: roleColor[role] || 'rgba(255,255,255,0.5)', padding: '3px 10px', borderRadius: 99, fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.5px' }}>{role}</span>
+              <span style={{ background: 'rgba(255,255,255,0.08)', color: roleColor[role] || 'rgba(255,255,255,0.68)', padding: '3px 10px', borderRadius: 99, fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.5px' }}>{role}</span>
             </div>
           )}
 
@@ -425,10 +442,10 @@ export default function Layout() {
                   <button key={g.key} title={g.label}
                     onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); setFlyout(f => f && f.key === g.key ? null : { key: g.key, top: r.top }); }}
                     style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '9px 12px', borderRadius: 10, border: 'none', cursor: 'pointer', position: 'relative',
-                      color: hasActive || flyout?.key === g.key ? '#fff' : 'rgba(255,255,255,0.5)',
-                      background: hasActive || flyout?.key === g.key ? 'rgba(255,255,255,0.15)' : 'transparent',
-                      borderLeft: hasActive ? '3px solid #818cf8' : '3px solid transparent' }}>
-                    <span style={{ fontSize: 18 }}>{g.icon}</span>
+                      color: hasActive || flyout?.key === g.key ? '#fff' : 'rgba(255,255,255,0.68)',
+                      background: hasActive || flyout?.key === g.key ? 'rgba(143,209,173,0.16)' : 'transparent',
+                      borderLeft: hasActive ? '3px solid #8fd1ad' : '3px solid transparent' }}>
+                    <Icon name={g.icon} size={20} />
                     <span style={{ position: 'absolute', right: 6, bottom: 6, fontSize: 8, opacity: 0.6 }}>▸</span>
                     {badge > 0 && <span style={{ position: 'absolute', top: 4, right: 6, background: '#ef4444', width: 8, height: 8, borderRadius: 99 }} />}
                   </button>
@@ -461,7 +478,7 @@ export default function Layout() {
           {!isMobile && (
             <div style={{ padding: '0 8px' }}>
               <button onClick={() => setCollapsed(c => !c)} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 12px', borderRadius: 10, border: 'none', background: 'transparent', color: 'rgba(255,255,255,0.4)', fontSize: 14, width: '100%', whiteSpace: 'nowrap', overflow: 'hidden', cursor: 'pointer' }}>
-                <span style={{ fontSize: 18, flexShrink: 0 }}>{collapsed ? '→' : '←'}</span>
+                <span style={{ fontSize: 18, flexShrink: 0 }}><Icon name={collapsed ? '→' : '←'} size={20} /></span>
                 {!collapsed && <span>Collapse</span>}
               </button>
             </div>
@@ -502,24 +519,23 @@ export default function Layout() {
         <header className="app-chrome" style={{ padding: isMobile ? '0 14px' : '0 24px', height: 60, display: 'flex', alignItems: 'center', justifyContent: 'space-between', position: 'sticky', top: 0, zIndex: 100 }}>
           <div aria-hidden="true" style={{
             position: 'absolute', inset: 0, zIndex: -1, pointerEvents: 'none',
-            background: theme === 'dark' ? 'rgba(26,29,39,0.62)' : 'rgba(255,255,255,0.62)',
-            WebkitBackdropFilter: 'saturate(180%) blur(16px)', backdropFilter: 'saturate(180%) blur(16px)',
-            borderBottom: `1px solid ${theme === 'dark' ? 'rgba(255,255,255,0.07)' : 'rgba(15,22,35,0.07)'}`,
-            boxShadow: theme === 'dark' ? '0 6px 24px rgba(0,0,0,0.25)' : '0 6px 24px rgba(15,23,42,0.06)',
+            background: 'var(--surface)',
+            borderBottom: '1px solid var(--border)',
           }} />
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, flex: 1, minWidth: 0 }}>
             <button onClick={() => (isMobile ? setSidebarOpen(true) : setCollapsed(c => !c))}
               aria-label={isMobile ? 'Open menu' : (collapsed ? 'Expand sidebar' : 'Collapse sidebar')}
               title={isMobile ? 'Menu' : (collapsed ? 'Expand sidebar' : 'Collapse sidebar')}
-              style={{ width: 38, height: 38, borderRadius: 10, border: 'none', background: 'rgba(127,127,127,0.12)', color: 'var(--text)', cursor: 'pointer', fontSize: 18, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>☰</button>
+              style={{ width: 38, height: 38, borderRadius: 10, border: 'none', background: 'rgba(127,127,127,0.12)', color: 'var(--text)', cursor: 'pointer', fontSize: 18, display: 'flex', alignItems: 'center', justifyContent: 'center' }}><Icon name="☰" size={20} /></button>
             {!isMobile && (
               <>
-                <div style={{ fontFamily: 'Space Grotesk', fontWeight: 600, fontSize: 15, color: theme === 'dark' ? 'var(--blue, #2563eb)' : 'var(--muted)' }}>Kenya Rental Management</div>
-                <div style={{ fontSize: 12, color: theme === 'dark' ? 'var(--blue, #2563eb)' : 'var(--muted)', fontFamily: 'monospace', background: 'var(--surface2)', padding: '4px 10px', borderRadius: 8, border: '1px solid var(--border)' }}>{clock}</div>
-                <button type="button" onClick={() => window.dispatchEvent(new Event('open-quick-search'))} title="Quick search (Ctrl+K)" style={{ fontSize: 12, color: 'var(--muted)', background: 'var(--surface2)', padding: '4px 10px', borderRadius: 8, border: '1px solid var(--border)', cursor: 'pointer' }}>🔍 Search <span style={{ opacity: 0.6 }}>Ctrl K</span></button>
+                <button type="button" onClick={() => window.dispatchEvent(new Event('open-quick-search'))} title="Quick search (Ctrl+K)"
+                  style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%', maxWidth: 420, minHeight: 44, padding: '0 14px', borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface2)', color: 'var(--muted)', fontSize: 14, cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left' }}>
+                  <Icon name="🔍" size={18} /><span>Search properties, tenants, payments</span><span style={{ marginLeft: 'auto', fontSize: 12 }}>Ctrl K</span>
+                </button>
               </>
             )}
-            {isMobile && <span style={{ fontFamily: 'Space Grotesk', fontWeight: 700, fontSize: 16, color: 'var(--text)' }}>RentFlow</span>}
+            {isMobile && <span style={{ fontFamily: 'Bricolage Grotesque', fontWeight: 700, fontSize: 16, color: 'var(--text)' }}>RentFlow</span>}
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -531,9 +547,9 @@ export default function Layout() {
                     position: 'relative', width: 38, height: 38, borderRadius: '50%',
                     border: `1px solid ${chatsOpen ? 'var(--primary)' : 'var(--border)'}`,
                     background: chatsOpen ? 'var(--primary-light)' : 'var(--surface2)',
-                    cursor: 'pointer', fontSize: 18, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    color: 'var(--text)', cursor: 'pointer', fontSize: 18, display: 'flex', alignItems: 'center', justifyContent: 'center',
                   }}>
-                    {icon}
+                    <Icon name={icon} size={20} />
                     {unreadMsg > 0 && (
                       <span style={{ position: 'absolute', top: -2, right: -2, background: 'var(--red)', color: '#fff', borderRadius: 99, fontSize: 10, fontWeight: 700, padding: '1px 5px', minWidth: 16, textAlign: 'center' }}>{unreadMsg}</span>
                     )}
@@ -560,10 +576,10 @@ export default function Layout() {
                     position: 'relative', width: 38, height: 38, borderRadius: '50%',
                     border: `1px solid ${isActive ? 'var(--primary)' : 'var(--border)'}`,
                     background: isActive ? 'var(--primary-light)' : 'var(--surface2)',
-                    cursor: 'pointer', fontSize: 18, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    color: 'var(--text)', cursor: 'pointer', fontSize: 18, display: 'flex', alignItems: 'center', justifyContent: 'center',
                     textDecoration: 'none',
                   })}>
-                  {icon}
+                  <Icon name={icon} size={20} />
                 </NavLink>
               )
             ))}
@@ -572,8 +588,8 @@ export default function Layout() {
                 has its own icon + badge above), so it's driven by
                 unreadNotices, not unreadMsg. */}
             <div style={{ position: 'relative' }}>
-              <button onClick={() => setBellOpen(b => !b)} style={{ position: 'relative', width: 38, height: 38, borderRadius: '50%', border: '1px solid var(--border)', background: 'var(--surface2)', cursor: 'pointer', fontSize: 18, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                🔔
+              <button onClick={() => setBellOpen(b => !b)} style={{ position: 'relative', width: 38, height: 38, borderRadius: '50%', border: '1px solid var(--border)', background: 'var(--surface2)', color: 'var(--text)', cursor: 'pointer', fontSize: 18, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <Icon name="🔔" size={20} />
                 {unreadNotices > 0 && <span style={{ position: 'absolute', top: -2, right: -2, background: 'var(--red)', color: '#fff', borderRadius: 99, fontSize: 10, fontWeight: 700, padding: '1px 5px', minWidth: 16, textAlign: 'center' }}>{unreadNotices}</span>}
               </button>
               {bellOpen && (
@@ -581,7 +597,7 @@ export default function Layout() {
                   <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)', fontWeight: 700, fontSize: 14 }}>Notifications</div>
                   <div style={{ padding: 16 }}>
                     {unreadNotices > 0
-                      ? <div onClick={() => { setBellOpen(false); navigate('/notices'); }} style={{ cursor: 'pointer', padding: '10px 12px', borderRadius: 8, background: 'var(--primary-light)', color: 'var(--primary)', fontWeight: 600, fontSize: 13 }}>📢 {unreadNotices} unread notice{unreadNotices !== 1 ? 's' : ''}</div>
+                      ? <div onClick={() => { setBellOpen(false); navigate('/notices'); }} style={{ cursor: 'pointer', padding: '10px 12px', borderRadius: 8, background: 'var(--primary-light)', color: 'var(--primary)', fontWeight: 600, fontSize: 13 }}><span style={{ marginRight: 6, verticalAlign: '-3px', display: 'inline-block' }}><Icon name="📢" size={15} /></span>{unreadNotices} unread notice{unreadNotices !== 1 ? 's' : ''}</div>
                       : <div style={{ color: 'var(--muted)', fontSize: 13, textAlign: 'center' }}>No new notifications</div>}
                   </div>
                 </div>
@@ -615,7 +631,7 @@ export default function Layout() {
                     <DropdownItem icon="✏️" label="Edit Profile"    onClick={openProfile} />
                     <DropdownItem icon="🔒" label="Change Password" onClick={openPassword} />
                     <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 12px', borderRadius: 8, cursor: 'pointer' }} onClick={() => setTheme(t => t === 'light' ? 'dark' : 'light')}>
-                      <span style={{ fontSize: 16 }}>{theme === 'light' ? '🌙' : '☀️'}</span>
+                      <span style={{ fontSize: 16 }}><Icon name={theme === 'light' ? '🌙' : '☀️'} size={18} /></span>
                       <span style={{ fontSize: 14, color: 'var(--text)' }}>{theme === 'light' ? 'Dark Mode' : 'Light Mode'}</span>
                       <div style={{ marginLeft: 'auto', width: 36, height: 20, borderRadius: 99, background: theme === 'dark' ? 'var(--primary)' : 'var(--border)', position: 'relative' }}>
                         <div style={{ position: 'absolute', top: 2, left: theme === 'dark' ? 18 : 2, width: 16, height: 16, borderRadius: '50%', background: '#fff', transition: 'left 0.2s' }} />
@@ -644,8 +660,8 @@ export default function Layout() {
         <nav className="app-chrome" style={{ position: 'fixed', bottom: 0, left: 0, right: 0, height: 64, background: 'rgba(15,17,23,0.82)', WebkitBackdropFilter: 'blur(14px)', backdropFilter: 'blur(14px)', borderTop: '1px solid rgba(255,255,255,0.08)', display: 'flex', alignItems: 'center', justifyContent: 'space-around', zIndex: 30, paddingBottom: 'env(safe-area-inset-bottom)' }}>
           {bottomNav.map(({ to, icon, label }) => (
             <NavLink key={to} to={to} end={to === '/'}
-              style={({ isActive }) => ({ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3, padding: '8px 12px', borderRadius: 10, color: isActive ? '#818cf8' : 'rgba(255,255,255,0.45)', textDecoration: 'none', minWidth: 56, position: 'relative' })}>
-              <span style={{ fontSize: 22 }}>{icon}</span>
+              style={({ isActive }) => ({ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3, padding: '8px 12px', borderRadius: 10, color: isActive ? '#8fd1ad' : 'rgba(255,255,255,0.45)', textDecoration: 'none', minWidth: 56, position: 'relative' })}>
+              <Icon name={icon} size={22} />
               <span style={{ fontSize: 10, fontWeight: 600 }}>{label}</span>
               {label === 'Messages' && unreadMsg > 0 && (
                 <span style={{ position: 'absolute', top: 4, right: 8, background: '#ef4444', color: '#fff', borderRadius: 99, fontSize: 9, fontWeight: 700, padding: '1px 4px' }}>{unreadMsg}</span>
@@ -660,7 +676,7 @@ export default function Layout() {
           ))}
           {/* More button opens sidebar */}
           <button onClick={() => setSidebarOpen(true)} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3, padding: '8px 12px', background: 'transparent', border: 'none', color: 'rgba(255,255,255,0.45)', cursor: 'pointer', minWidth: 56 }}>
-            <span style={{ fontSize: 22 }}>⋯</span>
+            <Icon name="⋯" size={22} />
             <span style={{ fontSize: 10, fontWeight: 600 }}>More</span>
           </button>
         </nav>
@@ -736,7 +752,7 @@ export default function Layout() {
             <div>
               <h3 style={{ fontSize: 13, fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.4px', marginBottom: 12 }}>Appearance</h3>
               <div onClick={() => setTheme(t => t === 'light' ? 'dark' : 'light')} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', borderRadius: 8, background: 'var(--surface2)', cursor: 'pointer' }}>
-                <span style={{ fontSize: 16 }}>{theme === 'light' ? '🌙' : '☀️'}</span>
+                <span style={{ fontSize: 16 }}><Icon name={theme === 'light' ? '🌙' : '☀️'} size={18} /></span>
                 <span style={{ fontSize: 14, color: 'var(--text)' }}>{theme === 'light' ? 'Dark Mode' : 'Light Mode'}</span>
                 <div style={{ marginLeft: 'auto', width: 36, height: 20, borderRadius: 99, background: theme === 'dark' ? 'var(--primary)' : 'var(--border)', position: 'relative' }}>
                   <div style={{ position: 'absolute', top: 2, left: theme === 'dark' ? 18 : 2, width: 16, height: 16, borderRadius: '50%', background: '#fff', transition: 'left 0.2s' }} />
@@ -796,7 +812,7 @@ export default function Layout() {
             boxShadow: '0 8px 24px rgba(0,0,0,0.18)',
             animation: 'toast-in 0.25s ease',
           }}>
-            <span style={{ fontSize: 18, lineHeight: 1 }}>⏳</span>
+            <Icon name="⏳" size={20} />
             <div style={{ flex: 1 }}>
               <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)', marginBottom: 6 }}>
                 {pendingLandlords} landlord{pendingLandlords > 1 ? 's' : ''} waiting for approval
@@ -821,7 +837,7 @@ export default function Layout() {
             boxShadow: '0 8px 24px rgba(0,0,0,0.18)',
             animation: 'toast-in 0.25s ease',
           }}>
-            <span style={{ fontSize: 18, lineHeight: 1 }}>🏠</span>
+            <Icon name="🏠" size={20} />
             <div style={{ flex: 1 }}>
               <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)', marginBottom: 6 }}>
                 {pendingUnits} unit{pendingUnits > 1 ? 's' : ''} waiting for approval
@@ -866,7 +882,7 @@ function ChatsPanel({ loading, conversations, search, setSearch, filter, setFilt
       display: 'flex', flexDirection: 'column',
     }}>
       <div style={{ padding: '14px 16px 10px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <span style={{ fontFamily: 'Space Grotesk', fontWeight: 800, fontSize: 20 }}>Chats</span>
+        <span style={{ fontFamily: 'Bricolage Grotesque', fontWeight: 800, fontSize: 20 }}>Chats</span>
         {isMobile && (
           <button onClick={onClose} style={{ width: 32, height: 32, borderRadius: '50%', border: 'none', background: '#3a3b3c', color: '#e4e6eb', fontSize: 16, cursor: 'pointer' }}>×</button>
         )}
@@ -922,7 +938,7 @@ function ChatsPanel({ loading, conversations, search, setSearch, filter, setFilt
             >
               <div style={{
                 width: 44, height: 44, borderRadius: '50%', flexShrink: 0,
-                background: 'linear-gradient(135deg, #4f46e5, #818cf8)',
+                background: 'linear-gradient(135deg, #123524, #1b6b45)',
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
                 color: '#fff', fontWeight: 700, fontSize: 16,
               }}>
@@ -964,15 +980,15 @@ function NavItem({ to, icon, label, collapsed, unread = 0, onClick }) {
       style={({ isActive }) => ({
         display: 'flex', alignItems: 'center', gap: 12,
         padding: '9px 12px', borderRadius: 10,
-        color: isActive ? '#fff' : hover ? '#fff' : 'rgba(255,255,255,0.5)',
-        background: isActive ? 'rgba(255,255,255,0.15)' : hover ? 'rgba(255,255,255,0.08)' : 'transparent',
+        color: isActive ? '#fff' : hover ? '#fff' : 'rgba(255,255,255,0.68)',
+        background: isActive ? 'rgba(143,209,173,0.16)' : hover ? 'rgba(255,255,255,0.08)' : 'transparent',
         fontWeight: isActive ? 600 : 400, fontSize: 14,
         transition: 'all 0.15s', whiteSpace: 'nowrap', overflow: 'hidden',
-        borderLeft: isActive ? '3px solid #818cf8' : '3px solid transparent',
+        borderLeft: isActive ? '3px solid #8fd1ad' : '3px solid transparent',
         paddingLeft: isActive ? '9px' : '12px',
         textDecoration: 'none', position: 'relative',
       })}>
-      <span style={{ fontSize: 18, flexShrink: 0 }}>{icon}</span>
+      <Icon name={icon} size={20} />
       {!collapsed && <span style={{ flex: 1 }}>{label}</span>}
       {!collapsed && unread > 0 && (
         <span style={{ background: '#ef4444', color: '#fff', borderRadius: 99, fontSize: 10, fontWeight: 700, padding: '1px 6px' }}>{unread}</span>
@@ -991,14 +1007,14 @@ function NavAction({ icon, label, collapsed, active, onClick }) {
         display: 'flex', alignItems: 'center', gap: 12,
         padding: '9px 12px', borderRadius: 10,
         border: 'none', width: '100%', textAlign: 'left', cursor: 'pointer', fontFamily: 'inherit',
-        color: active ? '#fff' : hover ? '#fff' : 'rgba(255,255,255,0.5)',
-        background: active ? 'rgba(255,255,255,0.15)' : hover ? 'rgba(255,255,255,0.08)' : 'transparent',
+        color: active ? '#fff' : hover ? '#fff' : 'rgba(255,255,255,0.68)',
+        background: active ? 'rgba(143,209,173,0.16)' : hover ? 'rgba(255,255,255,0.08)' : 'transparent',
         fontWeight: active ? 600 : 400, fontSize: 14,
         transition: 'all 0.15s', whiteSpace: 'nowrap', overflow: 'hidden',
-        borderLeft: active ? '3px solid #818cf8' : '3px solid transparent',
+        borderLeft: active ? '3px solid #8fd1ad' : '3px solid transparent',
         paddingLeft: active ? '9px' : '12px',
       }}>
-      <span style={{ fontSize: 18, flexShrink: 0 }}>{icon}</span>
+      <Icon name={icon} size={20} />
       {!collapsed && <span style={{ flex: 1 }}>{label}</span>}
     </button>
   );
@@ -1009,7 +1025,7 @@ function DropdownItem({ icon, label, onClick, danger }) {
   return (
     <div onClick={onClick} onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}
       style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 12px', borderRadius: 8, cursor: 'pointer', background: hover ? 'var(--surface2)' : 'transparent', color: danger ? 'var(--red)' : 'var(--text)', transition: 'background 0.1s' }}>
-      <span style={{ fontSize: 16 }}>{icon}</span>
+      <Icon name={icon} size={18} />
       <span style={{ fontSize: 14 }}>{label}</span>
     </div>
   );
@@ -1020,7 +1036,7 @@ function ModalWrapper({ title, onClose, children, isMobile }) {
     <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: isMobile ? 'flex-end' : 'center', justifyContent: 'center', zIndex: 200, padding: isMobile ? 0 : 20 }}>
       <div onClick={e => e.stopPropagation()} style={{ background: 'var(--surface)', borderRadius: isMobile ? '20px 20px 0 0' : 16, width: '100%', maxWidth: isMobile ? '100%' : 440, boxShadow: 'var(--shadow-lg)', maxHeight: isMobile ? '90vh' : '85vh', overflow: 'auto' }}>
         <div style={{ padding: '18px 24px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', position: 'sticky', top: 0, background: 'var(--surface)', zIndex: 1 }}>
-          <h2 style={{ fontFamily: 'Space Grotesk', fontWeight: 700, fontSize: 17 }}>{title}</h2>
+          <h2 style={{ fontFamily: 'Bricolage Grotesque', fontWeight: 700, fontSize: 17 }}>{title}</h2>
           <button onClick={onClose} style={{ width: 30, height: 30, borderRadius: '50%', border: 'none', background: 'var(--surface2)', cursor: 'pointer', fontSize: 16, color: 'var(--muted)' }}>×</button>
         </div>
         {children}
@@ -1059,7 +1075,7 @@ function Field({ label, value, onChange, placeholder, type = 'text' }) {
               cursor: 'pointer', fontSize: 15, color: 'var(--muted)',
               display: 'flex', alignItems: 'center', justifyContent: 'center',
             }}>
-            {show ? '🙈' : '👁️'}
+            <Icon name={show ? '🙈' : '👁️'} size={18} />
           </button>
         )}
       </div>
