@@ -171,6 +171,7 @@ export default function Layout() {
       document.documentElement.style.setProperty('--text',    '#e8eaf6');
       document.documentElement.style.setProperty('--muted',   '#6b7194');
       document.documentElement.style.setProperty('--primary', '#8fd1ad');
+      document.documentElement.style.setProperty('--radius', '14px');
       document.documentElement.style.setProperty('--primary-light', 'rgba(143,209,173,0.14)');
     } else {
       document.documentElement.style.setProperty('--bg',      '#f1f4f1');
@@ -180,6 +181,7 @@ export default function Layout() {
       document.documentElement.style.setProperty('--text',    '#0f1f17');
       document.documentElement.style.setProperty('--muted',   '#55645b');
       document.documentElement.style.setProperty('--primary', '#1b6b45');
+      document.documentElement.style.setProperty('--radius', '14px');
       document.documentElement.style.setProperty('--primary-light', '#e6efe8');
     }
   }, [theme]);

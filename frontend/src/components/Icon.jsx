@@ -52,6 +52,15 @@ export const ICONS = {
   '⛶': <path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/>,
   '✉': <><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/></>,
   '✅': <><circle cx="12" cy="12" r="9"/><path d="M8 12.5l3 3 5-6"/></>,
+  '📍': <><path d="M12 21s7-6.2 7-11a7 7 0 10-14 0c0 4.8 7 11 7 11z"/><circle cx="12" cy="10" r="2.5"/></>,
+  '🤝': <><rect x="3" y="7" width="18" height="13" rx="2"/><path d="M9 7V5a2 2 0 012-2h2a2 2 0 012 2v2M3 13h18"/></>,
+  '📞': <path d="M5 4h4l2 5-2.5 1.5a11 11 0 005 5L15 13l5 2v4a2 2 0 01-2 2A16 16 0 013 6a2 2 0 012-2z"/>,
+  '🔗': <path d="M10 14a4 4 0 005.7 0l3-3a4 4 0 00-5.7-5.7l-1 1M14 10a4 4 0 00-5.7 0l-3 3a4 4 0 005.7 5.7l1-1"/>,
+  '📋': <><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4h6v3H9zM9 12h6M9 16h4"/></>,
+  '🗑': <path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/>,
+  '🖨': <><path d="M6 9V3h12v6M6 18H4v-7h16v7h-2"/><rect x="6" y="14" width="12" height="7"/></>,
+  '❌': <><circle cx="12" cy="12" r="9"/><path d="M9 9l6 6M15 9l-6 6"/></>,
+  '▾': <path d="M6 9l6 6 6-6"/>,
   '✓': <path d="M5 12.5l4.5 4.5L19 7.5"/>,
 };
 export function Icon({ name, size = 20 }) {
@@ -65,5 +74,14 @@ export function Icon({ name, size = 20 }) {
   );
 }
 
+
+// Inline icon for use inside running text / buttons (aligns with the text baseline)
+export function IconInline({ name, size = 15, gap = 6 }) {
+  return <span style={{ display: 'inline-flex', verticalAlign: '-0.18em', marginRight: gap }}><Icon name={name} size={size} /></span>;
+}
+// Small dropdown caret for "Actions" style buttons
+export function Caret() {
+  return <span style={{ display: 'inline-flex', verticalAlign: '-0.12em', marginLeft: 4 }}><Icon name="▾" size={13} /></span>;
+}
 
 export default Icon;

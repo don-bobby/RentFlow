@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import API from '../services/api';
 import { useAuth } from '../context/AuthContext';
+import Icon, { IconInline, Caret } from '../components/Icon';
 
 function getUser() {
   const token = localStorage.getItem('token');
@@ -53,7 +54,7 @@ function ActionMenu({ id, openMenu, setOpenMenu, items, size = 'md' }) {
         background: 'var(--surface)', fontSize: size === 'sm' ? 11 : 12, fontWeight: 600, color: 'var(--text)',
         cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 5,
       }}>
-        Actions <span style={{ fontSize: 9 }}>▾</span>
+        Actions <Caret />
       </button>
       {isOpen && (
         <div onClick={e => e.stopPropagation()} style={{
@@ -549,11 +550,11 @@ export default function Properties() {
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
         <div>
-          <h1 style={{ fontFamily: 'Space Grotesk', fontSize: 26, fontWeight: 700, marginBottom: 4, color: 'var(--text)' }}>Properties</h1>
-          <p style={{ color: isDark ? 'var(--blue, #2563eb)' : 'var(--muted)', fontSize: 14 }}>{plots.length} plots · {houses.length} units</p>
+          <h1 style={{ fontFamily: 'Bricolage Grotesque', fontSize: 32, fontWeight: 700, marginBottom: 4, letterSpacing: '-0.4px', color: 'var(--text)' }}>Properties</h1>
+          <p style={{ color: 'var(--muted)', fontSize: 14 }}>{plots.length} plots · {houses.length} units</p>
         </div>
         {can('plots.create') && (
-          <button onClick={openAddPlot} style={{ padding: '10px 18px', borderRadius: 10, border: 'none', background: 'var(--red, #dc2626)', color: '#fff', fontWeight: 600, fontSize: 14 }}>+ Add Plot</button>
+          <button onClick={openAddPlot} style={{ padding: '0 18px', minHeight: 44, borderRadius: 10, border: 'none', background: 'var(--primary, #1b6b45)', color: '#fff', fontWeight: 600, fontSize: 14, cursor: 'pointer' }}>+ Add plot</button>
         )}
       </div>
 
@@ -568,8 +569,8 @@ export default function Properties() {
                 return (
                   <button key={val} onClick={() => setStatusFilter(val)} style={{
                     padding: '7px 12px', borderRadius: 99, fontSize: 12, fontWeight: 600, cursor: 'pointer',
-                    border: `1px solid ${on ? 'var(--primary, #7c3aed)' : 'var(--border)'}`,
-                    background: on ? 'var(--primary, #7c3aed)' : 'var(--surface)',
+                    border: `1px solid ${on ? 'var(--primary, #1b6b45)' : 'var(--border)'}`,
+                    background: on ? 'var(--primary, #1b6b45)' : 'var(--surface)',
                     color: on ? '#fff' : 'var(--text)',
                   }}>
                     {label} <span style={{ opacity: 0.7, marginLeft: 2 }}>{statusCounts[val]}</span>
@@ -613,35 +614,35 @@ export default function Properties() {
             return (
             <div key={plot.id} ref={el => { plotRefs.current[plot.id] = el; }} style={{
               background: 'var(--surface, #ffffff)', borderRadius: 'var(--radius)',
-              boxShadow: String(plot.id) === String(highlightPlotId) ? '0 0 0 3px var(--amber, #d97706), 0 4px 20px rgba(217,119,6,0.35)' : 'var(--shadow, 0 2px 8px rgba(0,0,0,0.10))',
-              border: String(plot.id) === String(highlightPlotId) ? '1.5px solid var(--amber, #d97706)' : '1.5px solid var(--border, #94a3b8)',
+              boxShadow: String(plot.id) === String(highlightPlotId) ? '0 0 0 3px var(--amber, #d97706), 0 4px 20px rgba(217,119,6,0.35)' : 'none',
+              border: String(plot.id) === String(highlightPlotId) ? '1.5px solid var(--amber, #d97706)' : '1px solid var(--border, #e3e9e4)',
               overflow: 'hidden', transition: 'box-shadow 0.4s ease, border-color 0.4s ease',
             }}>
               {/* Plot header */}
               <div onClick={() => togglePlotExpanded(plot.id)} style={{ padding: '18px 24px', borderBottom: '1px solid var(--border, #cbd5e1)', display: 'flex', flexWrap: 'wrap', gap: 16, justifyContent: 'space-between', alignItems: 'center', background: 'var(--surface2, #f1f5f9)', cursor: 'pointer' }}>
                 <div>
-                  <div style={{ fontFamily: 'Space Grotesk', fontWeight: 700, fontSize: 17, marginBottom: 8, color: 'var(--text)' }}>{plot.name}</div>
+                  <div style={{ fontFamily: 'Bricolage Grotesque', fontWeight: 700, fontSize: 17, marginBottom: 8, color: 'var(--text)' }}>{plot.name}</div>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                      <span style={{ fontSize: 11, fontWeight: 700, color: isDark ? 'var(--blue, #2563eb)' : 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.5px', minWidth: 64 }}>Location</span>
-                      <span style={{ fontSize: 13, color: 'var(--text)' }}>📍 {plot.location || '—'}</span>
+                      <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.5px', minWidth: 64 }}>Location</span>
+                      <span style={{ fontSize: 13, color: 'var(--text)' }}><IconInline name="📍" size={14} />{plot.location || '—'}</span>
                     </div>
                     {(isAdmin || isAgent || isCaretaker) && (
                       <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                        <span style={{ fontSize: 11, fontWeight: 700, color: isDark ? 'var(--blue, #2563eb)' : 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.5px', minWidth: 64 }}>Owner</span>
+                        <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.5px', minWidth: 64 }}>Owner</span>
                         {/* landlords.find(...) only ever resolves for admin, since that list is
                             admin-only fetched — plot.owner_name (from GET /plots directly) works
                             correctly for every role, same fix as caretaker/agent above. */}
-                        <span style={{ fontSize: 13, color: 'var(--text)' }}>👤 {landlords.find(l => l.id === plot.user_id)?.name || plot.owner_name || 'Admin'}</span>
+                        <span style={{ fontSize: 13, color: 'var(--text)' }}><IconInline name="👤" size={14} />{landlords.find(l => l.id === plot.user_id)?.name || plot.owner_name || 'Admin'}</span>
                       </div>
                     )}
                     {!isCaretaker && (
                       <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                        <span style={{ fontSize: 11, fontWeight: 700, color: isDark ? 'var(--blue, #2563eb)' : 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.5px', minWidth: 64 }}>Caretaker</span>
+                        <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.5px', minWidth: 64 }}>Caretaker</span>
                         {(() => {
                           const cts = plotCaretakers(plot);
                           return cts.length
-                            ? <span style={{ fontSize: 13, color: 'var(--text)' }}>🧑‍🔧 {cts.map(c => c.name).join(', ')}</span>
+                            ? <span style={{ fontSize: 13, color: 'var(--text)' }}><IconInline name="🧑‍🔧" size={14} />{cts.map(c => c.name).join(', ')}</span>
                             : <span style={{ fontSize: 13, color: 'var(--muted)', fontStyle: 'italic' }}>None assigned</span>;
                         })()}
                       </div>
@@ -650,11 +651,11 @@ export default function Properties() {
                         they need the Owner row above instead, which agents can now see. */}
                     {String(plot.agent_id) !== String(user?.id) && (
                       <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                        <span style={{ fontSize: 11, fontWeight: 700, color: isDark ? 'var(--blue, #2563eb)' : 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.5px', minWidth: 64 }}>Agent</span>
+                        <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.5px', minWidth: 64 }}>Agent</span>
                         {(() => {
                           const ag = plotAgent(plot);
                           return ag
-                            ? <span style={{ fontSize: 13, color: 'var(--text)' }}>🤝 {ag.name}</span>
+                            ? <span style={{ fontSize: 13, color: 'var(--text)' }}><IconInline name="🤝" size={14} />{ag.name}</span>
                             : <span style={{ fontSize: 13, color: 'var(--muted)', fontStyle: 'italic' }}>None assigned</span>;
                         })()}
                       </div>
@@ -675,7 +676,7 @@ export default function Properties() {
                   return total > 0 ? (
                     <div style={{ flex: '0 1 240px', minWidth: 160, margin: '0 20px' }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 5 }}>
-                        <span style={{ fontSize: 11, fontWeight: 700, color: isDark ? 'var(--blue, #2563eb)' : 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Occupancy</span>
+                        <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Occupancy</span>
                         <span style={{ fontSize: 15, fontWeight: 700, color: barColor }}>{pct}%</span>
                       </div>
                       <div style={{ height: 7, borderRadius: 99, background: 'var(--border)', overflow: 'hidden' }}>
@@ -691,9 +692,9 @@ export default function Properties() {
                     width: 30, height: 30, borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)',
                     display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text)', flexShrink: 0,
                   }}>
-                    <span style={{ display: 'inline-block', fontSize: 11, transition: 'transform 0.2s ease', transform: expanded ? 'rotate(0deg)' : 'rotate(-90deg)' }}>▾</span>
+                    <span style={{ display: 'flex', transition: 'transform 0.2s ease', transform: expanded ? 'rotate(0deg)' : 'rotate(-90deg)' }}><Icon name="▾" size={16} /></span>
                   </span>
-                  <span style={{ background: isDark ? 'rgba(124,58,237,0.25)' : 'var(--primary-light)', color: isDark ? '#c4b5fd' : 'var(--primary)', padding: '4px 12px', borderRadius: 99, fontSize: 12, fontWeight: 600 }}>
+                  <span style={{ background: isDark ? 'rgba(143,209,173,0.18)' : 'var(--primary-light)', color: isDark ? '#8fd1ad' : 'var(--primary)', padding: '4px 12px', borderRadius: 99, fontSize: 12, fontWeight: 600 }}>
                     {allPlotHouses(plot.id).length} units
                   </span>
                   {/* Gated on actual permissions, not role — a role-based check
@@ -709,7 +710,7 @@ export default function Properties() {
                     // same plot.
                     const items = [
                       ...(can('houses.create', plot.id) ? [{ label: '+ Add Unit', onClick: () => openAddHouse(plot.id) }] : []),
-                      { label: '🧊 3D view', onClick: () => navigate(`/building?plot=${plot.id}`) },
+                      { label: '3D view', onClick: () => navigate(`/building?plot=${plot.id}`) },
                       ...(can('plots.edit', plot.id)    ? [{ label: 'Edit', onClick: () => openEditPlot(plot) }] : []),
                       ...(can('plots.delete', plot.id)  ? [{ label: 'Delete', onClick: () => handleDeletePlot(plot.id), danger: true }] : []),
                     ];
@@ -737,8 +738,9 @@ export default function Properties() {
                   <span style={{
                     display: 'inline-flex', alignItems: 'center', gap: 6, padding: '5px 12px', borderRadius: 99,
                     fontSize: 12, fontWeight: 600,
-                    background: tone === 'red' ? 'var(--red-light, #fee2e2)' : tone === 'green' ? 'var(--green-light, #dcfce7)' : tone === 'amber' ? 'var(--amber-light, #fef3c7)' : 'var(--blue-light, #dbeafe)',
-                    color: tone === 'red' ? 'var(--red, #dc2626)' : tone === 'green' ? 'var(--green, #16a34a)' : tone === 'amber' ? 'var(--amber, #d97706)' : 'var(--blue, #2563eb)',
+                    background: tone === 'red' ? 'var(--red-light, #fee2e2)' : tone === 'amber' ? 'var(--amber-light, #fef3c7)' : 'var(--surface, #ffffff)',
+                    border: tone === 'red' || tone === 'amber' ? '1px solid transparent' : '1px solid var(--border)',
+                    color: tone === 'red' ? 'var(--red, #b42318)' : tone === 'amber' ? 'var(--amber, #b45309)' : 'var(--text)',
                   }}>
                     <span style={{ opacity: 0.75, fontWeight: 700, textTransform: 'uppercase', fontSize: 10, letterSpacing: '0.4px' }}>{label}</span>
                     {value}
@@ -746,11 +748,11 @@ export default function Properties() {
                 );
                 return (
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, padding: '12px 24px', background: 'var(--surface2, #f1f5f9)', borderBottom: '1px solid var(--border, #cbd5e1)' }}>
-                    {payments.length > 0 && pill('Unpaid Rent', `KES ${unpaid.toLocaleString()}`, unpaid > 0 ? 'red' : 'green')}
-                    {payments.length > 0 && pill('This Month', `KES ${monthRev.toLocaleString()}`, 'blue')}
+                    {payments.length > 0 && pill('Unpaid rent', `KES ${unpaid.toLocaleString()}`, unpaid > 0 ? 'red' : 'green')}
+                    {payments.length > 0 && pill('This month', `KES ${monthRev.toLocaleString()}`, 'blue')}
                     {expenses.length > 0 && pill('Expenses', `KES ${monthExp.toLocaleString()}`, monthExp > 0 ? 'amber' : 'green')}
                     {maintenanceRequests.length > 0 && pill('Maintenance', pendingM > 0 ? `${pendingM} pending` : 'none pending', pendingM > 0 ? 'amber' : 'green')}
-                    {workload != null && maintenanceRequests.length > 0 && pill('Caretaker Load', `${workload} open`, workload > 5 ? 'amber' : 'green')}
+                    {workload != null && maintenanceRequests.length > 0 && pill('Caretaker load', `${workload} open`, workload > 5 ? 'amber' : 'green')}
                   </div>
                 );
               })()}
@@ -775,7 +777,7 @@ export default function Properties() {
                       padding: '14px 16px', borderRadius: 10,
                       border: String(house.id) === String(highlightHouseId) ? '1.5px solid var(--amber, #d97706)' : '1px solid var(--border)',
                       boxShadow: String(house.id) === String(highlightHouseId) ? '0 0 0 3px var(--amber, #d97706), 0 4px 20px rgba(217,119,6,0.35)' : 'none',
-                      background: house.status === 'vacant' ? 'var(--surface2)' : house.status === 'maintenance' ? hexToRgba('#dc2626', 0.15) : hexToRgba('#39FF14', 0.18),
+                      background: house.status === 'vacant' ? 'var(--surface2)' : house.status === 'maintenance' ? hexToRgba('#b42318', 0.08) : hexToRgba('#1b6b45', 0.08),
                       transition: 'box-shadow 0.4s ease, border-color 0.4s ease',
                     }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 4 }}>
@@ -806,7 +808,7 @@ export default function Properties() {
                         if (!tenant) {
                           return (
                             <div style={{ marginTop: 8, padding: '8px 10px', borderRadius: 8, background: 'var(--amber-light, #fef3c7)', border: '1px dashed var(--amber, #d97706)' }}>
-                              <div style={{ fontSize: 11, color: 'var(--amber, #d97706)', fontWeight: 700 }}>⚠️ No tenant record linked</div>
+                              <div style={{ fontSize: 11, color: 'var(--amber, #d97706)', fontWeight: 700 }}><IconInline name="⚠️" size={12} />No tenant record linked</div>
                               {!isCaretaker && (
                                 <button onClick={() => navigate('/tenants')} style={{ marginTop: 5, padding: '3px 9px', borderRadius: 6, border: 'none', background: 'var(--amber, #d97706)', color: '#fff', fontSize: 11, fontWeight: 600, cursor: 'pointer' }}>
                                   + Add tenant
@@ -821,7 +823,7 @@ export default function Properties() {
                         return (
                           <div style={{ marginTop: 8, padding: '8px 10px', borderRadius: 8, background: 'var(--surface2)', border: '1px solid var(--border)' }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
-                              <div style={{ width: 24, height: 24, borderRadius: '50%', background: 'var(--primary-light, #ede9fe)', color: 'var(--primary, #7c3aed)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, fontWeight: 700, flexShrink: 0 }}>
+                              <div style={{ width: 24, height: 24, borderRadius: '50%', background: 'var(--primary-light, #e6efe8)', color: 'var(--primary, #1b6b45)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, fontWeight: 700, flexShrink: 0 }}>
                                 {initials}
                               </div>
                               <div style={{ minWidth: 0, flex: 1 }}>
@@ -829,7 +831,7 @@ export default function Properties() {
                                   {tenant.full_name}
                                 </div>
                                 <div style={{ fontSize: 11, color: 'var(--muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={tenant.phone}>
-                                  📞 {tenant.phone}
+                                  <IconInline name="📞" size={13} />{tenant.phone}
                                 </div>
                               </div>
                             </div>
@@ -849,10 +851,10 @@ export default function Properties() {
                       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 8 }}>
                         <span style={{ display: 'inline-block', background: house.status === 'vacant' ? 'var(--green-light, #dcfce7)' : house.status === 'maintenance' ? 'var(--red-light, #fee2e2)' : 'var(--amber-light, #fef3c7)', color: house.status === 'vacant' ? 'var(--green, #16a34a)' : house.status === 'maintenance' ? 'var(--red, #dc2626)' : 'var(--amber, #d97706)', padding: '2px 10px', borderRadius: 99, fontSize: 11, fontWeight: 600 }}>{house.status}</span>
                         {house.is_approved !== true && !house.rejection_reason && (
-                          <span style={{ display: 'inline-block', background: 'var(--amber-light, #fef3c7)', color: 'var(--amber, #d97706)', padding: '2px 10px', borderRadius: 99, fontSize: 11, fontWeight: 600 }}>⏳ Pending Approval</span>
+                          <span style={{ display: 'inline-block', background: 'var(--amber-light, #fef3c7)', color: 'var(--amber, #d97706)', padding: '2px 10px', borderRadius: 99, fontSize: 11, fontWeight: 600 }}><IconInline name="⏳" size={12} gap={4} />Pending approval</span>
                         )}
                         {house.rejection_reason && (
-                          <span style={{ display: 'inline-block', background: 'var(--red-light, #fee2e2)', color: 'var(--red, #dc2626)', padding: '2px 10px', borderRadius: 99, fontSize: 11, fontWeight: 600 }}>❌ Rejected</span>
+                          <span style={{ display: 'inline-block', background: 'var(--red-light, #fee2e2)', color: 'var(--red, #dc2626)', padding: '2px 10px', borderRadius: 99, fontSize: 11, fontWeight: 600 }}><IconInline name="❌" size={12} gap={4} />Rejected</span>
                         )}
                         {house.is_approved !== true && can('houses.approve', house.plot_id) && (
                           <>
@@ -887,7 +889,7 @@ export default function Properties() {
       {modal && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, padding: 20 }}>
           <div style={{ background: 'var(--surface)', borderRadius: 16, padding: 28, width: '100%', maxWidth: 460, boxShadow: 'var(--shadow-lg)' }}>
-            <h2 style={{ fontFamily: 'Space Grotesk', fontWeight: 700, fontSize: 18, marginBottom: 20, color: 'var(--text)' }}>
+            <h2 style={{ fontFamily: 'Bricolage Grotesque', fontWeight: 700, fontSize: 18, marginBottom: 20, color: 'var(--text)' }}>
               {editing ? 'Edit' : 'Add'} {modal === 'plot' ? 'Plot' : 'Unit'}
             </h2>
             {error && <div style={{ background: 'var(--red-light, #fee2e2)', color: 'var(--red, #dc2626)', padding: '10px 14px', borderRadius: 8, marginBottom: 16, fontSize: 13 }}>{error}</div>}
@@ -1058,7 +1060,7 @@ export default function Properties() {
 
             <div style={{ display: 'flex', gap: 10, marginTop: 24, justifyContent: 'flex-end' }}>
               <button onClick={() => { setModal(null); setEditing(null); }} style={{ padding: '10px 20px', borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface)', fontWeight: 600, fontSize: 14, color: 'var(--text)' }}>Cancel</button>
-              <button onClick={handleSave} disabled={saving} style={{ padding: '10px 20px', borderRadius: 10, border: 'none', background: 'var(--primary, #7c3aed)', color: '#fff', fontWeight: 600, fontSize: 14 }}>
+              <button onClick={handleSave} disabled={saving} style={{ padding: '10px 20px', borderRadius: 10, border: 'none', background: 'var(--primary, #1b6b45)', color: '#fff', fontWeight: 600, fontSize: 14 }}>
                 {saving ? 'Saving...' : editing ? 'Update' : 'Save'}
               </button>
             </div>
@@ -1089,7 +1091,7 @@ function FilterSelect({ label, value, onChange, allLabel, noneLabel, options }) 
       <div style={filterLabelStyle}>{label}</div>
       <select value={value} onChange={e => onChange(e.target.value)} style={{
         width: '100%', boxSizing: 'border-box', padding: '8px 12px', borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: 'pointer', outline: 'none',
-        border: `1px solid ${active ? 'var(--primary, #7c3aed)' : 'var(--border)'}`,
+        border: `1px solid ${active ? 'var(--primary, #1b6b45)' : 'var(--border)'}`,
         background: 'var(--surface)', color: 'var(--text)',
       }}>
         <option value="all">{allLabel}</option>
@@ -1118,10 +1120,10 @@ function ExpandableSearch({ value, onChange }) {
       height: 40, width: expanded ? 240 : 40, maxWidth: '100%',
       transition: 'width 0.2s ease, border-color 0.15s',
       borderRadius: 10, background: 'var(--surface)',
-      border: `1px solid ${expanded ? 'var(--primary, #7c3aed)' : 'var(--border)'}`,
+      border: `1px solid ${expanded ? 'var(--primary, #1b6b45)' : 'var(--border)'}`,
     }}>
       <button type="button" onClick={openIt} aria-label="Search plots" title="Search plots"
-        style={{ width: 38, height: 38, flex: 'none', border: 'none', background: 'transparent', cursor: 'pointer', fontSize: 15 }}>🔍</button>
+        style={{ width: 38, height: 38, flex: 'none', border: 'none', background: 'transparent', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--muted)' }}><Icon name="🔍" size={18} /></button>
       <input
         ref={inputRef}
         value={value}

@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import API from '../services/api';
+import { useAuth } from '../context/AuthContext';
 
 const BASE = (process.env.REACT_APP_API_URL || 'http://localhost:5000/api').replace('/api', '');
 // Cloud files (Supabase) already carry a full https:// address; local files need the backend address in front
@@ -121,6 +122,7 @@ const toneVar = (name) => ({
 }[name] || 'var(--ls-primary)');
 
 export default function Listings() {
+  const { can } = useAuth();   // lets us hide edit buttons on properties an agent manages
   const [plots,      setPlots]      = useState([]);
   const [houses,     setHouses]     = useState([]);
   const [loading,    setLoading]    = useState(true);
@@ -377,14 +379,26 @@ export default function Listings() {
                           <span className={`ls-badge ls-badge-${statusTone}`}>{statusLabel}</span>
                         </td>
                         <td>
-                          <button onClick={() => openDesc(house)} className={`ls-mini${house.description ? ' has-value' : ''}`}>
-                            {house.description ? '✏️ Edit' : '+ Add'}
-                          </button>
+                          {can('houses.edit', house.plot_id) ? (
+                            <button onClick={() => openDesc(house)} className={`ls-mini${house.description ? ' has-value' : ''}`}>
+                              {house.description ? '✏️ Edit' : '+ Add'}
+                            </button>
+                          ) : (
+                            <span className="ls-mini" style={{ opacity: .55, cursor: 'default' }} title="Handled by the property's agent. Only they or an admin can edit this.">
+                              {house.description ? '✓' : '—'}
+                            </span>
+                          )}
                         </td>
                         <td>
-                          <button onClick={() => openTags(house)} className={`ls-mini${tagsOf(house).length ? ' has-value' : ''}`}>
-                            {tagsOf(house).length ? `🏷️ ${tagsOf(house).length}` : '+ Add'}
-                          </button>
+                          {can('houses.edit', house.plot_id) ? (
+                            <button onClick={() => openTags(house)} className={`ls-mini${tagsOf(house).length ? ' has-value' : ''}`}>
+                              {tagsOf(house).length ? `🏷️ ${tagsOf(house).length}` : '+ Add'}
+                            </button>
+                          ) : (
+                            <span className="ls-mini" style={{ opacity: .55, cursor: 'default' }} title="Handled by the property's agent. Only they or an admin can edit this.">
+                              {tagsOf(house).length ? `🏷️ ${tagsOf(house).length}` : '—'}
+                            </span>
+                          )}
                         </td>
                         <td>
                           <button onClick={() => openMedia(house)} className="ls-mini">📷 Media</button>

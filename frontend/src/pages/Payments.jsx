@@ -3,6 +3,7 @@ import { useLocation } from 'react-router-dom';
 import { createPortal } from 'react-dom';
 import API, { getUnmatchedPayments, matchPayment, deletePayment } from '../services/api';
 import { useAuth } from '../context/AuthContext';
+import Icon, { IconInline, Caret } from '../components/Icon';
 
 function hexToRgba(hex, alpha) {
   const n = parseInt(hex.replace('#', ''), 16);
@@ -10,7 +11,7 @@ function hexToRgba(hex, alpha) {
 }
 
 // Same deterministic initials-avatar as Tenants.jsx — same tenant, same color.
-const AVATAR_COLORS = ['#7c3aed', '#2563eb', '#16a34a', '#d97706', '#dc2626', '#0891b2', '#db2777'];
+const AVATAR_COLORS = ['#1b6b45', '#2563eb', '#16a34a', '#d97706', '#dc2626', '#0891b2', '#db2777'];
 function initialsAvatar(name) {
   const clean = (name || '?').trim();
   const parts = clean.split(/\s+/);
@@ -65,7 +66,7 @@ function RowMenu({ id, openMenu, setOpenMenu, items }) {
               onMouseEnter={e => e.currentTarget.style.background = 'var(--surface2)'}
               onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
               style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%', padding: '9px 14px', border: 'none', background: 'transparent', fontSize: 13, fontWeight: it.danger ? 700 : 500, color: it.danger ? 'var(--red, #dc2626)' : 'var(--text)', cursor: 'pointer', textAlign: 'left' }}>
-              <span style={{ width: 18, textAlign: 'center' }}>{it.icon}</span>{it.label}
+              <span style={{ width: 18, display: 'flex', justifyContent: 'center' }}>{it.icon && <Icon name={it.icon} size={16} />}</span>{it.label}
             </button>
           ))}
         </div>
@@ -300,7 +301,7 @@ export default function Payments() {
       if (data.success) {
         const checkoutId = data.data?.CheckoutRequestID;
         setStkStatus('pending');
-        setStkMsg('⏳ STK push sent — tenant should enter M-Pesa PIN on their phone. Waiting for confirmation...');
+        setStkMsg('STK push sent — tenant should enter M-Pesa PIN on their phone. Waiting for confirmation...');
         setStkAmount('');
         pollPaymentStatus(checkoutId);
       } else {
@@ -328,16 +329,16 @@ export default function Payments() {
         if (data.status === 'matched') {
           stopPolling();
           setStkStatus('success');
-          setStkMsg('✅ Payment confirmed! The account has been updated.');
+          setStkMsg('Payment confirmed! The account has been updated.');
           load(); // refresh payments table
         } else if (data.status === 'failed') {
           stopPolling();
           setStkStatus('failed');
-          setStkMsg(`❌ Payment failed — ${data.reason || 'insufficient funds or PIN cancelled'}.`);
+          setStkMsg(`Payment failed — ${data.reason || 'insufficient funds or PIN cancelled'}.`);
         } else if (attempts >= maxAttempts) {
           stopPolling();
           setStkStatus('failed');
-          setStkMsg('⚠️ No confirmation after 60s. Check M-Pesa messages to confirm if payment went through.');
+          setStkMsg('No confirmation after 60s. Check M-Pesa messages to confirm if payment went through.');
         }
       } catch { /* keep polling */ }
     }, 5000);
@@ -410,7 +411,7 @@ export default function Payments() {
     <div>
       <style>{`
         .pm-row { transition: background 0.12s ease; }
-        .pm-row:hover { background: var(--primary-light, #ede9fe) !important; }
+        .pm-row:hover { background: var(--primary-light, #e6efe8) !important; }
         .pm-skel { background: var(--surface2); border-radius: 6px; animation: pm-pulse 1.3s ease-in-out infinite; }
         @keyframes pm-pulse { 0%, 100% { opacity: .5; } 50% { opacity: 1; } }
         @media (prefers-reduced-motion: reduce) { .pm-row, .pm-skel { transition: none; animation: none; } }
@@ -428,7 +429,7 @@ export default function Payments() {
       `}</style>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 28 }}>
         <div>
-          <h1 style={{ fontFamily: 'Space Grotesk', fontSize: 26, fontWeight: 700, marginBottom: 4, color: 'var(--text)' }}>Payments</h1>
+          <h1 style={{ fontFamily: 'Bricolage Grotesque', fontSize: 26, fontWeight: 700, marginBottom: 4, color: 'var(--text)' }}>Payments</h1>
           <p style={{ color: 'var(--muted)', fontSize: 14 }}>{payments.length} transactions · KES {payments.reduce((s,p)=>s+parseFloat(p.amount||0),0).toLocaleString()} total</p>
         </div>
         <div style={{ display: 'flex', gap: 10 }}>
@@ -439,7 +440,7 @@ export default function Payments() {
               modal, after the button is already clicked. */}
           {can('payments.reconcile_mpesa') && (
             <button onClick={openReconcile} style={{ padding: '10px 18px', borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontWeight: 600, fontSize: 14, cursor: 'pointer' }}>
-              🔗 Reconcile Unmatched
+              <IconInline name="🔗" />Reconcile unmatched
             </button>
           )}
           {can('payments.record_manual') && (
@@ -454,7 +455,7 @@ export default function Payments() {
               setArrears(null);
               if (firstActive) loadArrears(firstActive.id);
             }} style={{ padding: '10px 18px', borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontWeight: 600, fontSize: 14, cursor: 'pointer' }}>
-              📱 STK Push
+              <IconInline name="📱" />STK push
             </button>
           )}
           {can('payments.record_manual') && (
@@ -464,7 +465,7 @@ export default function Payments() {
               setArrears(null);
               if (firstActive) loadArrears(firstActive.id);
               setModal(true); setError('');
-            }} style={{ padding: '10px 18px', borderRadius: 10, border: 'none', background: 'var(--primary, #7c3aed)', color: '#fff', fontWeight: 600, fontSize: 14, cursor: 'pointer' }}>
+            }} style={{ padding: '10px 18px', borderRadius: 10, border: 'none', background: 'var(--primary, #1b6b45)', color: '#fff', fontWeight: 600, fontSize: 14, cursor: 'pointer' }}>
               + Record Payment
             </button>
           )}
@@ -473,14 +474,14 @@ export default function Payments() {
 
       <div style={{ display: 'flex', gap: 8, marginBottom: 20 }}>
         {['all','matched','unmatched','review','pending','failed'].map(f => (
-          <button key={f} onClick={() => setFilter(f)} style={{ padding: '7px 16px', borderRadius: 99, border: '1px solid var(--border)', background: filter === f ? 'var(--primary, #7c3aed)' : 'var(--surface)', color: filter === f ? '#fff' : 'var(--muted)', fontWeight: 600, fontSize: 13, textTransform: 'capitalize', cursor: 'pointer' }}>{f}</button>
+          <button key={f} onClick={() => setFilter(f)} style={{ padding: '7px 16px', borderRadius: 99, border: '1px solid var(--border)', background: filter === f ? 'var(--primary, #1b6b45)' : 'var(--surface)', color: filter === f ? '#fff' : 'var(--muted)', fontWeight: 600, fontSize: 13, textTransform: 'capitalize', cursor: 'pointer' }}>{f}</button>
         ))}
         {paymentPlotOptions.length > 1 && (
           <select
             value={plotFilter}
             onChange={e => { setPlotFilter(e.target.value); setTenantFilter('all'); }}
             title="Filter by property"
-            style={{ padding: '7px 12px', borderRadius: 99, border: '1px solid var(--border)', background: plotFilter === 'all' ? 'var(--surface)' : 'var(--primary, #7c3aed)', color: plotFilter === 'all' ? 'var(--muted)' : '#fff', fontWeight: 600, fontSize: 13, cursor: 'pointer' }}
+            style={{ padding: '7px 12px', borderRadius: 99, border: '1px solid var(--border)', background: plotFilter === 'all' ? 'var(--surface)' : 'var(--primary, #1b6b45)', color: plotFilter === 'all' ? 'var(--muted)' : '#fff', fontWeight: 600, fontSize: 13, cursor: 'pointer' }}
           >
             <option value="all">All properties</option>
             {paymentPlotOptions.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
@@ -490,12 +491,12 @@ export default function Payments() {
           value={tenantFilter}
           onChange={e => setTenantFilter(e.target.value)}
           title="Filter by tenant"
-          style={{ padding: '7px 12px', borderRadius: 99, border: '1px solid var(--border)', background: tenantFilter === 'all' ? 'var(--surface)' : 'var(--primary, #7c3aed)', color: tenantFilter === 'all' ? 'var(--muted)' : '#fff', fontWeight: 600, fontSize: 13, cursor: 'pointer' }}
+          style={{ padding: '7px 12px', borderRadius: 99, border: '1px solid var(--border)', background: tenantFilter === 'all' ? 'var(--surface)' : 'var(--primary, #1b6b45)', color: tenantFilter === 'all' ? 'var(--muted)' : '#fff', fontWeight: 600, fontSize: 13, cursor: 'pointer' }}
         >
           <option value="all">All tenants</option>
           {paymentTenantOptions.map(([id, name]) => <option key={id} value={id}>{name || `Tenant #${id}`}</option>)}
         </select>
-        <div style={{ marginLeft: 'auto', fontWeight: 700, color: 'var(--primary, #7c3aed)', fontSize: 15, display: 'flex', alignItems: 'center' }}>
+        <div style={{ marginLeft: 'auto', fontWeight: 700, color: 'var(--primary, #1b6b45)', fontSize: 15, display: 'flex', alignItems: 'center' }}>
           KES {total.toLocaleString()}
         </div>
       </div>
@@ -512,7 +513,7 @@ export default function Payments() {
           </div>
         ) : filtered.length === 0 ? (
           <div style={{ padding: 60, textAlign: 'center', color: 'var(--muted)' }}>
-            <div style={{ fontSize: 32, marginBottom: 10 }}>💳</div>
+            <div style={{ marginBottom: 10, color: 'var(--muted)', display: 'flex', justifyContent: 'center' }}><Icon name="💳" size={32} /></div>
             No payments found.
           </div>
         ) : (
@@ -553,7 +554,7 @@ export default function Payments() {
                         );
                       })()}
                       <div style={{ minWidth: 0 }}>
-                        <div style={{ fontWeight: 600, fontSize: 13, color: isDark ? 'var(--blue, #2563eb)' : 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.tenant_name || '—'}</div>
+                        <div style={{ fontWeight: 600, fontSize: 13, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.tenant_name || '—'}</div>
                         <div style={{ fontSize: 11, color: 'var(--muted)' }}>Unit {p.unit_number || '—'}</div>
                       </div>
                     </div>
@@ -562,7 +563,7 @@ export default function Payments() {
                   <td style={{ padding: '12px 16px', fontWeight: 700, color: 'var(--green, #16a34a)', fontSize: 15 }}>KES {parseFloat(p.amount).toLocaleString()}</td>
                   <td style={{ padding: '12px 16px' }}>
                     {p.for_year && p.for_month ? (
-                      <span style={{ background: isDark ? hexToRgba('#7c3aed', 0.22) : 'var(--primary-light)', color: isDark ? '#c4b5fd' : 'var(--primary, #7c3aed)', padding: '3px 10px', borderRadius: 99, fontSize: 12, fontWeight: 600 }}>{monthName(p.for_year, p.for_month)}</span>
+                      <span style={{ background: isDark ? hexToRgba('#1b6b45', 0.22) : 'var(--primary-light)', color: isDark ? '#8fd1ad' : 'var(--primary, #1b6b45)', padding: '3px 10px', borderRadius: 99, fontSize: 12, fontWeight: 600 }}>{monthName(p.for_year, p.for_month)}</span>
                     ) : p.status === 'matched' && can('payments.record_manual', p.plot_id) ? (
                       <button
                         onClick={() => { setAllocateModal(p); setAllocateError(''); const d = new Date(); setAllocateYear(d.getFullYear()); setAllocateMonth(d.getMonth() + 1); }}
@@ -588,7 +589,7 @@ export default function Payments() {
                           onClick={() => setReceiptModal(p)}
                           title="View / print receipt"
                           style={{ padding: '6px 12px', height: 32, borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', fontSize: 12, fontWeight: 600, cursor: 'pointer', color: 'var(--text)', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                          <span style={{ color: 'var(--green, #16a34a)' }}>🧾</span> Receipt
+                          <IconInline name="🧾" />Receipt
                         </button>
                       )}
                       {(() => {
@@ -615,7 +616,7 @@ export default function Payments() {
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, padding: 20 }}>
           <div style={{ background: 'var(--surface)', borderRadius: 16, padding: 28, width: '100%', maxWidth: 480, boxShadow: 'var(--shadow-lg)' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
-              <h2 style={{ fontFamily: 'Space Grotesk', fontWeight: 700, fontSize: 18, color: 'var(--text)' }}>📱 Send M-Pesa STK Push</h2>
+              <h2 style={{ fontFamily: 'Bricolage Grotesque', fontWeight: 700, fontSize: 18, color: 'var(--text)' }}><IconInline name="📱" size={20} />Send M-Pesa STK push</h2>
               <button onClick={() => { stopPolling(); setStkModal(false); setArrears(null); }} style={{ width: 32, height: 32, borderRadius: '50%', border: 'none', background: 'var(--surface2)', cursor: 'pointer', fontSize: 18, color: 'var(--muted)' }}>×</button>
             </div>
 
@@ -640,11 +641,11 @@ export default function Payments() {
             {arrearsLoading && <div style={{ fontSize: 13, color: 'var(--muted)', marginBottom: 14 }}>Loading arrears...</div>}
             {arrears && !arrearsLoading && arrears.total_arrears > 0 && (
               <div style={{ background: isDark ? hexToRgba('#dc2626', 0.15) : 'var(--red-light)', border: '1px solid var(--red, #dc2626)', borderRadius: 10, padding: '12px 14px', marginBottom: 14, fontSize: 13 }}>
-                <div style={{ fontWeight: 700, color: 'var(--red, #dc2626)', marginBottom: 6 }}>⚠️ Outstanding: KES {arrears.total_arrears.toLocaleString()}</div>
+                <div style={{ fontWeight: 700, color: 'var(--red, #dc2626)', marginBottom: 6 }}><IconInline name="⚠️" />Outstanding: KES {arrears.total_arrears.toLocaleString()}</div>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
                   {arrears.deposit_owed > 0 && (
                     <span style={{ background: isDark ? 'var(--surface2)' : 'white', border: '1px solid var(--red, #dc2626)', borderRadius: 6, padding: '2px 8px', fontSize: 11, fontWeight: 700, color: 'var(--red, #dc2626)' }}>
-                      🔒 Deposit shortfall — KES {arrears.deposit_owed.toLocaleString()}
+                      <IconInline name="🔒" size={13} />Deposit shortfall — KES {arrears.deposit_owed.toLocaleString()}
                     </span>
                   )}
                   {arrears.unpaid_months?.map(m => (
@@ -660,7 +661,7 @@ export default function Payments() {
             )}
             {arrears && !arrearsLoading && arrears.total_arrears === 0 && (
               <div style={{ background: isDark ? hexToRgba('#16a34a', 0.15) : 'var(--green-light)', border: '1px solid var(--green, #16a34a)', borderRadius: 10, padding: '10px 14px', marginBottom: 14, fontSize: 13, fontWeight: 600, color: 'var(--green, #16a34a)' }}>
-                ✅ No arrears — tenant is up to date.
+                <IconInline name="✅" />No arrears — tenant is up to date.
               </div>
             )}
 
@@ -709,8 +710,8 @@ export default function Payments() {
                 Close
               </button>
               <button onClick={triggerStkPush} disabled={stkLoading || stkStatus === 'pending'}
-                style={{ padding: '10px 20px', borderRadius: 10, border: 'none', background: stkStatus === 'success' ? 'var(--green, #16a34a)' : 'var(--primary, #7c3aed)', color: '#fff', fontWeight: 600, fontSize: 14, cursor: 'pointer' }}>
-                {stkLoading ? 'Sending...' : stkStatus === 'pending' ? '⏳ Waiting...' : stkStatus === 'success' ? '✅ Confirmed' : '📱 Send STK Push'}
+                style={{ padding: '10px 20px', borderRadius: 10, border: 'none', background: stkStatus === 'success' ? 'var(--green, #16a34a)' : 'var(--primary, #1b6b45)', color: '#fff', fontWeight: 600, fontSize: 14, cursor: 'pointer' }}>
+                {stkLoading ? 'Sending...' : stkStatus === 'pending' ? 'Waiting...' : stkStatus === 'success' ? 'Confirmed' : 'Send STK push'}
               </button>
             </div>
           </div>
@@ -722,7 +723,7 @@ export default function Payments() {
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, padding: 20 }}>
           <div style={{ background: 'var(--surface)', borderRadius: 16, padding: 28, width: '100%', maxWidth: 640, maxHeight: '85vh', overflowY: 'auto', boxShadow: 'var(--shadow-lg)' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-              <h2 style={{ fontFamily: 'Space Grotesk', fontWeight: 700, fontSize: 18, color: 'var(--text)' }}>🔗 Reconcile Unmatched Payments</h2>
+              <h2 style={{ fontFamily: 'Bricolage Grotesque', fontWeight: 700, fontSize: 18, color: 'var(--text)' }}><IconInline name="🔗" size={20} />Reconcile unmatched payments</h2>
               <button onClick={() => setReconcileOpen(false)} style={{ width: 32, height: 32, borderRadius: '50%', border: 'none', background: 'var(--surface2)', cursor: 'pointer', fontSize: 18, color: 'var(--muted)' }}>×</button>
             </div>
             <p style={{ color: 'var(--muted)', fontSize: 13, marginBottom: 18 }}>
@@ -732,7 +733,7 @@ export default function Payments() {
             {unmatchedLoad ? (
               <div style={{ padding: 30, textAlign: 'center', color: 'var(--muted)' }}>Loading…</div>
             ) : unmatched.length === 0 ? (
-              <div style={{ padding: 30, textAlign: 'center', color: 'var(--muted)' }}>Nothing to reconcile — all payments are matched. ✅</div>
+              <div style={{ padding: 30, textAlign: 'center', color: 'var(--muted)' }}>Nothing to reconcile — all payments are matched.</div>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
                 {unmatched.map(p => (
@@ -759,7 +760,7 @@ export default function Payments() {
                       <button
                         onClick={() => handleMatch(p)}
                         disabled={!matchPicks[p.id] || matching === p.id}
-                        style={{ padding: '0 18px', borderRadius: 8, border: 'none', background: 'var(--primary, #7c3aed)', color: '#fff', fontWeight: 700, fontSize: 13, cursor: (!matchPicks[p.id] || matching === p.id) ? 'default' : 'pointer', opacity: (!matchPicks[p.id] || matching === p.id) ? 0.5 : 1 }}
+                        style={{ padding: '0 18px', borderRadius: 8, border: 'none', background: 'var(--primary, #1b6b45)', color: '#fff', fontWeight: 700, fontSize: 13, cursor: (!matchPicks[p.id] || matching === p.id) ? 'default' : 'pointer', opacity: (!matchPicks[p.id] || matching === p.id) ? 0.5 : 1 }}
                       >
                         {matching === p.id ? 'Matching…' : 'Match'}
                       </button>
@@ -776,7 +777,7 @@ export default function Payments() {
       {modal && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, padding: 20, overflowY: 'auto' }}>
           <div style={{ background: 'var(--surface)', borderRadius: 16, padding: 28, width: '100%', maxWidth: 520, boxShadow: 'var(--shadow-lg)', margin: 'auto' }}>
-            <h2 style={{ fontFamily: 'Space Grotesk', fontWeight: 700, fontSize: 18, marginBottom: 20, color: 'var(--text)' }}>Record Payment</h2>
+            <h2 style={{ fontFamily: 'Bricolage Grotesque', fontWeight: 700, fontSize: 18, marginBottom: 20, color: 'var(--text)' }}>Record Payment</h2>
             {error && <div style={{ background: isDark ? hexToRgba('#dc2626', 0.18) : 'var(--red-light)', color: 'var(--red, #dc2626)', padding: '10px 14px', borderRadius: 8, marginBottom: 16, fontSize: 13 }}>{error}</div>}
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
@@ -798,7 +799,7 @@ export default function Payments() {
                 return (
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'var(--surface2)', border: '1px solid var(--border)', borderRadius: 8, padding: '8px 12px' }}>
                     <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.4px' }}>Monthly Rent</span>
-                    <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--primary, #7c3aed)' }}>KES {parseFloat(selectedTenant.rent_amount || 0).toLocaleString()}</span>
+                    <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--primary, #1b6b45)' }}>KES {parseFloat(selectedTenant.rent_amount || 0).toLocaleString()}</span>
                   </div>
                 );
               })()}
@@ -809,12 +810,12 @@ export default function Payments() {
                   {arrears.total_arrears > 0 ? (
                     <>
                       <div style={{ fontWeight: 700, color: 'var(--red, #dc2626)', marginBottom: 8, fontSize: 14 }}>
-                        ⚠️ Total Arrears: KES {arrears.total_arrears.toLocaleString()}
+                        <IconInline name="⚠️" />Total Arrears: KES {arrears.total_arrears.toLocaleString()}
                       </div>
                       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
                         {arrears.deposit_owed > 0 && (
                           <div style={{ background: isDark ? 'var(--surface2)' : 'white', border: '1px solid var(--red, #dc2626)', borderRadius: 8, padding: '4px 10px', fontSize: 12 }}>
-                            <span style={{ fontWeight: 700, color: 'var(--red, #dc2626)' }}>🔒 Deposit shortfall</span>
+                            <span style={{ fontWeight: 700, color: 'var(--red, #dc2626)' }}><IconInline name="🔒" size={13} />Deposit shortfall</span>
                             <span style={{ color: 'var(--muted)', marginLeft: 4 }}>· KES {arrears.deposit_owed.toLocaleString()} owed</span>
                           </div>
                         )}
@@ -830,7 +831,7 @@ export default function Payments() {
                       </div>
                     </>
                   ) : (
-                    <div style={{ fontWeight: 600, color: 'var(--green, #16a34a)', fontSize: 14 }}>✅ No arrears — tenant is up to date.</div>
+                    <div style={{ fontWeight: 600, color: 'var(--green, #16a34a)', fontSize: 14 }}><IconInline name="✅" />No arrears — tenant is up to date.</div>
                   )}
                 </div>
               )}
@@ -893,7 +894,7 @@ export default function Payments() {
 
             <div style={{ display: 'flex', gap: 10, marginTop: 24, justifyContent: 'flex-end' }}>
               <button onClick={() => { setModal(false); setArrears(null); setUtilities([]); }} style={{ padding: '10px 20px', borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface)', fontWeight: 600, fontSize: 14, cursor: 'pointer', color: 'var(--text)' }}>Cancel</button>
-              <button onClick={handleSave} disabled={saving} style={{ padding: '10px 20px', borderRadius: 10, border: 'none', background: 'var(--primary, #7c3aed)', color: '#fff', fontWeight: 600, fontSize: 14, cursor: 'pointer' }}>
+              <button onClick={handleSave} disabled={saving} style={{ padding: '10px 20px', borderRadius: 10, border: 'none', background: 'var(--primary, #1b6b45)', color: '#fff', fontWeight: 600, fontSize: 14, cursor: 'pointer' }}>
                 {saving ? 'Saving...' : 'Record'}
               </button>
             </div>
@@ -905,7 +906,7 @@ export default function Payments() {
       {allocateModal && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, padding: 20 }}>
           <div style={{ background: 'var(--surface)', borderRadius: 16, padding: 28, width: '100%', maxWidth: 400, boxShadow: 'var(--shadow-lg)' }}>
-            <h2 style={{ fontFamily: 'Space Grotesk', fontWeight: 700, fontSize: 18, marginBottom: 6, color: 'var(--text)' }}>Assign Month</h2>
+            <h2 style={{ fontFamily: 'Bricolage Grotesque', fontWeight: 700, fontSize: 18, marginBottom: 6, color: 'var(--text)' }}>Assign Month</h2>
             <p style={{ color: 'var(--muted)', fontSize: 13, marginBottom: 20 }}>
               KES {parseFloat(allocateModal.amount).toLocaleString()} from <strong>{allocateModal.tenant_name || 'this payment'}</strong> — which month should this count toward?
             </p>
@@ -926,7 +927,7 @@ export default function Payments() {
             </div>
             <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
               <button onClick={() => setAllocateModal(null)} style={{ padding: '10px 20px', borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface)', fontWeight: 600, fontSize: 14, cursor: 'pointer', color: 'var(--text)' }}>Cancel</button>
-              <button onClick={handleAllocate} disabled={allocateSaving} style={{ padding: '10px 20px', borderRadius: 10, border: 'none', background: 'var(--primary, #7c3aed)', color: '#fff', fontWeight: 600, fontSize: 14, cursor: 'pointer' }}>
+              <button onClick={handleAllocate} disabled={allocateSaving} style={{ padding: '10px 20px', borderRadius: 10, border: 'none', background: 'var(--primary, #1b6b45)', color: '#fff', fontWeight: 600, fontSize: 14, cursor: 'pointer' }}>
                 {allocateSaving ? 'Saving...' : 'Assign'}
               </button>
             </div>
@@ -959,9 +960,9 @@ export default function Payments() {
             <button className="pm-no-print" onClick={() => setReceiptModal(null)} style={{ position: 'absolute', top: 12, right: 12, width: 30, height: 30, borderRadius: '50%', border: 'none', background: 'rgba(255,255,255,0.25)', cursor: 'pointer', fontSize: 16, color: '#fff' }}>×</button>
 
             {/* Header */}
-            <div style={{ background: 'linear-gradient(135deg, #5b21b6, #7c3aed)', color: '#fff', padding: '22px 28px', WebkitPrintColorAdjust: 'exact', printColorAdjust: 'exact' }}>
+            <div style={{ background: 'linear-gradient(135deg, #5b21b6, #1b6b45)', color: '#fff', padding: '22px 28px', WebkitPrintColorAdjust: 'exact', printColorAdjust: 'exact' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                <span style={{ fontSize: 26 }}>🏠</span>
+                <Icon name="🏠" size={26} />
                 <div>
                   <div style={{ fontFamily: 'Space Grotesk, sans-serif', fontWeight: 800, fontSize: 20, letterSpacing: 0.3 }}>RentFlow</div>
                   <div style={{ fontSize: 11, opacity: 0.85, textTransform: 'uppercase', letterSpacing: 1.2 }}>Official Payment Receipt</div>
@@ -1032,8 +1033,8 @@ export default function Payments() {
 
               <div className="pm-no-print" style={{ display: 'flex', gap: 10, justifyContent: 'center', marginTop: 20 }}>
                 <button onClick={() => setReceiptModal(null)} style={{ padding: '10px 20px', borderRadius: 10, border: '1px solid #d1d5db', background: '#fff', fontWeight: 600, fontSize: 14, cursor: 'pointer', color: '#1a1a1a' }}>Close</button>
-                <button onClick={() => window.print()} style={{ padding: '10px 20px', borderRadius: 10, border: 'none', background: '#7c3aed', color: '#fff', fontWeight: 700, fontSize: 14, cursor: 'pointer' }}>
-                  🖨️ Print Receipt
+                <button onClick={() => window.print()} style={{ padding: '10px 20px', borderRadius: 10, border: 'none', background: '#1b6b45', color: '#fff', fontWeight: 700, fontSize: 14, cursor: 'pointer' }}>
+                  <IconInline name="🖨️" />Print receipt
                 </button>
               </div>
             </div>

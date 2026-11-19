@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import API from '../services/api';
 import { useAuth } from '../context/AuthContext';
+import Icon, { IconInline, Caret } from '../components/Icon';
 
 function hexToRgba(hex, alpha) {
   const n = parseInt(hex.replace('#', ''), 16);
@@ -47,7 +48,7 @@ function ActionMenu({ id, openMenu, setOpenMenu, items, size = 'md' }) {
         background: 'var(--surface)', fontSize: size === 'sm' ? 11 : 12, fontWeight: 600, color: 'var(--text)',
         cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 5,
       }}>
-        Actions <span style={{ fontSize: 9 }}>▾</span>
+        Actions <Caret />
       </button>
       {isOpen && (
         <div onClick={e => e.stopPropagation()} style={{
@@ -381,12 +382,12 @@ export default function Tenants() {
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
         <div>
-          <h1 style={{ fontFamily: 'Space Grotesk', fontSize: 26, fontWeight: 700, marginBottom: 4, color: 'var(--text)' }}>Tenants</h1>
-          <p style={{ color: isDark ? 'var(--blue, #2563eb)' : 'var(--muted)', fontSize: 14 }}>{statusCounts.active} active tenants</p>
+          <h1 style={{ fontFamily: 'Bricolage Grotesque', fontSize: 26, fontWeight: 700, marginBottom: 4, color: 'var(--text)' }}>Tenants</h1>
+          <p style={{ color: 'var(--muted)', fontSize: 14 }}>{statusCounts.active} active tenants</p>
         </div>
         {canAdd && (
           <button onClick={openAdd}
-            style={{ padding: '10px 18px', borderRadius: 10, border: 'none', background: 'var(--primary, #7c3aed)', color: '#fff', fontWeight: 600, fontSize: 14 }}>
+            style={{ padding: '10px 18px', borderRadius: 10, border: 'none', background: 'var(--primary, #1b6b45)', color: '#fff', fontWeight: 600, fontSize: 14 }}>
             + Add Tenant
           </button>
         )}
@@ -405,8 +406,8 @@ export default function Tenants() {
                 return (
                   <button key={val} onClick={() => setStatusFilter(val)} style={{
                     padding: '7px 12px', borderRadius: 99, fontSize: 12, fontWeight: 600, cursor: 'pointer',
-                    border: `1px solid ${on ? 'var(--primary, #7c3aed)' : 'var(--border)'}`,
-                    background: on ? 'var(--primary, #7c3aed)' : 'var(--surface)',
+                    border: `1px solid ${on ? 'var(--primary, #1b6b45)' : 'var(--border)'}`,
+                    background: on ? 'var(--primary, #1b6b45)' : 'var(--surface)',
                     color: on ? '#fff' : 'var(--text)',
                   }}>
                     {label} <span style={{ opacity: 0.7, marginLeft: 2 }}>{statusCounts[val]}</span>
@@ -419,7 +420,7 @@ export default function Tenants() {
           <div style={{ minWidth: 170 }}>
             <div style={filterLabelStyle}>Property</div>
             <select value={propertyFilter} onChange={e => setPropertyFilter(e.target.value)}
-              style={{ ...selectStyle, borderColor: propertyFilter !== 'all' ? 'var(--primary, #7c3aed)' : 'var(--border)' }}>
+              style={{ ...selectStyle, borderColor: propertyFilter !== 'all' ? 'var(--primary, #1b6b45)' : 'var(--border)' }}>
               <option value="all">All properties</option>
               {propertyOptions.map(p => <option key={p} value={p}>{p}</option>)}
             </select>
@@ -428,7 +429,7 @@ export default function Tenants() {
           <div style={{ minWidth: 170 }}>
             <div style={filterLabelStyle}>Move-in date</div>
             <select value={moveInPreset} onChange={e => applyMoveInPreset(e.target.value)}
-              style={{ ...selectStyle, borderColor: moveInPreset !== 'any' ? 'var(--primary, #7c3aed)' : 'var(--border)' }}>
+              style={{ ...selectStyle, borderColor: moveInPreset !== 'any' ? 'var(--primary, #1b6b45)' : 'var(--border)' }}>
               <option value="any">Any time</option>
               <option value="month">This month</option>
               <option value="3m">Last 3 months</option>
@@ -488,7 +489,7 @@ export default function Tenants() {
                 return (
                 <tr key={t.id} style={{ borderTop: '1px solid var(--border)', background: i % 2 === 0 ? 'var(--surface)' : 'var(--surface2)' }}>
                   <td style={{ padding: '13px 20px' }}>
-                    <div style={{ fontWeight: 600, color: isDark ? 'var(--blue, #2563eb)' : 'var(--text)' }}>{t.full_name}</div>
+                    <div style={{ fontWeight: 600, color: 'var(--text)' }}>{t.full_name}</div>
                     <div style={{ fontSize: 12, color: 'var(--muted)' }}>{t.email}</div>
                   </td>
                   <td style={{ padding: '13px 20px', color: 'var(--muted)' }}>{t.phone}</td>
@@ -580,7 +581,7 @@ export default function Tenants() {
       {pinModal && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, padding: 20 }}>
           <div style={{ background: 'var(--surface)', borderRadius: 16, padding: 28, width: '100%', maxWidth: 400, boxShadow: 'var(--shadow-lg)' }}>
-            <h2 style={{ fontFamily: 'Space Grotesk', fontWeight: 700, fontSize: 18, marginBottom: 6, color: 'var(--text)' }}>Set Portal PIN</h2>
+            <h2 style={{ fontFamily: 'Bricolage Grotesque', fontWeight: 700, fontSize: 18, marginBottom: 6, color: 'var(--text)' }}>Set Portal PIN</h2>
             <p style={{ color: 'var(--muted)', fontSize: 13, marginBottom: 20 }}>
               Setting PIN for <strong>{pinModal.full_name}</strong> ({pinModal.phone}). They will use this PIN to log into the tenant portal.
             </p>
@@ -596,7 +597,7 @@ export default function Tenants() {
             </div>
             <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
               <button onClick={() => setPinModal(null)} style={{ padding: '10px 20px', borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface)', fontWeight: 600, fontSize: 14, color: 'var(--text)' }}>Close</button>
-              <button onClick={handleSetPin} disabled={pinSaving} style={{ padding: '10px 20px', borderRadius: 10, border: 'none', background: 'var(--primary, #7c3aed)', color: '#fff', fontWeight: 600, fontSize: 14 }}>
+              <button onClick={handleSetPin} disabled={pinSaving} style={{ padding: '10px 20px', borderRadius: 10, border: 'none', background: 'var(--primary, #1b6b45)', color: '#fff', fontWeight: 600, fontSize: 14 }}>
                 {pinSaving ? 'Saving...' : 'Set PIN'}
               </button>
             </div>
@@ -614,7 +615,7 @@ export default function Tenants() {
       {eraseModal && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, padding: 20 }}>
           <div style={{ background: 'var(--surface)', borderRadius: 16, padding: 28, width: '100%', maxWidth: 440, boxShadow: 'var(--shadow-lg)', border: '2px solid var(--red, #dc2626)' }}>
-            <h2 style={{ fontFamily: 'Space Grotesk', fontWeight: 700, fontSize: 18, marginBottom: 6, color: 'var(--red, #dc2626)' }}>
+            <h2 style={{ fontFamily: 'Bricolage Grotesque', fontWeight: 700, fontSize: 18, marginBottom: 6, color: 'var(--red, #dc2626)' }}>
               Permanently Erase Tenant
             </h2>
             <p style={{ color: 'var(--muted)', fontSize: 13, marginBottom: 14, lineHeight: 1.5 }}>
@@ -652,7 +653,7 @@ export default function Tenants() {
       {modal && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, padding: 20, overflowY: 'auto' }}>
           <div style={{ background: 'var(--surface)', borderRadius: 16, padding: 28, width: '100%', maxWidth: 500, boxShadow: 'var(--shadow-lg)', margin: 'auto' }}>
-            <h2 style={{ fontFamily: 'Space Grotesk', fontWeight: 700, fontSize: 18, marginBottom: 20, color: 'var(--text)' }}>
+            <h2 style={{ fontFamily: 'Bricolage Grotesque', fontWeight: 700, fontSize: 18, marginBottom: 20, color: 'var(--text)' }}>
               {modal === 'edit' ? `Edit Tenant — ${editing?.full_name}` : 'Add New Tenant'}
             </h2>
             {error && <div style={{ background: isDark ? hexToRgba('#dc2626', 0.2) : 'var(--red-light)', color: isDark ? '#f87171' : 'var(--red)', padding: '10px 14px', borderRadius: 8, marginBottom: 16, fontSize: 13 }}>{error}</div>}
@@ -678,11 +679,11 @@ export default function Tenants() {
               </div>
 
               {/* Move-in date — highlighted as key field */}
-              <div style={{ gridColumn: '1/-1', background: isDark ? hexToRgba('#7c3aed', 0.15) : 'var(--primary-light)', border: '1px solid var(--primary, #7c3aed)', borderRadius: 10, padding: '12px 14px' }}>
-                <label style={{ ...labelStyle, color: 'var(--primary, #7c3aed)' }}>📅 Move-in Date</label>
+              <div style={{ gridColumn: '1/-1', background: isDark ? hexToRgba('#1b6b45', 0.15) : 'var(--primary-light)', border: '1px solid var(--primary, #1b6b45)', borderRadius: 10, padding: '12px 14px' }}>
+                <label style={{ ...labelStyle, color: 'var(--primary, #1b6b45)' }}><IconInline name="📅" size={14} />Move-in date</label>
                 <input type="date" value={form.move_in_date} onChange={e => setForm(f=>({...f,move_in_date:e.target.value}))}
-                  style={{ ...inputStyle, background: 'var(--surface)', borderColor: 'var(--primary, #7c3aed)' }} />
-                <div style={{ fontSize: 11, color: 'var(--primary, #7c3aed)', marginTop: 6 }}>
+                  style={{ ...inputStyle, background: 'var(--surface)', borderColor: 'var(--primary, #1b6b45)' }} />
+                <div style={{ fontSize: 11, color: 'var(--primary, #1b6b45)', marginTop: 6 }}>
                   This determines which months are counted as unpaid on the dashboard.
                 </div>
               </div>
@@ -693,7 +694,7 @@ export default function Tenants() {
                 {selectedUnitDeposit != null && (
                   <div style={{ fontSize: 11, marginTop: 4, color: depositShortfall > 0 ? 'var(--amber, #d97706)' : 'var(--muted)' }}>
                     {depositShortfall > 0
-                      ? `⚠️ Short by KES ${depositShortfall.toLocaleString()} — this unit requires KES ${parseFloat(selectedUnitDeposit).toLocaleString()}`
+                      ? `Short by KES ${depositShortfall.toLocaleString()} — this unit requires KES ${parseFloat(selectedUnitDeposit).toLocaleString()}`
                       : `Required for this unit: KES ${parseFloat(selectedUnitDeposit).toLocaleString()}`}
                   </div>
                 )}
@@ -717,7 +718,7 @@ export default function Tenants() {
                 Cancel
               </button>
               <button onClick={handleSave} disabled={saving}
-                style={{ padding: '10px 20px', borderRadius: 10, border: 'none', background: 'var(--primary, #7c3aed)', color: '#fff', fontWeight: 600, fontSize: 14 }}>
+                style={{ padding: '10px 20px', borderRadius: 10, border: 'none', background: 'var(--primary, #1b6b45)', color: '#fff', fontWeight: 600, fontSize: 14 }}>
                 {saving ? 'Saving...' : modal === 'edit' ? 'Update Tenant' : 'Add Tenant'}
               </button>
             </div>
@@ -760,10 +761,10 @@ function ExpandableSearch({ value, onChange }) {
       height: 40, width: expanded ? 260 : 40, maxWidth: '100%',
       transition: 'width 0.2s ease, border-color 0.15s',
       borderRadius: 10, background: 'var(--surface)',
-      border: `1px solid ${expanded ? 'var(--primary, #7c3aed)' : 'var(--border)'}`,
+      border: `1px solid ${expanded ? 'var(--primary, #1b6b45)' : 'var(--border)'}`,
     }}>
       <button type="button" onClick={openIt} aria-label="Search tenants" title="Search tenants"
-        style={{ width: 38, height: 38, flex: 'none', border: 'none', background: 'transparent', cursor: 'pointer', fontSize: 15 }}>🔍</button>
+        style={{ width: 38, height: 38, flex: 'none', border: 'none', background: 'transparent', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--muted)' }}><Icon name="🔍" size={18} /></button>
       <input
         ref={inputRef}
         className="tenant-search-input"
