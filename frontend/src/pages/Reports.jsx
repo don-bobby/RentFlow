@@ -50,7 +50,7 @@ function getThisMonth() { return new Date().getMonth() + 1; }
 // Reports that don't use the period/month selectors at all — they're either
 // current-state snapshots (rentroll, performance, tenure) or have their own
 // dedicated month/year controls (comparison).
-const NO_PERIOD_FILTER = ['properties', 'occupancy', 'expiring', 'revenue', 'rentroll', 'performance', 'tenure', 'comparison', 'depositledger', 'audittrail', 'useractivity', 'collection', 'agentscore', 'vacancyloss', 'dataquality', 'paymenthistory', 'arrearsrisk', 'ownerstatement', 'assignments'];
+const NO_PERIOD_FILTER = ['unpaid', 'properties', 'occupancy', 'expiring', 'revenue', 'rentroll', 'performance', 'tenure', 'comparison', 'depositledger', 'audittrail', 'useractivity', 'collection', 'agentscore', 'vacancyloss', 'dataquality', 'paymenthistory', 'arrearsrisk', 'ownerstatement', 'assignments'];
 
 function daysBetween(a, b) { return Math.floor((a - b) / (1000 * 60 * 60 * 24)); }
 
@@ -69,11 +69,19 @@ function pctChange(current, previous) {
 
 // Turns a formatted cell value ("KES 12,000", "Jan 2026", "Alice") into
 // something comparable for sorting — numeric where possible, else lowercase text.
+const MONTH_INDEX = { jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5, jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11 };
 function sortableValue(v) {
   if (v === null || v === undefined) return '';
   const s = String(v);
   const dm = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);            // 18/11/2026 -> real date, so Date columns sort correctly
   if (dm) return Date.UTC(+dm[3], +dm[2] - 1, +dm[1]);
+  // "April 2026" / "Jan 2026" -> real date, so month columns (e.g. Allocated To) sort
+  // chronologically instead of alphabetically (April, August, February ...)
+  const mm = s.match(/^([A-Za-z]{3,9})\.?\s+(\d{4})$/);
+  if (mm) {
+    const mi = MONTH_INDEX[mm[1].slice(0, 3).toLowerCase()];
+    if (mi !== undefined) return Date.UTC(+mm[2], mi, 1);
+  }
   const numeric = s.replace(/[^0-9.\-]/g, '');
   if (numeric && /\d/.test(numeric) && !/[a-zA-Z]{2,}/.test(s.replace(/KES|%/g, ''))) {
     const n = parseFloat(numeric);
@@ -1177,22 +1185,24 @@ export default function Reports() {
       const visibleTenants = tenants
         .filter(t => canForPlot('reports.unpaid_rent', t.plot_id, plotPermissions))
         .filter(t => unpaidPlot === 'all' || String(t.plot_id) === String(unpaidPlot));
-      const unpaid = filterByPeriod(visibleTenants.filter(t => t.is_active && parseFloat(t.balance || 0) > 0), 'move_in_date');
+      // A balance owed is a snapshot of today, so it is NOT narrowed by the period picker
+      // (that picker used to filter on move-in date and hid everyone who moved in earlier).
+      const unpaid = visibleTenants.filter(t => t.is_active && parseFloat(t.balance || 0) > 0);
       const total  = unpaid.reduce((s, t) => s + parseFloat(t.balance || 0), 0);
       const now = new Date();
       const withAging = unpaid.map(t => {
         const baseline = lastPaymentByTenant[t.full_name] || (t.move_in_date ? new Date(t.move_in_date) : now);
         const days = Math.max(0, daysBetween(now, baseline));
         return { t, days, bucket: agingBucket(days) };
-      });
-      columns = ['Tenant', 'Phone', 'Unit', 'Plot', 'Balance (KES)', 'Days Overdue', 'Aging Bucket', 'Move-in', 'Due Day'];
+      }).sort((a, b) => parseFloat(b.t.balance || 0) - parseFloat(a.t.balance || 0));   // biggest balance first
+      columns = ['Tenant', 'Phone', 'Unit', 'Plot', 'Balance (KES)', 'Days Since Last Payment', 'Aging Bucket', 'Move-in', 'Due Day'];
       rows    = withAging.map(({ t, days, bucket }) => ({
         Tenant: t.full_name,
         Phone: t.phone || '—',
         Unit: t.unit_number || `#${t.house_id}`,
         Plot: t.plot_name || '—',
         'Balance (KES)': parseFloat(t.balance).toLocaleString(),
-        'Days Overdue': days,
+        'Days Since Last Payment': days,
         'Aging Bucket': bucket,
         'Move-in': t.move_in_date ? new Date(t.move_in_date).toLocaleDateString('en-KE') : '—',
         'Due Day': t.rent_due_day || '—',
@@ -1887,7 +1897,10 @@ export default function Reports() {
   if (sortCol && active !== 'audittrail') {
     visibleRows = [...visibleRows].sort((a, b) => {
       const av = sortableValue(a[sortCol]), bv = sortableValue(b[sortCol]);
-      const cmp = (typeof av === 'number' && typeof bv === 'number') ? av - bv : String(av).localeCompare(String(bv));
+      // Mixed cells in one column (e.g. a month next to "Not allocated" or "Security deposit"):
+      // dates/numbers first, text after, so the order stays consistent.
+      const an = typeof av === 'number', bn = typeof bv === 'number';
+      const cmp = (an && bn) ? av - bv : an ? -1 : bn ? 1 : String(av).localeCompare(String(bv));
       return sortDir === 'asc' ? cmp : -cmp;
     });
   }
