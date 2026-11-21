@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useLocation } from 'react-router-dom';
 import API from '../services/api';
 import { useAuth } from '../context/AuthContext';
+import Icon, { IconInline } from '../components/Icon';
 
 // ── Responsive hook (matches the one used in Layout.jsx) ──────────────────────
 function useBreakpoint() {
@@ -187,8 +188,8 @@ export default function Notices({ defaultTab = 'notices' }) {
       {/* Header */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: isMobile ? 'flex-start' : 'center', marginBottom: isMobile ? 16 : 24, flexWrap: 'wrap', gap: 12 }}>
         <div>
-          <h1 style={{ fontFamily: 'Space Grotesk', fontSize: isMobile ? 20 : 26, fontWeight: 700, marginBottom: 4 }}>
-            {tab === 'notices' ? '📢 Notice Board' : '💬 Messages'}
+          <h1 style={{ fontFamily: 'Bricolage Grotesque', fontSize: isMobile ? 20 : 26, fontWeight: 700, marginBottom: 4 }}>
+            {tab === 'notices' ? 'Notice Board' : 'Messages'}
           </h1>
           <p style={{ color: 'var(--muted)', fontSize: 13 }}>
             {tab === 'notices' ? `${notices.length} notices posted` : `${conversations.length} conversations`}
@@ -213,8 +214,8 @@ export default function Notices({ defaultTab = 'notices' }) {
       {/* Tabs */}
       <div style={{ display: 'flex', gap: 4, marginBottom: isMobile ? 16 : 24, background: 'var(--surface2)', borderRadius: 12, padding: 4, width: 'fit-content' }}>
         {[
-          { key: 'notices',  label: '📢 Notices' },
-          { key: 'messages', label: `💬 Messages${totalUnread > 0 ? ` (${totalUnread})` : ''}` },
+          { key: 'notices',  label: 'Notices' },
+          { key: 'messages', label: `Messages${totalUnread > 0 ? ` (${totalUnread})` : ''}` },
         ].map(t => (
           <button key={t.key} onClick={() => setTab(t.key)} style={{
             padding: isMobile ? '7px 14px' : '8px 20px', borderRadius: 10, border: 'none', fontWeight: 600, fontSize: isMobile ? 13 : 14, cursor: 'pointer',
@@ -232,7 +233,7 @@ export default function Notices({ defaultTab = 'notices' }) {
             <div style={{ padding: 60, textAlign: 'center', color: 'var(--muted)' }}>Loading...</div>
           ) : notices.length === 0 ? (
             <div style={{ padding: 60, textAlign: 'center', color: 'var(--muted)' }}>
-              <div style={{ fontSize: 40, marginBottom: 12 }}>📢</div>
+              <div style={{ fontSize: 40, marginBottom: 12 }}><Icon name="📢" size={40} /></div>
               <p>No notices yet. Post one to notify your tenants.</p>
             </div>
           ) : notices.map(n => {
@@ -246,12 +247,12 @@ export default function Notices({ defaultTab = 'notices' }) {
               <div key={n.id} style={{ background: 'var(--surface)', border: `1px solid var(--border)`, borderLeft: `4px solid ${p.color}`, borderRadius: 12, padding: isMobile ? '13px 14px' : '16px 20px', boxShadow: 'var(--shadow)', opacity: expired ? 0.6 : 1 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 10 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-                    <span style={{ background: p.bg, color: p.color, padding: '3px 10px', borderRadius: 99, fontSize: 12, fontWeight: 700 }}>{p.icon} {p.label}</span>
+                    <span style={{ background: p.bg, color: p.color, padding: '3px 10px', borderRadius: 99, fontSize: 12, fontWeight: 700 }}><IconInline name={p.icon} size={13} gap={4} />{p.label}</span>
                     <span style={{ background: 'var(--surface2)', color: 'var(--muted)', padding: '3px 10px', borderRadius: 99, fontSize: 12, fontWeight: 600, textTransform: 'capitalize' }}>
-                      {n.target_type === 'all' ? '🌍 Everyone' : n.target_type === 'staff' ? '🔒 Staff Only' : n.target_type === 'property' ? '🏢 Property' : n.target_type === 'unit' ? '🏠 Unit' : '👤 Individual'}
+                      {n.target_type === 'all' ? 'Everyone' : n.target_type === 'staff' ? 'Staff Only' : n.target_type === 'property' ? 'Property' : n.target_type === 'unit' ? 'Unit' : 'Individual'}
                     </span>
                     {expired && (
-                      <span style={{ background: 'var(--surface2)', color: 'var(--muted)', padding: '3px 10px', borderRadius: 99, fontSize: 12, fontWeight: 700, border: '1px solid var(--border)' }}>⏳ Expired</span>
+                      <span style={{ background: 'var(--surface2)', color: 'var(--muted)', padding: '3px 10px', borderRadius: 99, fontSize: 12, fontWeight: 700, border: '1px solid var(--border)' }}><IconInline name="⏳" size={14} />Expired</span>
                     )}
                   </div>
                   <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
@@ -261,7 +262,7 @@ export default function Notices({ defaultTab = 'notices' }) {
                     ) : null}
                   </div>
                 </div>
-                <div style={{ fontFamily: 'Space Grotesk', fontWeight: 700, fontSize: 16, marginBottom: 6 }}>{n.title}</div>
+                <div style={{ fontFamily: 'Bricolage Grotesque', fontWeight: 700, fontSize: 16, marginBottom: 6 }}>{n.title}</div>
                 <div style={{ fontSize: 14, color: 'var(--muted)', lineHeight: 1.6, marginBottom: 8 }}>{n.body}</div>
                 <div style={{ fontSize: 11, color: 'var(--muted)' }}>
                   Posted by {n.author_name} · {new Date(n.created_at).toLocaleDateString('en-KE', { day: 'numeric', month: 'short', year: 'numeric' })}
@@ -319,7 +320,7 @@ export default function Notices({ defaultTab = 'notices' }) {
             <div style={{ background: 'var(--surface)', border: isMobile ? 'none' : '1px solid var(--border)', borderRadius: isMobile ? 0 : 14, display: 'flex', flexDirection: 'column', overflow: 'hidden', flex: isMobile ? 1 : 'initial', minHeight: 0 }}>
               {!activeConv ? (
                 <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--muted)', flexDirection: 'column', gap: 12 }}>
-                  <span style={{ fontSize: 40 }}>💬</span>
+                  <span style={{ fontSize: 40 }}><Icon name="💬" size={40} /></span>
                   <p>Select a conversation to read messages</p>
                 </div>
               ) : (
@@ -380,7 +381,7 @@ export default function Notices({ defaultTab = 'notices' }) {
       {modal && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, padding: 20 }}>
           <div style={{ background: 'var(--surface)', borderRadius: 16, padding: isMobile ? 18 : 28, width: '100%', maxWidth: 520, boxShadow: 'var(--shadow-lg)', maxHeight: '90vh', overflowY: 'auto' }}>
-            <h2 style={{ fontFamily: 'Space Grotesk', fontWeight: 700, fontSize: 18, marginBottom: 20 }}>📢 Post Notice</h2>
+            <h2 style={{ fontFamily: 'Bricolage Grotesque', fontWeight: 700, fontSize: 18, marginBottom: 20 }}><IconInline name="📢" size={14} />Post Notice</h2>
             {error && <div style={{ background: 'var(--red-light)', color: 'var(--red)', padding: '9px 14px', borderRadius: 8, marginBottom: 14, fontSize: 13 }}>{error}</div>}
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
@@ -399,18 +400,18 @@ export default function Notices({ defaultTab = 'notices' }) {
                 <label style={labelStyle}>Priority</label>
                 <select value={form.priority} onChange={e => setForm(f => ({ ...f, priority: e.target.value }))} style={inputStyle}>
                   <option value="info">ℹ️ Info</option>
-                  <option value="warning">⚠️ Warning</option>
-                  <option value="urgent">🚨 Urgent</option>
+                  <option value="warning">Warning</option>
+                  <option value="urgent">Urgent</option>
                 </select>
               </div>
               <div>
                 <label style={labelStyle}>Send To</label>
                 <select value={form.target_type} onChange={e => setForm(f => ({ ...f, target_type: e.target.value, target_id: '' }))} style={inputStyle}>
-                  {me?.role !== 'caretaker' && <option value="all">🌍 Everyone (all staff and tenants)</option>}
-                  {me?.role !== 'caretaker' && <option value="staff">🔒 Staff Only (admin, agents, landlords — never caretakers or tenants)</option>}
-                  <option value="property">🏢 Specific Property{me?.role === 'caretaker' ? ' (your assigned plot)' : ''}</option>
-                  <option value="unit">🏠 Specific Unit{me?.role === 'caretaker' ? ' (on your assigned plot)' : ''}</option>
-                  {me?.role !== 'caretaker' && <option value="tenant">👤 Individual Tenant</option>}
+                  {me?.role !== 'caretaker' && <option value="all">Everyone (all staff and tenants)</option>}
+                  {me?.role !== 'caretaker' && <option value="staff">Staff Only (admin, agents, landlords — never caretakers or tenants)</option>}
+                  <option value="property">Specific Property{me?.role === 'caretaker' ? ' (your assigned plot)' : ''}</option>
+                  <option value="unit">Specific Unit{me?.role === 'caretaker' ? ' (on your assigned plot)' : ''}</option>
+                  {me?.role !== 'caretaker' && <option value="tenant">Individual Tenant</option>}
                 </select>
               </div>
               {form.target_type !== 'all' && form.target_type !== 'staff' && (
@@ -431,7 +432,7 @@ export default function Notices({ defaultTab = 'notices' }) {
             <div style={{ display: 'flex', gap: 10, marginTop: 24, justifyContent: 'flex-end' }}>
               <button onClick={() => setModal(false)} style={{ padding: '10px 20px', borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface)', fontWeight: 600, fontSize: 14, cursor: 'pointer' }}>Cancel</button>
               <button onClick={postNotice} disabled={saving} style={{ padding: '10px 20px', borderRadius: 10, border: 'none', background: 'var(--primary)', color: '#fff', fontWeight: 600, fontSize: 14, cursor: 'pointer' }}>
-                {saving ? 'Posting...' : '📢 Post Notice'}
+                {saving ? 'Posting...' : 'Post Notice'}
               </button>
             </div>
           </div>
@@ -442,7 +443,7 @@ export default function Notices({ defaultTab = 'notices' }) {
       {newConvModal && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, padding: 20 }}>
           <div style={{ background: 'var(--surface)', borderRadius: 16, padding: isMobile ? 18 : 28, width: '100%', maxWidth: 420, boxShadow: 'var(--shadow-lg)' }}>
-            <h2 style={{ fontFamily: 'Space Grotesk', fontWeight: 700, fontSize: 18, marginBottom: 20 }}>💬 New Message</h2>
+            <h2 style={{ fontFamily: 'Bricolage Grotesque', fontWeight: 700, fontSize: 18, marginBottom: 20 }}><IconInline name="💬" size={14} />New Message</h2>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
               <div>
                 <label style={labelStyle}>Message To</label>

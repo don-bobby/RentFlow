@@ -3,6 +3,7 @@
 // submit the return and payment on KRA's system.
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import API from '../services/api';
+import { IconInline } from '../components/Icon';
 
 const kes = (n) => `KES ${Number(n || 0).toLocaleString('en-KE', { maximumFractionDigits: 2 })}`;
 const monthName = (m) => { const [y, mo] = m.split('-'); return new Date(+y, +mo - 1, 1).toLocaleString('en-KE', { month: 'long', year: 'numeric' }); };
@@ -79,7 +80,7 @@ export default function Tax() {
   const card = { background: 'var(--card, #fff)', border: '1px solid var(--border, #e5e7eb)', borderRadius: 14, padding: 16, marginBottom: 14 };
   const inp = { padding: '8px 10px', borderRadius: 8, border: '1px solid var(--border, #d1d5db)', background: 'var(--bg, #fff)', color: 'inherit', fontSize: 14, boxSizing: 'border-box' };
   const btn = { padding: '8px 14px', borderRadius: 8, border: '1px solid var(--border, #d1d5db)', background: 'var(--card, #fff)', color: 'inherit', cursor: 'pointer', fontSize: 13, fontWeight: 600 };
-  const primary = { ...btn, background: 'var(--primary, #7c3aed)', color: '#fff', border: 'none' };
+  const primary = { ...btn, background: 'var(--primary, #1b6b45)', color: '#fff', border: 'none' };
   const th = { textAlign: 'left', padding: '8px 10px', fontSize: 12, color: 'var(--muted, #6b7280)', borderBottom: '1px solid var(--border, #e5e7eb)', whiteSpace: 'nowrap' };
   const td = { padding: '8px 10px', borderBottom: '1px solid var(--border, #f1f5f9)', fontSize: 14 };
   const muted = { color: 'var(--muted, #6b7280)', fontSize: 13 };
@@ -113,8 +114,8 @@ export default function Tax() {
   return (
     <div style={{ maxWidth: 900, margin: '0 auto', padding: 4 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 6 }}>
-        <h2 style={{ margin: 0 }}>🧮 Rental income tax</h2>
-        <span style={chip('#7c3aed')}>KRA MRI</span>
+        <h1 style={{ fontFamily: 'Bricolage Grotesque', fontSize: 32, fontWeight: 700, letterSpacing: '-0.4px', margin: 0, color: 'var(--text)' }}><IconInline name="🧮" size={14} />Rental income tax</h1>
+        <span style={chip('#1b6b45')}>KRA MRI</span>
       </div>
       <p style={{ ...muted, marginTop: 0 }}>Figures from recorded rent, for your return. Nothing is filed with KRA from here.</p>
       {msg.err && <div style={{ ...card, color: '#b91c1c' }}>{msg.err}</div>}
@@ -133,15 +134,15 @@ export default function Tax() {
         <div style={card}>
           <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
             <div style={tile}><div style={tileLabel}>Home rent collected</div><div style={tileValue}>{kes(d.gross)}</div><div style={muted}>{monthName(month)}</div></div>
-            <div style={{ ...tile, borderColor: '#7c3aed55', background: 'rgba(124,58,237,.06)' }}><div style={tileLabel}>Tax to pay ({rate}%)</div><div style={{ ...tileValue, color: '#7c3aed' }}>{kes(d.tax)}</div><div style={muted}>{d.property_count} propert{d.property_count === 1 ? 'y' : 'ies'}</div></div>
+            <div style={{ ...tile, borderColor: '#1b6b4555', background: 'rgba(27,107,69,.06)' }}><div style={tileLabel}>Tax to pay ({rate}%)</div><div style={{ ...tileValue, color: '#1b6b45' }}>{kes(d.tax)}</div><div style={muted}>{d.property_count} propert{d.property_count === 1 ? 'y' : 'ies'}</div></div>
             <div style={tile}><div style={tileLabel}>Pay and file by</div><div style={{ ...tileValue, fontSize: 20 }}>{new Date(d.due_date).toLocaleDateString('en-KE', { day: 'numeric', month: 'short', year: 'numeric' })}</div><span style={chip(dueInfo.color)}>{dueInfo.text}</span></div>
           </div>
 
           {(d.commercial_excluded > 0 || d.unmatched || !d.landlord.kra_pin) && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 12, ...muted }}>
               {d.commercial_excluded > 0 && <div>ℹ️ {kes(d.commercial_excluded)} of shop/office rent is not included. MRI covers homes only.</div>}
-              {d.unmatched && <div style={{ color: '#b45309' }}>⚠️ {d.unmatched.count} payment{d.unmatched.count === 1 ? '' : 's'} ({kes(d.unmatched.total)}) not matched to a unit, so not counted. Match them on Payments.</div>}
-              {!d.landlord.kra_pin && <div style={{ color: '#b45309' }}>⚠️ No KRA PIN saved yet. Add it under "PIN and settings" below.</div>}
+              {d.unmatched && <div style={{ color: '#b45309' }}><IconInline name="⚠️" size={14} />{d.unmatched.count} payment{d.unmatched.count === 1 ? '' : 's'} ({kes(d.unmatched.total)}) not matched to a unit, so not counted. Match them on Payments.</div>}
+              {!d.landlord.kra_pin && <div style={{ color: '#b45309' }}><IconInline name="⚠️" size={14} />No KRA PIN saved yet. Add it under "PIN and settings" below.</div>}
             </div>)}
           {d.penalties.total > 0 && (
             <div style={{ marginTop: 12, padding: '10px 12px', borderRadius: 10, background: 'rgba(220,38,38,.08)', color: '#b91c1c', fontSize: 14 }}>

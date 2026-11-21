@@ -14,6 +14,7 @@
 import { useState, useEffect, useRef } from 'react';
 import API from '../services/api';
 import { useAuth } from '../context/AuthContext';
+import Icon, { IconInline, Caret } from '../components/Icon';
 
 const CATEGORIES = ['Repairs', 'Water', 'Electricity', 'Garbage Collection', 'Utilities', 'Cleaning', 'Security', 'Salaries', 'Insurance', 'Rates', 'Other'];
 
@@ -25,7 +26,7 @@ const CATEGORY_STYLE = {
   Utilities: { icon: '💡', color: 'var(--blue, #2563eb)',    bg: 'var(--blue-light, #dbeafe)'  },
   Cleaning:  { icon: '🧹', color: 'var(--green, #16a34a)',   bg: 'var(--green-light, #dcfce7)' },
   Security:  { icon: '🛡️', color: 'var(--red, #dc2626)',     bg: 'var(--red-light, #fee2e2)'   },
-  Salaries:  { icon: '💼', color: 'var(--primary, #7c3aed)', bg: 'var(--primary-light, #ede9fe)' },
+  Salaries:  { icon: '💼', color: 'var(--primary, #1b6b45)', bg: 'var(--primary-light, #e6efe8)' },
   Insurance: { icon: '🛟', color: '#0891b2',                 bg: 'rgba(8,145,178,0.12)'        },
   Rates:     { icon: '🏛️', color: '#4f46e5',                 bg: 'rgba(79,70,229,0.12)'        },
   Other:     { icon: '📦', color: 'var(--muted)',            bg: 'var(--surface2)'             },
@@ -54,7 +55,7 @@ function ActionMenu({ id, openMenu, setOpenMenu, items }) {
         background: 'var(--surface)', fontSize: 11, fontWeight: 600, color: 'var(--text)',
         cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 5,
       }}>
-        Actions <span style={{ fontSize: 9 }}>▾</span>
+        Actions <Caret />
       </button>
       {isOpen && (
         <div onClick={e => e.stopPropagation()} style={{
@@ -305,14 +306,14 @@ export default function Expenses() {
     <div style={{ padding: 4 }} onClick={() => setOpenMenu(null)}>
       <style>{`
         .ex-row { transition: background 0.12s ease; }
-        .ex-row:hover { background: var(--primary-light, #ede9fe) !important; }
+        .ex-row:hover { background: var(--primary-light, #e6efe8) !important; }
         .ex-skel { background: var(--surface2); border-radius: 6px; animation: ex-pulse 1.3s ease-in-out infinite; }
         @keyframes ex-pulse { 0%, 100% { opacity: .5; } 50% { opacity: 1; } }
         @media (prefers-reduced-motion: reduce) { .ex-row, .ex-skel { transition: none; animation: none; } }
       `}</style>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20 }}>
         <div>
-          <h2 style={{ margin: '0 0 4px', color: 'var(--text)' }}>Expenses</h2>
+          <h1 style={{ fontFamily: 'Bricolage Grotesque', fontSize: 32, fontWeight: 700, letterSpacing: '-0.4px', margin: '0 0 4px', color: 'var(--text)' }}>Expenses</h1>
           <p style={{ color: 'var(--muted)', fontSize: 14, margin: 0 }}>
             {expenses.length} record{expenses.length !== 1 ? 's' : ''} · KES {total.toLocaleString()} total
           </p>
@@ -320,7 +321,7 @@ export default function Expenses() {
         <div style={{ display: 'flex', gap: 10 }}>
           {(can('expenses.add') || can('expenses.edit')) && (
             <button onClick={() => setShowRecurring(true)} style={{ padding: '10px 18px', borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontWeight: 700, fontSize: 13, cursor: 'pointer' }}>
-              🔁 Recurring{recurring.filter(r => r.is_active).length > 0 ? ` (${recurring.filter(r => r.is_active).length})` : ''}
+              <IconInline name="🔁" />Recurring{recurring.filter(r => r.is_active).length > 0 ? ` (${recurring.filter(r => r.is_active).length})` : ''}
             </button>
           )}
           {can('expenses.add') && (
@@ -383,14 +384,14 @@ export default function Expenses() {
 
       {!loading && categoriesPresent.length > 1 && (
         <div style={{ display: 'flex', gap: 8, marginBottom: 20, flexWrap: 'wrap' }}>
-          <button onClick={() => setCategoryFilter('all')} style={{ padding: '7px 16px', borderRadius: 99, border: '1px solid var(--border)', background: categoryFilter === 'all' ? 'var(--primary, #7c3aed)' : 'var(--surface)', color: categoryFilter === 'all' ? '#fff' : 'var(--muted)', fontWeight: 600, fontSize: 13, cursor: 'pointer' }}>All</button>
+          <button onClick={() => setCategoryFilter('all')} style={{ padding: '7px 16px', borderRadius: 99, border: '1px solid var(--border)', background: categoryFilter === 'all' ? 'var(--primary, #1b6b45)' : 'var(--surface)', color: categoryFilter === 'all' ? '#fff' : 'var(--muted)', fontWeight: 600, fontSize: 13, cursor: 'pointer' }}>All</button>
           {categoriesPresent.map(c => (
             <button key={c} onClick={() => setCategoryFilter(c)} style={{ padding: '7px 16px', borderRadius: 99, border: '1px solid var(--border)', background: categoryFilter === c ? (CATEGORY_STYLE[c]?.color || 'var(--primary)') : 'var(--surface)', color: categoryFilter === c ? '#fff' : 'var(--muted)', fontWeight: 600, fontSize: 13, cursor: 'pointer' }}>
-              {CATEGORY_STYLE[c]?.icon} {c}
+              <IconInline name={CATEGORY_STYLE[c]?.icon} size={14} />{c}
             </button>
           ))}
           {categoryFilter !== 'all' && (
-            <div style={{ marginLeft: 'auto', fontWeight: 700, color: 'var(--primary, #7c3aed)', fontSize: 14, display: 'flex', alignItems: 'center' }}>
+            <div style={{ marginLeft: 'auto', fontWeight: 700, color: 'var(--primary, #1b6b45)', fontSize: 14, display: 'flex', alignItems: 'center' }}>
               KES {filteredTotal.toLocaleString()}
             </div>
           )}
@@ -408,7 +409,7 @@ export default function Expenses() {
         </div>
       ) : filtered.length === 0 ? (
         <div style={{ padding: 40, textAlign: 'center', color: 'var(--muted)', border: '1px dashed var(--border)', borderRadius: 'var(--radius, 10px)' }}>
-          <div style={{ fontSize: 32, marginBottom: 10 }}>🧾</div>
+          <div style={{ marginBottom: 10, color: 'var(--muted)', display: 'flex', justifyContent: 'center' }}><Icon name="🧾" size={32} /></div>
           {expenses.length === 0 ? 'No expenses recorded yet.' : `No ${categoryFilter} expenses.`}
         </div>
       ) : (
@@ -438,21 +439,21 @@ export default function Expenses() {
                   <td style={{ padding: '10px 14px' }}>
                     {exp.category ? (
                       <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, background: cat.bg, color: cat.color, padding: '3px 10px', borderRadius: 99, fontSize: 12, fontWeight: 600 }}>
-                        {cat.icon} {exp.category}
+                        <IconInline name={cat.icon} size={14} />{exp.category}
                       </span>
                     ) : '—'}
                   </td>
                   <td style={{ padding: '10px 14px', color: 'var(--muted)' }}>
                     {exp.description || '—'}
                     {exp.recurring_expense_id && (
-                      <span title="Generated from a recurring template" style={{ marginLeft: 6, fontSize: 11, color: 'var(--primary, #7c3aed)' }}>🔁</span>
+                      <span title="Generated from a recurring template" style={{ marginLeft: 6, fontSize: 11, color: 'var(--primary, #1b6b45)' }}><Icon name="🔁" size={12} /></span>
                     )}
                   </td>
                   <td style={{ padding: '10px 14px', textAlign: 'right', fontWeight: 700, color: 'var(--text)' }}>KES {Number(exp.amount).toLocaleString()}</td>
                   <td style={{ padding: '10px 14px' }}>
                     {exp.status === 'pending' ? (
                       <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, background: 'var(--amber-light, #fef3c7)', color: 'var(--amber, #d97706)', padding: '3px 10px', borderRadius: 99, fontSize: 12, fontWeight: 700 }}>
-                        ⏳ Pending{exp.created_by_name ? ` · ${exp.created_by_name}` : ''}
+                        <IconInline name="⏳" size={12} gap={4} />Pending{exp.created_by_name ? ` · ${exp.created_by_name}` : ''}
                       </span>
                     ) : (
                       <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, background: 'var(--green-light, #dcfce7)', color: 'var(--green, #16a34a)', padding: '3px 10px', borderRadius: 99, fontSize: 12, fontWeight: 700 }}>
@@ -564,7 +565,7 @@ export default function Expenses() {
                     const cat = CATEGORY_STYLE[tmpl.category] || CATEGORY_STYLE.Other;
                     return (
                       <div key={tmpl.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 14px', borderTop: i === 0 ? 'none' : '1px solid var(--border)', opacity: tmpl.is_active ? 1 : 0.55 }}>
-                        <span style={{ fontSize: 18 }}>{cat.icon}</span>
+                        <span style={{ display: 'flex' }}><Icon name={cat.icon} size={20} /></span>
                         <div style={{ flex: 1, minWidth: 0 }}>
                           <div style={{ fontWeight: 700, fontSize: 13, color: 'var(--text)' }}>
                             {tmpl.category} — KES {Number(tmpl.amount).toLocaleString()}/mo
@@ -585,7 +586,7 @@ export default function Expenses() {
                             <button onClick={() => handleToggleRecurring(tmpl)} style={{ padding: '5px 10px', borderRadius: 7, border: '1px solid var(--border)', background: 'var(--surface)', fontSize: 11, fontWeight: 600, color: 'var(--text)', cursor: 'pointer' }}>
                               {tmpl.is_active ? 'Pause' : 'Resume'}
                             </button>
-                            <button onClick={() => openEditRecurring(tmpl)} style={{ padding: '5px 10px', borderRadius: 7, border: '1px solid var(--border)', background: 'var(--surface)', fontSize: 11, fontWeight: 600, color: 'var(--primary, #7c3aed)', cursor: 'pointer' }}>
+                            <button onClick={() => openEditRecurring(tmpl)} style={{ padding: '5px 10px', borderRadius: 7, border: '1px solid var(--border)', background: 'var(--surface)', fontSize: 11, fontWeight: 600, color: 'var(--primary, #1b6b45)', cursor: 'pointer' }}>
                               Edit
                             </button>
                           </>

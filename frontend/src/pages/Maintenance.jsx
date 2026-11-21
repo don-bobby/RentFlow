@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import API from '../services/api';
 import { useAuth } from '../context/AuthContext';
+import Icon, { IconInline, Caret } from '../components/Icon';
 
 /* ------------------------------------------------------------------
    Styling lives in one scoped stylesheet so we can use :hover, media
@@ -15,11 +16,11 @@ const STYLES = `
   --mt-surface: var(--surface, #ffffff);
   --mt-surface2: var(--surface2, #f1f5f9);
   --mt-border: var(--border, #e2e8f0);
-  --mt-primary: var(--primary, #7c3aed);
+  --mt-primary: var(--primary, #1b6b45);
   --mt-low: #3b82f6;  --mt-med: #f59e0b;  --mt-high: #ef4444;  --mt-ok: #10b981;
   --mt-low-t: #1d4ed8; --mt-med-t: #b45309; --mt-high-t: #b91c1c; --mt-ok-t: #047857;
-  --mt-shadow: 0 1px 2px rgba(15,23,42,.04), 0 6px 20px rgba(15,23,42,.06);
-  --mt-shadow-hover: 0 2px 4px rgba(15,23,42,.06), 0 14px 34px rgba(15,23,42,.12);
+  --mt-shadow: none;
+  --mt-shadow-hover: 0 4px 14px rgba(15,31,23,.08);
   color: var(--mt-text);
 }
 :root[data-theme="dark"] .mt-page {
@@ -41,13 +42,13 @@ const STYLES = `
 
 /* Header */
 .mt-head { display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; margin-bottom: 22px; }
-.mt-title { font-family: 'Space Grotesk', sans-serif; font-size: 28px; font-weight: 700; letter-spacing: -0.01em; margin: 0 0 10px; color: var(--mt-text); }
+.mt-title { font-family: 'Bricolage Grotesque', sans-serif; font-size: 32px; font-weight: 700; letter-spacing: -0.4px; margin: 0 0 10px; color: var(--mt-text); }
 .mt-stats { display: flex; gap: 8px; flex-wrap: wrap; }
 .mt-stat { display: inline-flex; align-items: center; gap: 7px; padding: 5px 12px; border-radius: 99px; font-size: 13px; font-weight: 600; color: var(--mt-muted); background: var(--mt-surface); border: 1px solid var(--mt-border); }
 .mt-dot { width: 8px; height: 8px; border-radius: 50%; }
 
-.mt-new { display: inline-flex; align-items: center; gap: 8px; padding: 11px 20px; border-radius: 12px; border: none; background: var(--mt-primary); color: #fff; font-weight: 600; font-size: 14px; box-shadow: 0 6px 16px rgba(124,58,237,.28); transition: transform .15s, box-shadow .15s; }
-.mt-new:hover { transform: translateY(-1px); box-shadow: 0 10px 22px rgba(124,58,237,.34); }
+.mt-new { display: inline-flex; align-items: center; gap: 8px; padding: 11px 20px; border-radius: 12px; border: none; background: var(--mt-primary); color: #fff; font-weight: 600; font-size: 14px; box-shadow: 0 6px 16px rgba(27,107,69,.28); transition: transform .15s, box-shadow .15s; }
+.mt-new:hover { transform: translateY(-1px); box-shadow: 0 10px 22px rgba(27,107,69,.34); }
 .mt-fab { display: none; }
 
 /* Filters */
@@ -102,7 +103,7 @@ const STYLES = `
 .mt-overlay { position: fixed; inset: 0; z-index: 100; display: flex; align-items: center; justify-content: center; padding: 20px;
   background: rgba(8,10,20,.45); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); }
 .mt-modal { width: 100%; max-width: 480px; max-height: 92vh; overflow-y: auto; padding: 26px; background: var(--mt-surface); border: 1px solid var(--mt-border); border-radius: 20px; box-shadow: 0 24px 60px rgba(0,0,0,.35); }
-.mt-modal h2 { font-family: 'Space Grotesk', sans-serif; font-size: 20px; font-weight: 700; margin: 0 0 18px; color: var(--mt-text); }
+.mt-modal h2 { font-family: 'Bricolage Grotesque', sans-serif; font-size: 20px; font-weight: 700; margin: 0 0 18px; color: var(--mt-text); }
 .mt-label { display: block; font-size: 13px; font-weight: 600; color: var(--mt-muted); margin-bottom: 6px; }
 .mt-input { width: 100%; padding: 11px 12px; border-radius: 10px; border: 1px solid var(--mt-border); background: var(--mt-surface2); font-size: 14px; font-family: inherit; color: var(--mt-text); }
 .mt-error { background: rgba(239,68,68,.14); color: var(--mt-high-t); padding: 10px 14px; border-radius: 10px; margin-bottom: 16px; font-size: 13px; }
@@ -119,7 +120,7 @@ const STYLES = `
   .mt-head { margin-bottom: 16px; }
   .mt-new { display: none; }
   .mt-fab { display: inline-flex; align-items: center; gap: 8px; position: fixed; right: 16px; bottom: calc(80px + env(safe-area-inset-bottom, 0px)); z-index: 40;
-    padding: 14px 20px; border-radius: 99px; border: none; background: var(--mt-primary); color: #fff; font-weight: 600; font-size: 15px; box-shadow: 0 10px 26px rgba(124,58,237,.4); }
+    padding: 14px 20px; border-radius: 99px; border: none; background: var(--mt-primary); color: #fff; font-weight: 600; font-size: 15px; box-shadow: 0 10px 26px rgba(27,107,69,.4); }
   .mt-grid { gap: 12px; }
   .mt-overlay { align-items: flex-end; padding: 0; }
   .mt-modal { max-width: none; border-radius: 20px 20px 0 0; padding: 22px 18px calc(22px + env(safe-area-inset-bottom, 0px)); }
@@ -347,7 +348,7 @@ export default function Maintenance() {
                 <p className="mt-issue">{r.issue}</p>
                 {(r.tenant_name || r.unit_number) && (
                   <div className="mt-who">
-                    {r.tenant_name && <span className="mt-tenant">👤 {r.tenant_name}</span>}
+                    {r.tenant_name && <span className="mt-tenant"><IconInline name="👤" size={13} gap={4} />{r.tenant_name}</span>}
                     {r.unit_number && (
                       <span className="mt-unit">{r.plot_name ? `${r.plot_name} · ` : ''}Unit {r.unit_number}</span>
                     )}
@@ -358,14 +359,14 @@ export default function Maintenance() {
                   const canAssign = r.status !== 'completed' && can('maintenance.update', r.plot_id) && mine.length > 0;
                   if (canAssign) return (
                     <div className="mt-meta" style={{ marginBottom: 6 }}>
-                      🔧 <select value={r.vendor_id || ''} onChange={e => assignVendor(r.id, e.target.value)} style={{ maxWidth: '100%', padding: '3px 6px', borderRadius: 6, border: '1px solid var(--mt-border)', background: 'transparent', color: 'inherit' }}>
+                      <IconInline name="🔧" size={13} gap={4} /><select value={r.vendor_id || ''} onChange={e => assignVendor(r.id, e.target.value)} style={{ maxWidth: '100%', padding: '3px 6px', borderRadius: 6, border: '1px solid var(--mt-border)', background: 'transparent', color: 'inherit' }}>
                         <option value="">No vendor assigned</option>
                         {mine.map(v => <option key={v.id} value={v.id}>{v.name}{v.trade ? ` (${v.trade})` : ''}</option>)}
                         {r.vendor_id && !mine.some(v => v.id === r.vendor_id) && <option value={r.vendor_id}>{r.vendor_name}</option>}
                       </select>
                       {r.vendor_phone && <a href={`tel:${r.vendor_phone}`} style={{ marginLeft: 8 }}>{r.vendor_phone}</a>}
                     </div>);
-                  return r.vendor_name ? <div className="mt-meta" style={{ marginBottom: 6 }}>🔧 {r.vendor_name}{r.vendor_phone && <> · <a href={`tel:${r.vendor_phone}`}>{r.vendor_phone}</a></>}</div> : null;
+                  return r.vendor_name ? <div className="mt-meta" style={{ marginBottom: 6 }}><IconInline name="🔧" size={13} gap={4} />{r.vendor_name}{r.vendor_phone && <> · <a href={`tel:${r.vendor_phone}`}>{r.vendor_phone}</a></>}</div> : null;
                 })()}
                 <div className="mt-meta">
                   <div>

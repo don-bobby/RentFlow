@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { exportReportPdf } from '../utils/pdfReport';
 import API from '../services/api';
 import { useAuth } from '../context/AuthContext';
+import Icon, { IconInline } from '../components/Icon';
 
 // ── Report definitions ────────────────────────────────────────────────────────
 // `permission` is the reports.* string this report is gated by (matches a
@@ -20,14 +21,14 @@ const REPORTS = [
   { id: 'maintperf',      icon: '🛠️', label: 'Maintenance Performance', desc: 'Resolution time, cost and repeat issues per property', color: 'var(--amber)', light: 'var(--amber-light)', permission: 'reports.maintenance' },
   { id: 'maintenance',    icon: '🔧', label: 'Maintenance Records',   desc: 'All maintenance requests by status',   color: 'var(--amber)',   light: 'var(--amber-light)',   permission: 'reports.maintenance' },
   { id: 'properties',     icon: '🏢', label: 'Property Summary',      desc: 'Plots, units, occupancy overview',     color: 'var(--blue)',    light: 'var(--blue-light)',    permission: 'reports.property_summary' },
-  { id: 'occupancy',      icon: '📊', label: 'Occupancy Report',      desc: 'Vacant vs occupied units over time',   color: '#8b5cf6',       light: '#ede9fe',              permission: 'reports.occupancy' },
+  { id: 'occupancy',      icon: '📊', label: 'Occupancy Report',      desc: 'Vacant vs occupied units over time',   color: '#8b5cf6',       light: '#e6efe8',              permission: 'reports.occupancy' },
   { id: 'expenses',       icon: '💸', label: 'Expenses Report',       desc: 'All property expenses by category',   color: '#f97316',       light: '#fff7ed',              permission: 'reports.expenses' },
   { id: 'utilities',      icon: '💧', label: 'Utility Receipts',      desc: 'Utility money recovered from tenants vs bills paid', color: 'var(--blue)', light: 'var(--blue-light)', permission: 'reports.expenses' },
   { id: 'revenue',        icon: '📈', label: 'Revenue Summary',       desc: 'Monthly and yearly revenue totals',    color: 'var(--green)',   light: 'var(--green-light)',   permission: 'reports.revenue_summary' },
   { id: 'moveins',        icon: '🏠', label: 'Move-in / Move-out',    desc: 'Tenant movement history',              color: 'var(--primary)', light: 'var(--primary-light)', permission: 'reports.move_in_out' },
   { id: 'expiring',       icon: '📅', label: 'Expiring Leases',       desc: 'Tenants with leases 11+ months old',   color: 'var(--amber)',   light: 'var(--amber-light)',   permission: 'reports.expiring_leases' },
   { id: 'rentroll',       icon: '📋', label: 'Rent Roll',             desc: 'Snapshot of every occupied unit',      color: 'var(--blue)',    light: 'var(--blue-light)'    },
-  { id: 'paymentmethods', icon: '🏦', label: 'Payment Methods',       desc: 'Collections by mpesa / bank / cash',   color: '#8b5cf6',        light: '#ede9fe'              },
+  { id: 'paymentmethods', icon: '🏦', label: 'Payment Methods',       desc: 'Collections by mpesa / bank / cash',   color: '#8b5cf6',        light: '#e6efe8'              },
   { id: 'performance',    icon: '🏆', label: 'Property Performance', desc: 'Plots ranked by occupancy & revenue',  color: 'var(--blue)',    light: 'var(--blue-light)'    },
   { id: 'assignments',    icon: '🗂️', label: 'Property Assignments',  desc: 'Which landlord, agent and caretaker runs each property', color: 'var(--primary)', light: 'var(--primary-light)', adminAgentOnly: true },
   { id: 'tenure',         icon: '⏳', label: 'Tenant Tenure',         desc: 'How long each active tenant has stayed', color: 'var(--primary)', light: 'var(--primary-light)' },
@@ -39,7 +40,7 @@ const REPORTS = [
   { id: 'agentscore',    icon: '🧑‍💼', label: 'Agent Scorecard',        desc: 'Plots, occupancy and collections per agent', color: 'var(--primary)' },
   { id: 'vacancyloss',   icon: '🕳️', label: 'Vacancy Loss',           desc: 'Rent lost to empty units',               color: 'var(--red)'     },
   { id: 'dataquality',   icon: '🧹', label: 'Data Quality Exceptions', desc: 'Missing or conflicting records to fix', color: 'var(--amber)'   },
-  { id: 'audittrail',     icon: '🕵️', label: 'Audit Trail',           desc: 'Who changed what, and when (admin only)', color: '#8b5cf6',      light: '#ede9fe'              },
+  { id: 'audittrail',     icon: '🕵️', label: 'Audit Trail',           desc: 'Who changed what, and when (admin only)', color: '#8b5cf6',      light: '#e6efe8'              },
   { id: 'useractivity',   icon: '🕓', label: 'User Activity',         desc: 'Logins and activity across tenants and staff (admin only)', color: 'var(--primary)', light: 'var(--primary-light)' },
 ];
 
@@ -71,6 +72,8 @@ function pctChange(current, previous) {
 function sortableValue(v) {
   if (v === null || v === undefined) return '';
   const s = String(v);
+  const dm = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);            // 18/11/2026 -> real date, so Date columns sort correctly
+  if (dm) return Date.UTC(+dm[3], +dm[2] - 1, +dm[1]);
   const numeric = s.replace(/[^0-9.\-]/g, '');
   if (numeric && /\d/.test(numeric) && !/[a-zA-Z]{2,}/.test(s.replace(/KES|%/g, ''))) {
     const n = parseFloat(numeric);
@@ -81,7 +84,7 @@ function sortableValue(v) {
 
 // Small dependency-free bar chart — used for the Revenue trend and the
 // Period Comparison view. Avoids pulling in a charting library.
-function MiniBarChart({ data, color = 'var(--primary, #7c3aed)' }) {
+function MiniBarChart({ data, color = 'var(--primary, #1b6b45)' }) {
   const max = Math.max(1, ...data.map(d => d.value));
   return (
     <div style={{ display: 'flex', alignItems: 'flex-end', gap: 6, height: 90, marginBottom: 4 }}>
@@ -106,12 +109,29 @@ const TONES = {
   'var(--amber)': 'var(--rp-amber)', 'var(--primary)': 'var(--rp-primary)', 'var(--muted)': 'var(--rp-muted)',
 };
 const tone = (c) => TONES[c] || c;
+// Calm palette: every report uses the brand green; only red/warning reports keep a warning colour.
+const isWarn = (c) => /^(#ef4444|#dc2626|#b42318|var\(--red\))$/i.test(c || '');
+const calm = (c) => (isWarn(c) ? c : 'var(--primary, #1b6b45)');
 const soft = (c, pct = 16) => `color-mix(in srgb, ${tone(c)} ${pct}%, transparent)`;
 
 const statusKind = (v) =>
   ['Active', 'matched', 'completed', 'Paid Up'].includes(v) ? 'green' :
   ['Inactive', 'Moved Out', 'Owing', 'High'].includes(v) ? 'red' :
   ['Low'].includes(v) ? 'blue' : 'amber';
+
+// Display-only prettifiers (exports keep the raw values).
+const METHOD_LABEL = { mpesa: 'M-Pesa', bank_transfer: 'Bank transfer', cash: 'Cash', cheque: 'Cheque', card: 'Card' };
+const MONTHS_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const sentence = (t) => { const x = String(t).replace(/_/g, ' '); return x.charAt(0).toUpperCase() + x.slice(1); };
+function pretty(col, v) {
+  if (typeof v !== 'string') return v;
+  if (METHOD_LABEL[v]) return METHOD_LABEL[v];
+  const d = v.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);               // 18/11/2026 -> 18 Nov 2026
+  if (d && +d[2] >= 1 && +d[2] <= 12) return `${+d[1]} ${MONTHS_SHORT[+d[2] - 1]} ${d[3]}`;
+  if (/^[a-z]+(_[a-z]+)+$/.test(v)) return sentence(v);                    // snake_case values
+  return v;
+}
+const isNumCol = (c) => /KES|Amount|Balance|Total|Rent|Cost|Loss|Gap|Months|Units|Days/.test(c);
 
 // Money columns that represent a cost/shortfall are shown in red.
 const isNegativeCol = (c) => /Arrears|Loss|Expenses|Gap/.test(c);
@@ -123,9 +143,9 @@ const STYLES = `
   --rp-surface: var(--surface, #ffffff);
   --rp-surface2: var(--surface2, #f1f5f9);
   --rp-border: var(--border, #e2e8f0);
-  --rp-accent: var(--primary, #7c3aed);
-  --rp-primary: #7c3aed; --rp-green: #15803d; --rp-red: #dc2626; --rp-blue: #2563eb; --rp-amber: #b45309;
-  --rp-shadow: 0 1px 2px rgba(15,23,42,.04), 0 6px 20px rgba(15,23,42,.06);
+  --rp-accent: var(--primary, #1b6b45);
+  --rp-primary: #1b6b45; --rp-green: #15803d; --rp-red: #dc2626; --rp-blue: #2563eb; --rp-amber: #b45309;
+  --rp-shadow: none;
   color: var(--rp-text);
 }
 :root[data-theme="dark"] .rp-page {
@@ -134,7 +154,7 @@ const STYLES = `
   --rp-surface: var(--surface, #1a1d27);
   --rp-surface2: var(--surface2, #21253a);
   --rp-border: var(--border, #2a2f45);
-  --rp-primary: #a78bfa; --rp-green: #4ade80; --rp-red: #f87171; --rp-blue: #60a5fa; --rp-amber: #fbbf24;
+  --rp-primary: #8fd1ad; --rp-green: #4ade80; --rp-red: #f87171; --rp-blue: #60a5fa; --rp-amber: #fbbf24;
   --rp-shadow: 0 1px 2px rgba(0,0,0,.3), 0 8px 24px rgba(0,0,0,.35);
 }
 .rp-page * { box-sizing: border-box; }
@@ -142,7 +162,7 @@ const STYLES = `
 .rp-page button:focus-visible, .rp-page select:focus-visible, .rp-page input:focus-visible { outline: 2px solid var(--rp-accent); outline-offset: 2px; }
 
 .rp-head { margin-bottom: 22px; }
-.rp-title { font-family: 'Space Grotesk', sans-serif; font-size: 28px; font-weight: 700; letter-spacing: -0.01em; margin: 0 0 4px; color: var(--rp-text); }
+.rp-title { font-family: 'Bricolage Grotesque', sans-serif; font-size: 32px; font-weight: 700; letter-spacing: -0.4px; margin: 0 0 4px; color: var(--rp-text); }
 .rp-sub { margin: 0; font-size: 14px; color: var(--rp-muted); }
 
 .rp-layout { display: flex; gap: 20px; align-items: flex-start; }
@@ -172,7 +192,7 @@ const STYLES = `
 .rp-top { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 14px; padding: 16px 20px; margin-bottom: 16px; }
 .rp-top-title { display: flex; align-items: center; gap: 12px; min-width: 0; }
 .rp-chip { flex: none; width: 40px; height: 40px; border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 20px; background: var(--rp-tint); }
-.rp-h2 { font-family: 'Space Grotesk', sans-serif; font-weight: 700; font-size: 18px; color: var(--rp-text); }
+.rp-h2 { font-family: 'Bricolage Grotesque', sans-serif; font-weight: 700; font-size: 18px; color: var(--rp-text); }
 .rp-desc { font-size: 12.5px; color: var(--rp-muted); margin-top: 2px; }
 .rp-controls { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .rp-select { padding: 8px 12px; height: 38px; border-radius: 10px; border: 1px solid var(--rp-border); background: var(--rp-surface2); font-size: 13px; font-weight: 500; color: var(--rp-text); outline: none; cursor: pointer; }
@@ -202,10 +222,10 @@ const STYLES = `
 
 /* Summary cards */
 .rp-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 16px; }
-.rp-kpi { position: relative; overflow: hidden; padding: 14px 18px 14px 20px; }
-.rp-kpi::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 4px; background: var(--rp-tone); }
+.rp-kpi { position: relative; overflow: hidden; padding: 16px 20px; }
+.rp-kpi.warn .rp-kpi-value { color: var(--rp-tone); }
 .rp-kpi-label { font-size: 12.5px; color: var(--rp-muted); margin-bottom: 4px; }
-.rp-kpi-value { font-family: 'Space Grotesk', sans-serif; font-weight: 700; font-size: 22px; line-height: 1.2; color: var(--rp-tone); word-break: break-word; }
+.rp-kpi-value { font-family: 'Bricolage Grotesque', sans-serif; font-weight: 700; font-size: 22px; line-height: 1.2; color: var(--rp-text); word-break: break-word; }
 
 .rp-chart { padding: 16px 20px; margin-bottom: 16px; }
 .rp-chart-head { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
@@ -299,6 +319,15 @@ const STYLES = `
   .rp-layout { display: block; }
   .rp-card { box-shadow: none; }
 }
+/* ── Polish pass ── */
+.rp-select, .rp-btn { height: 44px; }
+.rp-scroll { max-height: 68vh; overflow: auto; }
+.rp-table th { position: sticky; top: 0; z-index: 1; background: var(--rp-surface); text-transform: uppercase; letter-spacing: .5px; font-size: 11px; }
+.rp-table th.rp-num, .rp-table td.rp-num { text-align: right; font-variant-numeric: tabular-nums; }
+.rp-table tbody tr:nth-child(even) { background: transparent; }
+.rp-table td { padding: 13px 16px; }
+.rp-badge { text-transform: none; }
+@media print { .rp-scroll { max-height: none !important; overflow: visible !important; } .rp-table th { position: static !important; } }
 `;
 
 // ── Audit trail helpers ──────────────────────────────────────────────────────
@@ -540,7 +569,7 @@ export default function Reports() {
   const [filters,  setFilters]  = useState({
     period: 'month', month: getThisMonth(), year: getThisYear(), status: 'all',
     propertyName: 'all', location: 'all', fromDate: '', toDate: '', comparisonMode: 'mom', landlord: 'all',
-    agent: 'all', caretaker: 'all',
+    agent: 'all', caretaker: 'all', plotId: 'all',
   });
   const [tableSearch, setTableSearch] = useState('');
   // Audit trail has its own filters (kept out of `filters` so changing them doesn't refetch everything)
@@ -1024,7 +1053,8 @@ export default function Reports() {
       // reports.payment_collection trims that property's transactions out
       // rather than hiding the whole report.
       const visiblePayments = payments.filter(p => canForPlot('reports.payment_collection', p.plot_id, plotPermissions));
-      const filtered = filterByPeriod(visiblePayments, 'payment_date');
+      const byProperty = filters.plotId === 'all' ? visiblePayments : visiblePayments.filter(p => String(p.plot_id) === String(filters.plotId));
+      const filtered = filterByPeriod(byProperty, 'payment_date');
       // The table below still lists every transaction, pending and failed
       // ones included, so staff can see what was attempted — but the
       // headline "Total Collected" figure only counts money that actually
@@ -1034,13 +1064,39 @@ export default function Reports() {
       rows    = filtered.map(p => ({
         Tenant: p.tenant_name || '—',
         'Amount (KES)': parseFloat(p.amount || 0).toLocaleString(),
-        Method: p.method || 'mpesa',
+        Method: p.method || 'Not recorded',
         Reference: p.receipt_no || '—',
         Status: p.status,
         Date: new Date(p.payment_date).toLocaleDateString('en-KE'),
       }));
-      summary = [{ label: 'Total Collected', value: `KES ${total.toLocaleString()}`, color: 'var(--green)' }, { label: 'Transactions', value: filtered.length, color: 'var(--blue)' }];
-      title = `Payment Collection Report`;
+      const received = filtered.filter(isCollected);
+      const failedCount = filtered.filter(p => p.status === 'failed').length;
+      const waiting = filtered.length - received.length;
+      summary = [
+        { label: 'Total collected', value: `KES ${total.toLocaleString()}`, color: 'var(--green)' },
+        { label: 'Transactions', value: filtered.length, color: 'var(--blue)' },
+        { label: 'Average payment', value: `KES ${Math.round(received.length ? total / received.length : 0).toLocaleString()}`, color: 'var(--blue)' },
+        ...(waiting ? [{ label: failedCount ? 'Pending or failed' : 'Pending', value: waiting, color: failedCount ? 'var(--red)' : 'var(--amber)' }] : []),
+      ];
+      // Collected over time: per day for a single month, per month otherwise.
+      const buckets = new Map();
+      received.forEach(p => {
+        const d = new Date(p.payment_date);
+        const k = filters.period === 'month' ? d.getDate() : d.getFullYear() * 12 + d.getMonth();
+        const label = filters.period === 'month' ? String(d.getDate()) : MONTHS_SHORT[d.getMonth()];
+        const cur = buckets.get(k) || { label, value: 0 };
+        cur.value += parseFloat(p.amount || 0);
+        buckets.set(k, cur);
+      });
+      const series = [...buckets.entries()].sort((a, b) => a[0] - b[0]).map(([, v]) => v);
+      chart = series.length > 1 ? (
+        <div>
+          <div style={{ fontSize: 13, fontWeight: 600, margin: '0 0 12px', color: 'var(--rp-text)' }}>Collected over time</div>
+          <MiniBarChart data={series} color="var(--primary, #1b6b45)" />
+        </div>
+      ) : null;
+      const plotLabel = filters.plotId === 'all' ? '' : (plots.find(pl => String(pl.id) === String(filters.plotId))?.name || '');
+      title = plotLabel ? `Payment Collection Report - ${plotLabel}` : 'Payment Collection Report';
     }
 
     if (active === 'paymenthistory') {
@@ -1063,8 +1119,8 @@ export default function Reports() {
             Date: new Date(p.payment_date).toLocaleDateString('en-KE'),
             Type: 'Rent',
             'Amount (KES)': parseFloat(p.amount || 0).toLocaleString(),
-            'Allocated To': (p.for_year && p.for_month) ? monthName(p.for_year, p.for_month) : '—',
-            Method: p.method || 'mpesa',
+            'Allocated To': (p.for_year && p.for_month) ? monthName(p.for_year, p.for_month) : 'Not allocated',
+            Method: p.method || 'Not recorded',
             Reference: p.receipt_no || p.transaction_id || '—',
             Status: p.status,
           }));
@@ -1076,8 +1132,9 @@ export default function Reports() {
             _date: new Date(d.created_at),
             Date: new Date(d.created_at).toLocaleDateString('en-KE'),
             Type: `Deposit — ${d.type.charAt(0).toUpperCase()}${d.type.slice(1)}`,
-            'Amount (KES)': parseFloat(d.amount || 0).toLocaleString(),
-            'Allocated To': 'Security Deposit',
+            // Refunds and forfeits reduce the deposit held, so they show as negatives (red).
+            'Amount (KES)': `${d.type === 'collected' ? '' : '-'}${parseFloat(d.amount || 0).toLocaleString()}`,
+            'Allocated To': 'Security deposit',
             Method: '—',
             Reference: '—',
             Status: '—',
@@ -1087,15 +1144,18 @@ export default function Reports() {
         columns = ['Date', 'Type', 'Amount (KES)', 'Allocated To', 'Method', 'Reference', 'Status'];
         rows = combined.map(({ _date, ...r }) => r);
 
-        const totalRent     = rentRows.filter(r => r.Status === 'matched').reduce((s, r) => s + parseFloat(r['Amount (KES)'].replace(/,/g, '')), 0);
+        const totalRent     = rentRows.filter(r => isCollected({ status: r.Status })).reduce((s, r) => s + parseFloat(r['Amount (KES)'].replace(/,/g, '')), 0);
         const depositNet    = (deposits || []).filter(d => String(d.tenant_id) === String(tenant.id))
           .reduce((s, d) => s + (d.type === 'collected' ? 1 : -1) * parseFloat(d.amount || 0), 0);
+        const received = rentRows.filter(r => isCollected({ status: r.Status })).sort((a, b) => b._date - a._date);
+        const last = received[0];
         summary = [
-          { label: 'Total Rent Paid', value: `KES ${totalRent.toLocaleString()}`, color: 'var(--green)' },
-          { label: 'Deposit Held (Net)', value: `KES ${depositNet.toLocaleString()}`, color: 'var(--blue)' },
-          { label: 'Current Balance', value: `KES ${parseFloat(tenant.balance || 0).toLocaleString()}`, color: parseFloat(tenant.balance || 0) > 0 ? 'var(--red)' : 'var(--green)' },
+          { label: 'Total rent paid', value: `KES ${totalRent.toLocaleString()}`, color: 'var(--green)' },
+          { label: 'Deposit held (net)', value: `KES ${depositNet.toLocaleString()}`, color: 'var(--blue)' },
+          { label: 'Current balance', value: `KES ${parseFloat(tenant.balance || 0).toLocaleString()}`, color: parseFloat(tenant.balance || 0) > 0 ? 'var(--red)' : 'var(--green)' },
+          ...(last ? [{ label: 'Last payment', value: `${last._date.toLocaleDateString('en-KE', { day: 'numeric', month: 'short', year: 'numeric' })} · KES ${last['Amount (KES)']}`, color: 'var(--blue)' }] : []),
         ];
-        title = `Payment History — ${tenant.full_name}`;
+        title = `Payment History — ${tenant.full_name}${tenant.unit_number ? ` (${tenant.plot_name ? tenant.plot_name + ', ' : ''}Unit ${tenant.unit_number})` : ''}`;
       }
     }
 
@@ -1494,7 +1554,7 @@ export default function Reports() {
       const filtered = filterByPeriod(payments.filter(isCollected), 'payment_date');
       const byMethod = {};
       filtered.forEach(p => {
-        const m = p.method || 'mpesa';
+        const m = p.method || 'Not recorded';
         if (!byMethod[m]) byMethod[m] = { count: 0, total: 0 };
         byMethod[m].count += 1;
         byMethod[m].total += parseFloat(p.amount || 0);
@@ -1859,9 +1919,9 @@ export default function Reports() {
     const on = active === r.id;
     const isPinned = pinned.includes(r.id);
     return (
-      <div key={r.id} className={`rp-item${on ? ' on' : ''}`} style={{ '--rp-tone': tone(r.color), '--rp-tint': soft(r.color, 16) }}>
+      <div key={r.id} className={`rp-item${on ? ' on' : ''}`} style={{ '--rp-tone': tone(calm(r.color)), '--rp-tint': soft(calm(r.color), 12) }}>
         <button type="button" className="rp-item-main" onClick={() => setActive(r.id)} aria-current={on ? 'true' : undefined} title={r.desc}>
-          <span className="rp-ico" aria-hidden="true">{r.icon}</span>
+          <span className="rp-ico" aria-hidden="true"><Icon name={r.icon} size={20} /></span>
           <span className="rp-item-text">
             <div className="rp-item-label">{r.label}</div>
             <div className="rp-item-desc">{r.desc}</div>
@@ -1903,9 +1963,9 @@ export default function Reports() {
         <div className="rp-main">
 
           {/* Header */}
-          <div className="rp-card rp-top" style={{ '--rp-tone': tone(report?.color), '--rp-tint': soft(report?.color, 16) }}>
+          <div className="rp-card rp-top" style={{ '--rp-tone': tone(calm(report?.color)), '--rp-tint': soft(calm(report?.color), 12) }}>
             <div className="rp-top-title">
-              <span className="rp-chip" aria-hidden="true">{report?.icon}</span>
+              <span className="rp-chip" aria-hidden="true"><Icon name={report?.icon} size={18} /></span>
               <div>
                 <div className="rp-h2">{title || report?.label}</div>
                 <div className="rp-desc">{report?.desc}</div>
@@ -1949,14 +2009,23 @@ export default function Reports() {
             </select>
           )}
 
-          {active === 'paymenthistory' && (
-            <select className="rp-select" value={historyTenantId} onChange={e => setHistoryTenantId(e.target.value)}>
-              <option value="">— Select a tenant —</option>
-              {(data.tenants || []).filter(t => canForPlot('reports.payment_collection', t.plot_id, data.plotPermissions)).sort((a, b) => a.full_name.localeCompare(b.full_name)).map(t => (
-                <option key={t.id} value={t.id}>{t.full_name} — {t.unit_number ? `Unit ${t.unit_number}` : `#${t.house_id || '—'}`}</option>
-              ))}
-            </select>
-          )}
+          {active === 'paymenthistory' && (() => {
+            const list = (data.tenants || []).filter(t => canForPlot('reports.payment_collection', t.plot_id, data.plotPermissions));
+            const byPlot = {};
+            list.forEach(t => { (byPlot[t.plot_name || 'No property'] = byPlot[t.plot_name || 'No property'] || []).push(t); });
+            return (
+              <select aria-label="Choose a tenant" className="rp-select" style={{ maxWidth: 280 }} value={historyTenantId} onChange={e => setHistoryTenantId(e.target.value)}>
+                <option value="">Select a tenant</option>
+                {Object.keys(byPlot).sort().map(plot => (
+                  <optgroup key={plot} label={plot}>
+                    {byPlot[plot].sort((x, y) => x.full_name.localeCompare(y.full_name)).map(t => (
+                      <option key={t.id} value={t.id}>{t.full_name} - {t.unit_number ? `Unit ${t.unit_number}` : `#${t.house_id || ''}`}</option>
+                    ))}
+                  </optgroup>
+                ))}
+              </select>
+            );
+          })()}
 
           {/* Period filter */}
           {!NO_PERIOD_FILTER.includes(active) && (
@@ -1965,6 +2034,17 @@ export default function Reports() {
               <option value="month">By Month</option>
               <option value="year">By Year</option>
               <option value="range">Custom Range</option>
+            </select>
+          )}
+
+          {/* Property filter for Payment Collection */}
+          {active === 'payments' && (
+            <select aria-label="Filter by property" value={filters.plotId} onChange={e => setFilters(f => ({ ...f, plotId: e.target.value }))} className="rp-select" style={{ maxWidth: 220 }}>
+              <option value="all">All properties</option>
+              {(data.plots || [])
+                .filter(pl => canForPlot('reports.payment_collection', pl.id, data.plotPermissions))
+                .slice().sort((a, b) => String(a.name).localeCompare(String(b.name)))
+                .map(pl => <option key={pl.id} value={pl.id}>{pl.name}</option>)}
             </select>
           )}
 
@@ -2078,7 +2158,7 @@ export default function Reports() {
 
               {/* Bulk tenant statements — only where it's meaningful */}
               {active === 'rentroll' && (
-                <button type="button" className="rp-btn" onClick={downloadAllStatements}>📄 All statements (ZIP)</button>
+                <button type="button" className="rp-btn" onClick={downloadAllStatements}><IconInline name="📄" size={14} />All statements (ZIP)</button>
               )}
 
               {['ownerstatement', 'revenue', 'profitloss', 'properties', 'expenses', 'utilities'].includes(active) && (
@@ -2090,15 +2170,15 @@ export default function Reports() {
                     </select>
                   )}
                   <input type="month" value={ownerMonth} onChange={e => setOwnerMonth(e.target.value)} className="rp-select" title="Statement month" />
-                  <button type="button" className="rp-btn" onClick={downloadOwnerStatement}>🏢 Owner statement (PDF)</button>
+                  <button type="button" className="rp-btn" onClick={downloadOwnerStatement}><IconInline name="🏢" size={14} />Owner statement (PDF)</button>
                 </span>
               )}
 
               {/* Print / Save as PDF — browsers' print dialog offers "Save as PDF" */}
               {active !== 'unpaid' && (
-                <button type="button" className="rp-btn" onClick={() => downloadPDF(columns, visibleRows, summary, title)} disabled={!columns.length} style={active === 'ownerstatement' ? { display: 'none' } : undefined}>📄 Download PDF</button>
+                <button type="button" className="rp-btn" onClick={() => downloadPDF(columns, visibleRows, summary, title)} disabled={!columns.length} style={active === 'ownerstatement' ? { display: 'none' } : undefined}><IconInline name="📄" size={14} />Download PDF</button>
               )}
-              <button type="button" className="rp-btn" onClick={() => window.print()} title="Browser print of the on-screen page">🖨️ Print</button>
+              <button type="button" className="rp-btn" onClick={() => window.print()} title="Browser print of the on-screen page"><IconInline name="🖨️" size={14} />Print</button>
 
               {/* Download button — Unpaid Rent gets one button with a CSV / PDF menu;
                   every other report keeps its separate CSV button for now. */}
@@ -2124,7 +2204,7 @@ export default function Reports() {
           {summary && (
             <div className="rp-kpis">
               {summary.map(sm => (
-                <div key={sm.label} className="rp-card rp-kpi" style={{ '--rp-tone': tone(sm.color) }}>
+                <div key={sm.label} className={`rp-card rp-kpi${isWarn(sm.color) ? ' warn' : ''}`} style={{ '--rp-tone': tone(sm.color) }}>
                   <div className="rp-kpi-label">{sm.label}</div>
                   <div className="rp-kpi-value">{sm.value}</div>
                 </div>
@@ -2163,7 +2243,7 @@ export default function Reports() {
                   <thead>
                     <tr>
                       {columns.map(c => (
-                        <th key={c} onClick={() => handleSort(c)}>
+                        <th key={c} className={isNumCol(c) ? 'rp-num' : undefined} onClick={() => handleSort(c)}>
                           {c}{sortCol === c ? (sortDir === 'asc' ? ' ▲' : ' ▼') : ''}
                         </th>
                       ))}
@@ -2174,18 +2254,18 @@ export default function Reports() {
                     {visibleRows.map((row, i) => (
                       <tr key={i}>
                         {columns.map(c => (
-                          <td key={c}>
+                          <td key={c} className={isNumCol(c) ? 'rp-num' : undefined}>
                             {c === 'Status' || c === 'Severity' ? (
-                              <span className={`rp-badge rp-badge-${statusKind(row[c])}`}>{row[c]}</span>
+                              <span className={`rp-badge rp-badge-${statusKind(row[c])}`}>{typeof row[c] === 'string' ? sentence(row[c]) : row[c]}</span>
                             ) : c.includes('KES') || c === 'Balance (KES)' ? (
                               <span className={`rp-money${isNegativeCol(c) || String(row[c]).trim().startsWith('-') ? ' neg' : ''}`}>{row[c]}</span>
-                            ) : row[c]}
+                            ) : pretty(c, row[c])}
                           </td>
                         ))}
                         {active === 'rentroll' && (
                           <td className="no-print">
                             {row._tenantId ? (
-                              <button type="button" className="rp-mini" onClick={() => downloadStatement(row._tenantId, row.Tenant)}>📄 PDF</button>
+                              <button type="button" className="rp-mini" onClick={() => downloadStatement(row._tenantId, row.Tenant)}><IconInline name="📄" size={14} />PDF</button>
                             ) : '—'}
                           </td>
                         )}
@@ -2219,7 +2299,7 @@ function ExpandableSearch({ value, onChange }) {
 
   return (
     <div className={`rp-search${expanded ? ' open' : ''}`}>
-      <button type="button" onClick={openIt} aria-label="Search this report" title="Search this report">🔍</button>
+      <button type="button" onClick={openIt} aria-label="Search this report" title="Search this report"><IconInline name="🔍" size={14} /></button>
       <input
         ref={inputRef}
         value={value}
@@ -2263,11 +2343,11 @@ function DownloadMenu({ onCSV, onPDF, disabled }) {
       {open && (
         <div className="rp-dl-menu" role="menu">
           <button type="button" role="menuitem" className="rp-dl-item" onClick={() => pick(onCSV)}>
-            <span aria-hidden="true">📊</span>
+            <span aria-hidden="true"><IconInline name="📊" size={14} /></span>
             <span>CSV<small>Opens in Excel or Google Sheets</small></span>
           </button>
           <button type="button" role="menuitem" className="rp-dl-item" onClick={() => pick(onPDF)}>
-            <span aria-hidden="true">📄</span>
+            <span aria-hidden="true"><IconInline name="📄" size={14} /></span>
             <span>PDF<small>Ready to print or share</small></span>
           </button>
         </div>

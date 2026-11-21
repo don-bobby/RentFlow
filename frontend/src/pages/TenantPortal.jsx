@@ -1,5 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { applyBrandTheme } from '../utils/brandTheme';
+import Icon, { IconInline } from '../components/Icon';
 
 // ── Responsive hook (matches the one used in Layout.jsx) ──────────────────────
 function useBreakpoint() {
@@ -23,8 +25,16 @@ function tenantFetch(path, options = {}) {
 }
 
 const TABS = ['Overview', 'Pay Now', 'Payments', 'Arrears', 'Maintenance', 'My Unit', 'Notices', 'Messages'];
+// Same body font as the public listings page (headings already use Bricolage Grotesque)
+const BODY_FONT = "'DM Sans', Inter, system-ui, sans-serif";
+// Used on the Overview "Need help?" card: who a tenant should contact first (same order as the public listings)
+const CONTACT_RANK = { agent: 0, caretaker: 1, landlord: 2, admin: 3, super_admin: 3 };
+const ROLE_WORD    = { agent: 'agent', caretaker: 'caretaker', landlord: 'property owner', admin: 'RentFlow admin', super_admin: 'RentFlow admin' };
+// Tabs that live under "More" in the phone bottom menu
+const MORE_TABS = ['Arrears', 'Maintenance', 'My Unit', 'Notices'];
 
 export default function TenantPortal() {
+  useEffect(() => { applyBrandTheme(); }, []);
   const { isMobile } = useBreakpoint();
   const [tab,         setTab]         = useState('Overview');
   const [me,          setMe]          = useState(null);
@@ -53,6 +63,11 @@ export default function TenantPortal() {
   const [stkAmount,  setStkAmount]  = useState('');
   const [stkStatus,  setStkStatus]  = useState('idle'); // idle | pending | success | failed
   const [stkTxId,    setStkTxId]    = useState(null);
+  const [moreOpen,   setMoreOpen]   = useState(false);   // phone bottom menu: "More" sheet
+  const [receipt,    setReceipt]    = useState(null);    // payment shown in the receipt window
+  const [copied,     setCopied]     = useState('');      // which Paybill value was just copied
+  const [reloadKey,  setReloadKey]  = useState(0);       // bump to reload everything
+  const [loadError,  setLoadError]  = useState(false);
 
   const tenant = JSON.parse(localStorage.getItem('tenant_info') || '{}');
 
@@ -77,7 +92,7 @@ export default function TenantPortal() {
         const checkoutId = data.data?.CheckoutRequestID;
         setStkTxId(checkoutId);
         setStkStatus('pending');
-        setStkMsg('⏳ STK push sent — enter your M-Pesa PIN on your phone. Waiting for confirmation...');
+        setStkMsg('STK push sent — enter your M-Pesa PIN on your phone. Waiting for confirmation...');
         setStkAmount('');
         // Start polling for payment result
         pollPaymentStatus(checkoutId);
@@ -106,18 +121,18 @@ export default function TenantPortal() {
         if (data.status === 'matched') {
           clearInterval(interval);
           setStkStatus('success');
-          setStkMsg('✅ Payment confirmed! Your account has been updated.');
+          setStkMsg('Payment confirmed! Your account has been updated.');
           // Reload arrears and payments
           tenantFetch('/tenant-portal/payments').then(r => setPayments(r.data || []));
           tenantFetch('/tenant-portal/arrears').then(r => setArrears(r.data || []));
         } else if (data.status === 'failed') {
           clearInterval(interval);
           setStkStatus('failed');
-          setStkMsg(`❌ Payment failed — ${data.reason || 'insufficient funds or PIN cancelled'}. Please try again.`);
+          setStkMsg(`Payment failed — ${data.reason || 'insufficient funds or PIN cancelled'}. Please try again.`);
         } else if (attempts >= maxAttempts) {
           clearInterval(interval);
           setStkStatus('failed');
-          setStkMsg('⚠️ No confirmation received after 60 seconds. Check your M-Pesa messages to confirm if the payment went through.');
+          setStkMsg('No confirmation received after 60 seconds. Check your M-Pesa messages to confirm if the payment went through.');
         }
       } catch { /* keep polling */ }
     }, 5000);
@@ -214,19 +229,22 @@ export default function TenantPortal() {
     const token = localStorage.getItem('tenant_token');
     if (!token) { navigate('/tenant/login'); return; }
     async function load() {
-      setLoading(true);
+      setLoading(true); setLoadError(false);
       try {
         // Expire any stale pending STK rows before loading
         await tenantFetch('/mpesa/expire-pending', { method: 'POST' }).catch(() => {});
 
-        const [meRes, paymentsRes, arrearsRes, maintRes, noticesRes, convsRes] = await Promise.all([
+        const [meRes, paymentsRes, arrearsRes, maintRes, noticesRes, convsRes, contactsRes] = await Promise.all([
           tenantFetch('/tenant-portal/me'),
           tenantFetch('/tenant-portal/payments'),
           tenantFetch('/tenant-portal/arrears'),
           tenantFetch('/tenant-portal/maintenance'),
           tenantFetch('/notices/tenant'),
           tenantFetch('/notices/conversations/tenant'),
+          tenantFetch('/notices/contacts/tenant').catch(() => ({})),
         ]);
+        if (!meRes?.data) setLoadError(true);
+        setContacts(contactsRes?.data || []);
         setMe(meRes.data);
         setStkPhone(meRes.data?.phone || '');
         setPayments(paymentsRes.data || []);
@@ -238,11 +256,11 @@ export default function TenantPortal() {
         setUnreadMsgs(unreadM);
         setArrears(arrearsRes.data || []);
         setMaintenance(maintRes.data || []);
-      } catch (e) { console.error(e); }
+      } catch (e) { console.error(e); setLoadError(true); }
       finally { setLoading(false); }
     }
     load();
-  }, [navigate]);
+  }, [navigate, reloadKey]);
 
   async function submitMaintenance() {
     if (!mForm.issue.trim()) { setMError('Please describe the issue.'); return; }
@@ -265,6 +283,33 @@ export default function TenantPortal() {
   const pendingMaint   = maintenance.filter(m => m.status === 'pending').length;
   const monthName      = (y, m) => new Date(y, m - 1, 1).toLocaleString('en-KE', { month: 'long', year: 'numeric' });
 
+  // Idea 1 + 4: jump to Pay Now with an amount ready, and a "Rent" card from real data
+  const goPay = (amount) => { if (amount) setStkAmount(String(amount)); setTab('Pay Now'); setMoreOpen(false); window.scrollTo({ top: 0 }); };
+  const goTab = (t) => { setTab(t); setMoreOpen(false); window.scrollTo({ top: 0 }); };
+  const oldestArrear = [...arrears].sort((a, b) => (a.year - b.year) || (a.month - b.month))[0];
+  const lastPaidIdx  = payments
+    .filter(p => p.status !== 'pending' && p.status !== 'failed' && p.for_year && p.for_month)
+    .reduce((best, p) => Math.max(best, p.for_year * 12 + (p.for_month - 1)), -1);
+  const nextRentLabel = lastPaidIdx >= 0 ? monthName(Math.floor((lastPaidIdx + 1) / 12), ((lastPaidIdx + 1) % 12) + 1) : '';
+  const rentSub = totalArrears > 0 && oldestArrear ? `Oldest unpaid: ${oldestArrear.label}` : (nextRentLabel ? `Next rent: ${nextRentLabel}` : '');
+
+  // Idea 2: Paybill details. These come from /tenant-portal/me (account_no + paybill_number); hidden until the backend sends them.
+  const paybillNo  = me?.paybill_number || me?.paybill_shortcode;
+  const paybillAcc = me?.account_no;
+  function copyText(key, value) {
+    try { navigator.clipboard.writeText(String(value)); setCopied(key); setTimeout(() => setCopied(''), 1800); } catch { /* copy not available */ }
+  }
+  const paybillBox = paybillNo && paybillAcc ? <PaybillBox number={paybillNo} account={paybillAcc} copied={copied} onCopy={copyText} /> : null;
+
+  // Idea 7: one-tap message to whoever handles the property (agent, else caretaker, else owner, else admin)
+  const helpContact = [...contacts].sort((a, b) => (CONTACT_RANK[a.role] ?? 9) - (CONTACT_RANK[b.role] ?? 9))[0];
+  async function messageHelpContact() {
+    if (!helpContact) { goTab('Messages'); return; }
+    const isAdm = helpContact.role === 'admin' || helpContact.role === 'super_admin';
+    setTab('Messages');
+    await startConversation({ ...helpContact, name: isAdm ? 'Admin' : helpContact.name });
+  }
+
   const statusColor = { pending: 'var(--amber)', in_progress: 'var(--blue)', completed: 'var(--green)' };
   const statusBg    = { pending: 'var(--amber-light)', in_progress: 'var(--blue-light)', completed: 'var(--green-light)' };
   const priorityColor = { low: 'var(--green)', medium: 'var(--amber)', high: 'var(--red)' };
@@ -282,9 +327,23 @@ export default function TenantPortal() {
     </div>
   );
 
+  if (loadError || !me) return (
+    <div style={{ minHeight: '100vh', background: 'var(--bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16, fontFamily: BODY_FONT }}>
+      <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 16, padding: 28, maxWidth: 380, textAlign: 'center' }}>
+        <div style={{ fontFamily: 'Bricolage Grotesque', fontWeight: 700, fontSize: 18, marginBottom: 8 }}>We could not load your account</div>
+        <p style={{ color: 'var(--muted)', fontSize: 14, margin: '0 0 18px' }}>Check your internet connection and try again. If it keeps happening, sign out and sign in again.</p>
+        <div style={{ display: 'flex', gap: 10, justifyContent: 'center' }}>
+          <button onClick={() => setReloadKey(k => k + 1)} style={{ padding: '10px 18px', borderRadius: 10, border: 'none', background: 'var(--primary)', color: '#fff', fontWeight: 700, cursor: 'pointer' }}>Try again</button>
+          <button onClick={logout} style={{ padding: '10px 18px', borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface2)', fontWeight: 600, cursor: 'pointer', color: 'var(--muted)' }}>Sign out</button>
+        </div>
+      </div>
+    </div>
+  );
+
   return (
-    <div className="tp-page" style={{ minHeight: '100vh', background: 'var(--bg)', fontFamily: 'Inter, sans-serif' }}>
+    <div className="tp-page" style={{ minHeight: '100vh', background: 'var(--bg)', fontFamily: BODY_FONT }}>
       <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@500;700;800&family=DM+Sans:wght@400;500;700&display=swap');
         /* Friendlier micro-interactions layered on top of the existing theme
            tokens — no new color system, just hover/press feedback, soft
            accent-bar KPI cards, and a skeleton loader instead of plain text. */
@@ -298,29 +357,47 @@ export default function TenantPortal() {
         .tp-kpi::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 4px; background: var(--tp-accent, var(--primary)); }
         .tp-skel { background: var(--surface2); border-radius: 8px; animation: tp-pulse 1.3s ease-in-out infinite; }
         @keyframes tp-pulse { 0%, 100% { opacity: .45; } 50% { opacity: 1; } }
+        .tp-pay-btn { display: inline-block; margin-top: 14px; padding: 11px 20px; border-radius: 10px; border: none; background: var(--primary); color: #fff; font-weight: 700; font-size: 15px; cursor: pointer; font-family: inherit; }
+        .tp-pay-btn:active { transform: scale(0.97); }
+        .tp-mini { padding: 3px 10px; border-radius: 99px; border: 1px solid var(--border); background: transparent; color: var(--muted); font-size: 12px; font-weight: 600; cursor: pointer; font-family: inherit; }
+        .tp-mini:hover { border-color: var(--primary); color: var(--primary); }
+        .tp-copy { padding: 7px 14px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-weight: 600; font-size: 13px; cursor: pointer; font-family: inherit; }
+        .tp-nav { position: fixed; left: 0; right: 0; bottom: 0; z-index: 55; display: flex; background: var(--surface); border-top: 1px solid var(--border); padding-bottom: env(safe-area-inset-bottom, 0px); box-shadow: 0 -2px 12px rgba(0,0,0,0.06); }
+        .tp-nav button { flex: 1; position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; height: 62px; border: none; background: transparent; color: var(--muted); font-size: 11px; font-weight: 600; cursor: pointer; font-family: inherit; }
+        .tp-nav button.on { color: var(--primary); }
+        .tp-nav .tp-dot { position: absolute; top: 6px; left: calc(50% + 6px); min-width: 16px; padding: 0 4px; border-radius: 99px; background: var(--red); color: #fff; font-size: 10px; font-weight: 700; line-height: 16px; text-align: center; }
+        .tp-more { position: fixed; left: 12px; right: 12px; z-index: 60; background: var(--surface); border: 1px solid var(--border); border-radius: 16px; box-shadow: 0 8px 28px rgba(0,0,0,0.2); overflow: hidden; }
+        .tp-more button { display: flex; width: 100%; justify-content: space-between; align-items: center; padding: 14px 18px; border: none; border-top: 1px solid var(--border); background: transparent; color: var(--text); font-size: 15px; font-weight: 600; cursor: pointer; font-family: inherit; text-align: left; }
+        .tp-more button:first-child { border-top: none; }
+        @media print {
+          body * { visibility: hidden !important; }
+          .tp-receipt-print, .tp-receipt-print * { visibility: visible !important; }
+          .tp-receipt-print { position: fixed !important; left: 0; top: 0; width: 100%; box-shadow: none !important; border: none !important; }
+          .tp-noprint { display: none !important; }
+        }
         @media (prefers-reduced-motion: reduce) { .tp-card, .tp-row, .tp-tab-btn, .tp-skel { transition: none; animation: none; } }
       `}</style>
 
       {/* Topbar */}
       <div style={{ background: 'var(--surface)', borderBottom: '1px solid var(--border)', padding: isMobile ? '0 14px' : '0 24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', height: 56, position: 'sticky', top: 0, zIndex: 50 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span style={{ fontSize: 20 }}>🏠</span>
-          {!isMobile && <span style={{ fontFamily: 'Space Grotesk', fontWeight: 700, fontSize: 16 }}>Tenant Portal</span>}
+          <span style={{ fontSize: 20 }}><Icon name="🏠" size={20} /></span>
+          {!isMobile && <span style={{ fontFamily: 'Bricolage Grotesque', fontWeight: 700, fontSize: 16 }}>Tenant Portal</span>}
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: isMobile ? 8 : 14 }}>
-          {!isMobile && <span style={{ fontSize: 14, color: 'var(--muted)' }}>👤 {tenant.full_name}</span>}
+          {!isMobile && <span style={{ fontSize: 14, color: 'var(--muted)' }}><IconInline name="👤" size={14} />{tenant.full_name}</span>}
           <button onClick={logout} style={{ padding: isMobile ? '6px 10px' : '6px 14px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface2)', fontSize: 13, fontWeight: 600, cursor: 'pointer', color: 'var(--muted)' }}>
-            {isMobile ? '⏻' : 'Sign Out'}
+            {isMobile ? <Icon name="⏻" size={18} /> : 'Sign out'}
           </button>
         </div>
       </div>
 
-      <div style={{ maxWidth: 800, margin: '0 auto', padding: isMobile ? '16px 12px' : '24px 16px' }}>
+      <div style={{ maxWidth: 800, margin: '0 auto', padding: isMobile ? '16px 12px 96px' : '24px 16px' }}>
 
         {/* Greeting */}
         <div style={{ marginBottom: isMobile ? 16 : 24 }}>
-          <h2 style={{ fontFamily: 'Space Grotesk', fontSize: isMobile ? 18 : 22, fontWeight: 700, marginBottom: 4 }}>
-            Hello, {me?.full_name?.split(' ')[0]} 👋
+          <h2 style={{ fontFamily: 'Bricolage Grotesque', fontSize: isMobile ? 18 : 22, fontWeight: 700, marginBottom: 4 }}>
+            Hello, {me?.full_name?.split(' ')[0]}
           </h2>
           <p style={{ color: 'var(--muted)', fontSize: 13 }}>
             Unit {me?.unit_number} · {me?.plot_name} · {me?.plot_location}
@@ -328,14 +405,15 @@ export default function TenantPortal() {
         </div>
 
         {/* Summary cards */}
-        <div style={{ display: 'grid', gridTemplateColumns: isMobile ? 'repeat(2, 1fr)' : 'repeat(3, 1fr)', gap: isMobile ? 8 : 12, marginBottom: isMobile ? 20 : 28 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: isMobile ? 'repeat(2, 1fr)' : 'repeat(4, 1fr)', gap: isMobile ? 8 : 12, marginBottom: isMobile ? 20 : 28 }}>
+          <SummaryCard icon="🏠" label="Monthly Rent" value={`KES ${parseFloat(me?.rent_amount || 0).toLocaleString()}`} color="var(--primary)" light="var(--primary-light)" sub={rentSub} />
           <SummaryCard icon="⚠️" label="Total Arrears" value={`KES ${totalArrears.toLocaleString()}`} color={totalArrears > 0 ? 'var(--red)' : 'var(--green)'} light={totalArrears > 0 ? 'var(--red-light)' : 'var(--green-light)'} />
           <SummaryCard icon="✅" label="Total Paid"    value={`KES ${totalPaid.toLocaleString()}`}    color="var(--green)" light="var(--green-light)" />
           <SummaryCard icon="🔧" label="Maintenance"   value={`${pendingMaint} pending`}               color="var(--amber)" light="var(--amber-light)" />
         </div>
 
-        {/* Tabs */}
-        <div style={{
+        {/* Tabs (desktop). On phones the bottom menu at the end of this file takes over. */}
+        {!isMobile && <div style={{
           display: 'flex', gap: 4, marginBottom: isMobile ? 16 : 20, background: 'var(--surface2)', borderRadius: 10, padding: 4, border: '1px solid var(--border)',
           overflowX: isMobile ? 'auto' : 'visible', WebkitOverflowScrolling: 'touch',
         }}>
@@ -360,14 +438,14 @@ export default function TenantPortal() {
               </button>
             );
           })}
-        </div>
+        </div>}
 
         {/* Overview */}
         {tab === 'Overview' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
             {totalArrears > 0 ? (
               <div style={{ background: 'var(--red-light)', border: '1px solid var(--red)', borderRadius: 16, padding: 20 }}>
-                <div style={{ fontWeight: 700, color: 'var(--red)', fontSize: 16, marginBottom: 12 }}>⚠️ Outstanding Balance: KES {totalArrears.toLocaleString()}</div>
+                <div style={{ fontWeight: 700, color: 'var(--red)', fontSize: 16, marginBottom: 12 }}><IconInline name="⚠️" size={14} />Outstanding Balance: KES {totalArrears.toLocaleString()}</div>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
                   {arrears.map(m => (
                     <div key={`${m.year}-${m.month}`} style={{ background: 'var(--surface)', border: `1px solid ${m.partial ? 'var(--amber)' : 'var(--red)'}`, borderRadius: 8, padding: '6px 12px', fontSize: 12 }}>
@@ -376,10 +454,38 @@ export default function TenantPortal() {
                     </div>
                   ))}
                 </div>
+                <button className="tp-pay-btn" onClick={() => goPay(totalArrears)}>Pay KES {totalArrears.toLocaleString()} now</button>
               </div>
             ) : (
               <div style={{ background: 'var(--green-light)', border: '1px solid var(--green)', borderRadius: 16, padding: 20, fontWeight: 700, color: 'var(--green)', fontSize: 15 }}>
-                ✅ You're all up to date! No outstanding rent.
+                <IconInline name="✅" size={14} />You're all up to date! No outstanding rent.
+              </div>
+            )}
+
+            {paybillBox}
+
+            {(unreadNotices > 0 || unreadMsgs > 0) && (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                {unreadNotices > 0 && <button className="tp-mini" onClick={() => goTab('Notices')} style={{ padding: '8px 14px', fontSize: 13 }}>📢 {unreadNotices} new notice{unreadNotices === 1 ? '' : 's'}</button>}
+                {unreadMsgs > 0 && <button className="tp-mini" onClick={() => goTab('Messages')} style={{ padding: '8px 14px', fontSize: 13 }}>💬 {unreadMsgs} unread message{unreadMsgs === 1 ? '' : 's'}</button>}
+              </div>
+            )}
+
+            {helpContact && (
+              <div className="tp-card" style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 16, padding: '14px 18px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+                <div>
+                  <div style={{ fontWeight: 700, fontSize: 14 }}>Need help?</div>
+                  <div style={{ fontSize: 12, color: 'var(--muted)' }}>Questions about rent, repairs or your unit.</div>
+                </div>
+                <button className="tp-pay-btn" style={{ marginTop: 0, padding: '9px 16px', fontSize: 14 }} onClick={messageHelpContact}>
+                  Message your {ROLE_WORD[helpContact.role] || 'property manager'}
+                </button>
+              </div>
+            )}
+
+            {payments.length === 0 && (
+              <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 16, padding: 28, textAlign: 'center', color: 'var(--muted)', fontSize: 14 }}>
+                No payments yet. Once you pay, your payments and receipts will show here.
               </div>
             )}
 
@@ -398,11 +504,12 @@ export default function TenantPortal() {
                         </div>
                         <div style={{ fontSize: 12, color: 'var(--muted)' }}>{p.for_year && p.for_month ? monthName(p.for_year, p.for_month) : new Date(p.payment_date).toLocaleDateString('en-KE')}</div>
                       </div>
-                      <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                      <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
                         <span style={{ background: 'var(--surface2)', color: 'var(--muted)', padding: '3px 10px', borderRadius: 99, fontSize: 12, fontWeight: 600 }}>{p.method}</span>
                         {isFailed  && <span style={{ background: 'var(--red-light)',    color: 'var(--red)',    padding: '3px 10px', borderRadius: 99, fontSize: 12, fontWeight: 600 }}>failed</span>}
                         {isPending && <span style={{ background: 'var(--amber-light)',  color: 'var(--amber)', padding: '3px 10px', borderRadius: 99, fontSize: 12, fontWeight: 600 }}>pending</span>}
                         {!isFailed && !isPending && <span style={{ background: 'var(--green-light)', color: 'var(--green)', padding: '3px 10px', borderRadius: 99, fontSize: 12, fontWeight: 600 }}>paid</span>}
+                        {!isFailed && !isPending && <button className="tp-mini" onClick={() => setReceipt(p)}>Receipt</button>}
                       </div>
                     </div>
                   );
@@ -416,7 +523,7 @@ export default function TenantPortal() {
         {tab === 'Pay Now' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
             <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 16, padding: 24 }}>
-              <div style={{ fontFamily: 'Space Grotesk', fontWeight: 700, fontSize: 18, marginBottom: 6 }}>Pay via M-Pesa</div>
+              <div style={{ fontFamily: 'Bricolage Grotesque', fontWeight: 700, fontSize: 18, marginBottom: 6 }}>Pay via M-Pesa</div>
               <p style={{ color: 'var(--muted)', fontSize: 13, marginBottom: 20 }}>
                 An STK push will be sent to <strong>{me?.phone}</strong>. Enter your M-Pesa PIN when prompted.
               </p>
@@ -469,9 +576,10 @@ export default function TenantPortal() {
               </div>
               <button onClick={triggerStkPush} disabled={stkLoading}
                 style={{ width: '100%', padding: '14px', borderRadius: 10, border: 'none', background: 'var(--primary)', color: '#fff', fontWeight: 700, fontSize: 16, cursor: 'pointer' }}>
-                {stkLoading ? 'Sending...' : '📱 Send M-Pesa STK Push'}
+                {stkLoading ? 'Sending...' : 'Send M-Pesa STK Push'}
               </button>
             </div>
+            {paybillBox}
           </div>
         )}
 
@@ -495,11 +603,12 @@ export default function TenantPortal() {
                         {p.receipt_no ? ` · ${p.receipt_no}` : ''}
                       </div>
                     </div>
-                    <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                    <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
                       <span style={{ background: 'var(--surface2)', color: 'var(--muted)', padding: '3px 10px', borderRadius: 99, fontSize: 12, fontWeight: 600 }}>{p.method}</span>
                       {isFailed  && <span style={{ background: 'var(--red-light)',    color: 'var(--red)',    padding: '3px 10px', borderRadius: 99, fontSize: 12, fontWeight: 600 }}>failed</span>}
                       {isPending && <span style={{ background: 'var(--amber-light)',  color: 'var(--amber)', padding: '3px 10px', borderRadius: 99, fontSize: 12, fontWeight: 600 }}>pending</span>}
                       {!isFailed && !isPending && <span style={{ background: 'var(--blue-light)', color: 'var(--blue)', padding: '3px 10px', borderRadius: 99, fontSize: 12, fontWeight: 600 }}>paid</span>}
+                      {!isFailed && !isPending && <button className="tp-mini" onClick={() => setReceipt(p)}>Receipt</button>}
                     </div>
                   </div>
                 );
@@ -512,7 +621,7 @@ export default function TenantPortal() {
         {tab === 'Arrears' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
             {arrears.length === 0
-              ? <div style={{ padding: 40, textAlign: 'center', color: 'var(--green)', fontWeight: 600, fontSize: 15 }}>✅ No arrears — you're fully paid up!</div>
+              ? <div style={{ padding: 40, textAlign: 'center', color: 'var(--green)', fontWeight: 600, fontSize: 15 }}><IconInline name="✅" size={14} />No arrears — you're fully paid up!</div>
               : arrears.map(m => (
                 <div key={`${m.year}-${m.month}`} style={{ background: 'var(--surface)', border: `1px solid ${m.partial ? 'var(--amber)' : 'var(--red)'}`, borderRadius: 16, padding: '16px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <div>
@@ -520,7 +629,7 @@ export default function TenantPortal() {
                     {m.partial && <div style={{ fontSize: 13, color: 'var(--muted)', marginTop: 4 }}>Paid: KES {m.paid.toLocaleString()} of KES {m.rent.toLocaleString()}</div>}
                   </div>
                   <div style={{ textAlign: 'right' }}>
-                    <div style={{ fontWeight: 800, fontFamily: 'Space Grotesk', fontSize: 18, color: m.partial ? 'var(--amber)' : 'var(--red)' }}>KES {m.balance.toLocaleString()}</div>
+                    <div style={{ fontWeight: 800, fontFamily: 'Bricolage Grotesque', fontSize: 18, color: m.partial ? 'var(--amber)' : 'var(--red)' }}>KES {m.balance.toLocaleString()}</div>
                     <div style={{ fontSize: 11, color: 'var(--muted)' }}>still owed</div>
                   </div>
                 </div>
@@ -529,9 +638,10 @@ export default function TenantPortal() {
             {arrears.length > 0 && (
               <div style={{ background: 'var(--surface2)', border: '1px solid var(--border)', borderRadius: 16, padding: '14px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <span style={{ fontWeight: 700, fontSize: 15 }}>Total Outstanding</span>
-                <span style={{ fontWeight: 800, fontFamily: 'Space Grotesk', fontSize: 20, color: 'var(--red)' }}>KES {totalArrears.toLocaleString()}</span>
+                <span style={{ fontWeight: 800, fontFamily: 'Bricolage Grotesque', fontSize: 20, color: 'var(--red)' }}>KES {totalArrears.toLocaleString()}</span>
               </div>
             )}
+            {arrears.length > 0 && <button className="tp-pay-btn" style={{ marginTop: 0, width: '100%' }} onClick={() => goPay(totalArrears)}>Pay KES {totalArrears.toLocaleString()} now</button>}
           </div>
         )}
 
@@ -583,6 +693,9 @@ export default function TenantPortal() {
                 ))}
               </div>
             )}
+            {maintenance.length === 0 && (
+              <div style={{ padding: 28, textAlign: 'center', color: 'var(--muted)', fontSize: 14 }}>No repair requests yet. If something needs fixing, describe it above and we will follow it up.</div>
+            )}
           </div>
         )}
 
@@ -593,7 +706,7 @@ export default function TenantPortal() {
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
             {notices.length === 0 ? (
               <div style={{ padding: 40, textAlign: 'center', color: 'var(--muted)' }}>
-                <div style={{ fontSize: 36, marginBottom: 10 }}>📢</div>
+                <div style={{ fontSize: 36, marginBottom: 10 }}><Icon name="📢" size={36} /></div>
                 <p>No notices yet.</p>
               </div>
             ) : notices.map(n => {
@@ -613,7 +726,7 @@ export default function TenantPortal() {
                   }
                 }} className="tp-card tp-row" style={{ background: 'var(--surface)', border: `1px solid ${p.border}`, borderLeft: `4px solid ${p.border}`, borderRadius: 16, padding: '14px 16px', cursor: 'pointer', opacity: n.is_read ? 0.75 : 1 }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-                    <span style={{ background: p.bg, color: p.color, padding: '3px 10px', borderRadius: 99, fontSize: 12, fontWeight: 700 }}>{icons[n.priority]} {n.priority}</span>
+                    <span style={{ background: p.bg, color: p.color, padding: '3px 10px', borderRadius: 99, fontSize: 12, fontWeight: 700 }}><IconInline name={icons[n.priority]} size={13} gap={4} />{n.priority}</span>
                     {!n.is_read && <span style={{ background: 'var(--red)', color: '#fff', borderRadius: 99, fontSize: 10, fontWeight: 700, padding: '2px 7px' }}>NEW</span>}
                   </div>
                   <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 6, color: 'var(--text)' }}>{n.title}</div>
@@ -668,7 +781,7 @@ export default function TenantPortal() {
         {tab === 'Messages' && (
           <div style={
             isMobile
-              ? { display: 'flex', flexDirection: 'column', height: 'calc(100vh - 190px)', minHeight: 360, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 16, overflow: 'hidden' }
+              ? { display: 'flex', flexDirection: 'column', height: 'calc(100vh - 262px)', minHeight: 360, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 16, overflow: 'hidden' }
               : { display: 'grid', gridTemplateColumns: '260px 1fr', gap: 12, height: 480 }
           }>
 
@@ -728,7 +841,7 @@ export default function TenantPortal() {
               <div style={{ background: 'var(--surface)', borderRadius: isMobile ? 0 : 12, border: isMobile ? 'none' : '1px solid var(--border)', display: 'flex', flexDirection: 'column', overflow: 'hidden', flex: isMobile ? 1 : 'initial', minHeight: 0 }}>
                 {!activeConv ? (
                   <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: 'var(--muted)', gap: 8 }}>
-                    <span style={{ fontSize: 36 }}>💬</span>
+                    <span style={{ fontSize: 36 }}><Icon name="💬" size={36} /></span>
                     <p style={{ fontSize: 13 }}>Select a conversation</p>
                   </div>
                 ) : (
@@ -784,16 +897,130 @@ export default function TenantPortal() {
         )}
 
       </div>
+
+      {/* Phone bottom menu (idea 3): five big buttons instead of eight tabs */}
+      {isMobile && (
+        <>
+          {moreOpen && <div onClick={() => setMoreOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 58, background: 'rgba(0,0,0,0.35)' }} />}
+          {moreOpen && (
+            <div className="tp-more" style={{ bottom: 'calc(70px + env(safe-area-inset-bottom, 0px))' }}>
+              {MORE_TABS.map(t => (
+                <button key={t} onClick={() => goTab(t)}>
+                  <span>{t}</span>
+                  {t === 'Notices' && unreadNotices > 0 && <span style={{ background: 'var(--red)', color: '#fff', borderRadius: 99, fontSize: 11, fontWeight: 700, padding: '1px 8px' }}>{unreadNotices}</span>}
+                </button>
+              ))}
+              <button onClick={logout} style={{ color: 'var(--red)' }}><span>Sign out</span></button>
+            </div>
+          )}
+          <nav className="tp-nav" role="navigation" aria-label="Main">
+            {[['Overview', 'Home', 'home'], ['Pay Now', 'Pay', 'pay'], ['Payments', 'History', 'list'], ['Messages', 'Chat', 'chat']].map(([t, label, icon]) => (
+              <button key={t} className={tab === t ? 'on' : ''} aria-current={tab === t ? 'page' : undefined} onClick={() => goTab(t)}>
+                <NavIcon name={icon} />
+                <span>{label}</span>
+                {t === 'Messages' && unreadMsgs > 0 && <span className="tp-dot">{unreadMsgs}</span>}
+              </button>
+            ))}
+            <button className={MORE_TABS.includes(tab) || moreOpen ? 'on' : ''} aria-expanded={moreOpen} onClick={() => setMoreOpen(o => !o)}>
+              <NavIcon name="more" />
+              <span>More</span>
+              {unreadNotices > 0 && <span className="tp-dot">{unreadNotices}</span>}
+            </button>
+          </nav>
+        </>
+      )}
+
+      {receipt && <ReceiptModal p={receipt} me={me} monthName={monthName} onClose={() => setReceipt(null)} />}
     </div>
   );
 }
 
-function SummaryCard({ icon, label, value, color, light }) {
+function NavIcon({ name }) {
+  const common = { width: 22, height: 22, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': true };
+  if (name === 'home') return <svg {...common}><path d="M3 11l9-7 9 7" /><path d="M5 10v10h14V10" /></svg>;
+  if (name === 'pay')  return <svg {...common}><rect x="3" y="6" width="18" height="13" rx="2.5" /><path d="M3 10.5h18" /><path d="M7 15h3" /></svg>;
+  if (name === 'list') return <svg {...common}><path d="M8 6h12M8 12h12M8 18h12" /><circle cx="4" cy="6" r="1" /><circle cx="4" cy="12" r="1" /><circle cx="4" cy="18" r="1" /></svg>;
+  if (name === 'chat') return <svg {...common}><path d="M4 5h16v11H9l-5 4z" /></svg>;
+  return <svg {...common}><circle cx="5" cy="12" r="1.3" /><circle cx="12" cy="12" r="1.3" /><circle cx="19" cy="12" r="1.3" /></svg>;
+}
+
+function PaybillBox({ number, account, copied, onCopy }) {
+  const row = (label, value, key) => (
+    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 0', borderTop: '1px solid var(--border)' }}>
+      <div>
+        <div style={{ fontSize: 12, color: 'var(--muted)' }}>{label}</div>
+        <div style={{ fontFamily: 'Bricolage Grotesque', fontWeight: 800, fontSize: 20, letterSpacing: '0.5px' }}>{value}</div>
+      </div>
+      <button className="tp-copy" onClick={() => onCopy(key, value)}>{copied === key ? 'Copied ✓' : 'Copy'}</button>
+    </div>
+  );
+  return (
+    <div className="tp-card" style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 16, padding: '16px 18px' }}>
+      <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 4 }}>Pay with M-Pesa Paybill</div>
+      <p style={{ fontSize: 12, color: 'var(--muted)', margin: '0 0 8px' }}>On your phone: M-Pesa → Lipa na M-Pesa → Pay Bill, then enter:</p>
+      {row('Business number', number, 'biz')}
+      {row('Account number', account, 'acc')}
+      <p style={{ fontSize: 12, color: 'var(--muted)', margin: '8px 0 0' }}>Use this exact account number so your payment is matched to your unit automatically.</p>
+    </div>
+  );
+}
+
+function ReceiptModal({ p, me, monthName, onClose }) {
+  const no     = p.receipt_no || `RF-${p.id}`;
+  const month  = p.for_year && p.for_month ? monthName(p.for_year, p.for_month) : '';
+  const date   = new Date(p.payment_date).toLocaleDateString('en-KE', { day: 'numeric', month: 'long', year: 'numeric' });
+  const rows   = [
+    ['Receipt no.', no], ['Date', date], ['Amount', `KES ${parseFloat(p.amount).toLocaleString()}`], month && ['Rent for', month],
+    ['Method', p.method], p.reference && ['Reference', p.reference], ['Paid by', me.full_name], ['Unit', `${me.unit_number} · ${me.plot_name}`],
+  ].filter(Boolean);
+  const text   = ['RentFlow payment receipt', ...rows.map(([k, v]) => `${k}: ${v}`)].join('\n');
+  const inApp  = /; wv\)/.test(navigator.userAgent);   // Android app: no print dialog there
+  const [note, setNote] = useState('');
+
+  useEffect(() => {
+    const k = (e) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', k);
+    return () => window.removeEventListener('keydown', k);
+  }, [onClose]);
+
+  async function share() {
+    try {
+      if (navigator.share) { await navigator.share({ title: `Receipt ${no}`, text }); return; }
+      await navigator.clipboard.writeText(text); setNote('Receipt copied. You can paste it into WhatsApp or a message.');
+    } catch { /* cancelled */ }
+  }
+
+  return (
+    <div onClick={onClose} role="dialog" aria-modal="true" aria-label="Payment receipt" style={{ position: 'fixed', inset: 0, zIndex: 80, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+      <div onClick={e => e.stopPropagation()} className="tp-receipt-print" style={{ background: 'var(--surface)', borderRadius: 16, maxWidth: 380, width: '100%', maxHeight: '90vh', overflowY: 'auto', padding: 22, boxShadow: '0 12px 40px rgba(0,0,0,0.3)' }}>
+        <div style={{ textAlign: 'center', marginBottom: 14 }}>
+          <div style={{ fontFamily: 'Bricolage Grotesque', fontWeight: 800, fontSize: 18 }}>Payment receipt</div>
+          <div style={{ fontSize: 12, color: 'var(--muted)' }}>RentFlow</div>
+        </div>
+        {rows.map(([k, v]) => (
+          <div key={k} style={{ display: 'flex', justifyContent: 'space-between', gap: 12, padding: '8px 0', borderTop: '1px solid var(--border)', fontSize: 14 }}>
+            <span style={{ color: 'var(--muted)' }}>{k}</span>
+            <span style={{ fontWeight: 600, textAlign: 'right' }}>{v}</span>
+          </div>
+        ))}
+        {note && <div className="tp-noprint" style={{ fontSize: 12, color: 'var(--green)', marginTop: 10 }}>{note}</div>}
+        <div className="tp-noprint" style={{ display: 'flex', gap: 8, marginTop: 16 }}>
+          <button onClick={share} style={{ flex: 1, padding: '10px', borderRadius: 10, border: 'none', background: 'var(--primary)', color: '#fff', fontWeight: 700, cursor: 'pointer' }}>{navigator.share ? 'Share' : 'Copy'}</button>
+          {!inApp && <button onClick={() => window.print()} className="tp-copy" style={{ flex: 1 }}>Print / PDF</button>}
+          <button onClick={onClose} autoFocus className="tp-copy" style={{ flex: 1 }}>Close</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SummaryCard({ icon, label, value, color, light, sub }) {
   return (
     <div className="tp-card tp-kpi" style={{ '--tp-accent': color, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 16, padding: '16px', boxShadow: 'var(--shadow)' }}>
-      <div style={{ width: 32, height: 32, borderRadius: 9, background: light, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 16, marginBottom: 10 }}>{icon}</div>
+      <div style={{ width: 32, height: 32, borderRadius: 9, background: light, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 16, marginBottom: 10 }}><Icon name={icon} size={18} /></div>
       <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 4 }}>{label}</div>
-      <div style={{ fontFamily: 'Space Grotesk', fontWeight: 800, fontSize: 18, color }}>{value}</div>
+      <div style={{ fontFamily: 'Bricolage Grotesque', fontWeight: 800, fontSize: 18, color }}>{value}</div>
+      {sub && <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 3 }}>{sub}</div>}
     </div>
   );
 }

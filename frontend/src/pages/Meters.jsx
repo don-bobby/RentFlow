@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import API from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import SharedMeter from './SharedMeter';
+import { IconInline } from '../components/Icon';
 
 const thisMonth = () => new Date().toISOString().slice(0, 7);
 const today = () => new Date().toISOString().slice(0, 10);
@@ -107,21 +108,21 @@ export default function Meters() {
   const card = { background: 'var(--card, #fff)', border: '1px solid var(--border, #e5e7eb)', borderRadius: 12, padding: 14 };
   const inp = { padding: '7px 9px', borderRadius: 8, border: '1px solid var(--border, #d1d5db)', background: 'var(--bg, #fff)', color: 'inherit', fontSize: 14, boxSizing: 'border-box' };
   const btn = { padding: '7px 13px', borderRadius: 8, border: '1px solid var(--border, #d1d5db)', background: 'var(--card, #fff)', color: 'inherit', cursor: 'pointer', fontSize: 13, fontWeight: 600 };
-  const primary = { ...btn, background: 'var(--primary, #7c3aed)', color: '#fff', border: 'none' };
+  const primary = { ...btn, background: 'var(--primary, #1b6b45)', color: '#fff', border: 'none' };
   const th = { textAlign: 'left', padding: '8px 10px', fontSize: 12, color: 'var(--muted, #6b7280)', borderBottom: '1px solid var(--border, #e5e7eb)', whiteSpace: 'nowrap' };
   const td = { padding: '8px 10px', borderBottom: '1px solid var(--border, #f1f5f9)', fontSize: 14 };
 
   return (
     <div style={{ padding: 4 }}>
-      <h2 style={{ marginTop: 0 }}>💧 Meters & Utility Bills</h2>
+      <h1 style={{ fontFamily: 'Bricolage Grotesque', fontSize: 32, fontWeight: 700, letterSpacing: '-0.4px', margin: 0, color: 'var(--text)' }}><IconInline name="💧" size={14} />Meters & Utility Bills</h1>
       <div style={{ ...card, display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center', marginBottom: 12 }}>
         <select style={inp} value={plotId} onChange={e => setPlotId(e.target.value)}>{plots.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select>
         <select style={inp} value={type} onChange={e => setType(e.target.value)}><option>Water</option><option>Electricity</option></select>
         <input style={inp} type="month" value={month} onChange={e => e.target.value && setMonth(e.target.value)} />
         <div style={{ flex: 1 }} />
-        <button style={tab === 'sheet' ? primary : btn} onClick={() => setTab('sheet')}>📝 Reading sheet</button>
-        <button style={tab === 'bills' ? primary : btn} onClick={() => setTab('bills')}>🧾 Bills</button>
-        <button style={tab === 'shared' ? primary : btn} onClick={() => setTab('shared')}>🔗 Shared meter</button>
+        <button style={tab === 'sheet' ? primary : btn} onClick={() => setTab('sheet')}><IconInline name="📝" size={14} />Reading sheet</button>
+        <button style={tab === 'bills' ? primary : btn} onClick={() => setTab('bills')}><IconInline name="🧾" size={14} />Bills</button>
+        <button style={tab === 'shared' ? primary : btn} onClick={() => setTab('shared')}><IconInline name="🔗" size={14} />Shared meter</button>
       </div>
       {msg.err && <div style={{ ...card, color: '#b91c1c', marginBottom: 10 }}>{msg.err}</div>}
       {msg.ok && <div style={{ ...card, color: '#15803d', marginBottom: 10 }}>{msg.ok}</div>}
@@ -153,7 +154,7 @@ export default function Meters() {
                 const c = calc(row); const paid = row.status === 'paid';
                 return (
                   <tr key={row.house_id}>
-                    <td style={td}><b>{row.unit_number}</b>{row.shared_meter_number && <div style={{ fontSize: 11, color: '#7c3aed' }} title="Billed through the Shared meter tab">shared meter {row.shared_meter_number}</div>}</td>
+                    <td style={td}><b>{row.unit_number}</b>{row.shared_meter_number && <div style={{ fontSize: 11, color: '#1b6b45' }} title="Billed through the Shared meter tab">shared meter {row.shared_meter_number}</div>}</td>
                     <td style={td}>{row.tenant_name || <span style={{ color: 'var(--muted, #9ca3af)' }}>Vacant</span>}</td>
                     <td style={td}>{row.previous_reading ?? <span title="First reading for this meter becomes the starting reading" style={{ color: 'var(--muted, #9ca3af)' }}>— start</span>}</td>
                     <td style={td}>
@@ -198,7 +199,7 @@ export default function Meters() {
                     <td style={td}>{kes(b.amount)}</td>
                     <td style={{ ...td, color: STATUS[b.status]?.[1], fontWeight: 700 }}>{STATUS[b.status]?.[0]}</td>
                     <td style={{ ...td, whiteSpace: 'nowrap' }}>
-                      {b.status === 'billed' && wa && <a style={{ ...btn, textDecoration: 'none', display: 'inline-block', marginRight: 6 }} href={`https://wa.me/${wa}?text=${encodeURIComponent(billMessage(b))}`} target="_blank" rel="noopener noreferrer">💬 WhatsApp bill</a>}
+                      {b.status === 'billed' && wa && <a style={{ ...btn, textDecoration: 'none', display: 'inline-block', marginRight: 6 }} href={`https://wa.me/${wa}?text=${encodeURIComponent(billMessage(b))}`} target="_blank" rel="noopener noreferrer"><IconInline name="💬" size={14} />WhatsApp bill</a>}
                       {b.status === 'billed' && can('payments.record_manual', b.plot_id) && <button style={primary} onClick={() => setPayFor(b)}>Mark paid</button>}
                     </td>
                   </tr>

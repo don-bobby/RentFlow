@@ -2,6 +2,7 @@
 // edit the wording if needed, then download a PDF. Nothing is sent to the tenant from here.
 import { useEffect, useMemo, useState } from 'react';
 import API from '../services/api';
+import { IconInline } from '../components/Icon';
 
 export default function Documents() {
   const [tenants, setTenants] = useState([]);
@@ -47,12 +48,12 @@ export default function Documents() {
   const card = { background: 'var(--card, #fff)', border: '1px solid var(--border, #e5e7eb)', borderRadius: 14, padding: 16, marginBottom: 14 };
   const inp = { padding: '8px 10px', borderRadius: 8, border: '1px solid var(--border, #d1d5db)', background: 'var(--bg, #fff)', color: 'inherit', fontSize: 14, boxSizing: 'border-box', width: '100%' };
   const btn = { padding: '8px 14px', borderRadius: 8, border: '1px solid var(--border, #d1d5db)', background: 'var(--card, #fff)', color: 'inherit', cursor: 'pointer', fontSize: 13, fontWeight: 600 };
-  const primary = { ...btn, background: 'var(--primary, #7c3aed)', color: '#fff', border: 'none' };
+  const primary = { ...btn, background: 'var(--primary, #1b6b45)', color: '#fff', border: 'none' };
   const muted = { color: 'var(--muted, #6b7280)', fontSize: 13 };
 
   return (
     <div style={{ maxWidth: 900, margin: '0 auto', padding: 4 }}>
-      <h2 style={{ margin: '0 0 4px' }}>📄 Notices and leases</h2>
+      <h1 style={{ fontFamily: 'Bricolage Grotesque', fontSize: 32, fontWeight: 700, letterSpacing: '-0.4px', margin: '0 0 4px', color: 'var(--text)' }}><IconInline name="📄" size={14} />Notices and leases</h1>
       <p style={{ ...muted, marginTop: 0 }}>Make a notice or tenancy agreement as a PDF. These are general templates, not legal advice. Have a lawyer check important documents.</p>
       {err && <div style={{ ...card, color: '#b91c1c' }}>{err}</div>}
 
@@ -61,7 +62,7 @@ export default function Documents() {
         <input style={inp} placeholder="Search by name, unit or property" value={q} onChange={e => setQ(e.target.value)} />
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 10, maxHeight: 150, overflowY: 'auto' }}>
           {matches.map(t => (
-            <button key={t.id} onClick={() => setTenantId(String(t.id))} style={{ ...btn, background: String(t.id) === tenantId ? 'var(--primary, #7c3aed)' : undefined, color: String(t.id) === tenantId ? '#fff' : undefined }}>
+            <button key={t.id} onClick={() => setTenantId(String(t.id))} style={{ ...btn, background: String(t.id) === tenantId ? 'var(--primary, #1b6b45)' : undefined, color: String(t.id) === tenantId ? '#fff' : undefined }}>
               {t.full_name} <span style={{ opacity: .7, fontWeight: 400 }}>{t.unit_number || ''}</span>
             </button>))}
           {matches.length === 0 && <span style={muted}>No tenants found.</span>}
@@ -72,7 +73,7 @@ export default function Documents() {
         <div style={{ fontWeight: 700, marginBottom: 8 }}>2. Choose a document</div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 10 }}>
           {templates.map(t => (
-            <button key={t.key} onClick={() => setKey(t.key)} style={{ ...btn, textAlign: 'left', padding: 12, borderColor: key === t.key ? '#7c3aed' : undefined, background: key === t.key ? 'rgba(124,58,237,.08)' : undefined }}>
+            <button key={t.key} onClick={() => setKey(t.key)} style={{ ...btn, textAlign: 'left', padding: 12, borderColor: key === t.key ? '#1b6b45' : undefined, background: key === t.key ? 'rgba(27,107,69,.08)' : undefined }}>
               <div>{t.label}</div><div style={{ ...muted, fontWeight: 400, marginTop: 3 }}>{t.description}</div>
             </button>))}
         </div>

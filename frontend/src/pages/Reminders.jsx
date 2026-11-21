@@ -3,6 +3,7 @@
 // out; the reminder is then logged so nobody gets nagged twice in a day.
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import API from '../services/api';
+import { IconInline } from '../components/Icon';
 
 const LEVELS = { overdue: ['Overdue', '#dc2626'], due: ['Due now', '#d97706'], upcoming: ['Due soon', '#2563eb'] };
 const TEMPLATES = {
@@ -79,21 +80,21 @@ export default function Reminders() {
   const card = { background: 'var(--card, #fff)', border: '1px solid var(--border, #e5e7eb)', borderRadius: 12, padding: 14 };
   const inp = { padding: '7px 9px', borderRadius: 8, border: '1px solid var(--border, #d1d5db)', background: 'var(--bg, #fff)', color: 'inherit', fontSize: 14 };
   const btn = { padding: '7px 13px', borderRadius: 8, border: '1px solid var(--border, #d1d5db)', background: 'var(--card, #fff)', color: 'inherit', cursor: 'pointer', fontSize: 13, fontWeight: 600 };
-  const primary = { ...btn, background: '#16a34a', color: '#fff', border: 'none' };
+  const primary = { ...btn, background: '#1b6b45', color: '#fff', border: 'none' };
   const th = { textAlign: 'left', padding: '8px 10px', fontSize: 12, color: 'var(--muted, #6b7280)', borderBottom: '1px solid var(--border, #e5e7eb)' };
   const td = { padding: '8px 10px', borderBottom: '1px solid var(--border, #f1f5f9)', fontSize: 14, verticalAlign: 'top' };
 
   const cur = queue ? queue.list[queue.i] : null;
   return (
     <div style={{ padding: 4 }}>
-      <h2 style={{ marginTop: 0 }}>🔔 Rent Reminders</h2>
+      <h1 style={{ fontFamily: 'Bricolage Grotesque', fontSize: 32, fontWeight: 700, letterSpacing: '-0.4px', margin: 0, color: 'var(--text)' }}><IconInline name="🔔" size={14} />Rent Reminders</h1>
       <div style={{ ...card, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginBottom: 12 }}>
         <select style={inp} value={plotId} onChange={e => setPlotId(e.target.value)}><option value="">All properties</option>{plots.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select>
         {[['', `All (${rows.length})`], ['overdue', `Overdue (${counts.overdue || 0})`], ['due', `Due now (${counts.due || 0})`], ['upcoming', `Due soon (${counts.upcoming || 0})`]].map(([v, l]) =>
-          <button key={v} style={level === v ? { ...btn, background: 'var(--primary, #7c3aed)', color: '#fff', border: 'none' } : btn} onClick={() => setLevel(v)}>{l}</button>)}
+          <button key={v} style={level === v ? { ...btn, background: 'var(--primary, #1b6b45)', color: '#fff', border: 'none' } : btn} onClick={() => setLevel(v)}>{l}</button>)}
         <div style={{ flex: 1 }} />
         <select style={inp} value={lang} onChange={e => setLang(e.target.value)}><option value="en">English</option><option value="sw">Kiswahili</option></select>
-        <button style={btn} onClick={() => setEditing(!editing)}>✏️ Edit wording</button>
+        <button style={btn} onClick={() => setEditing(!editing)}><IconInline name="✏️" size={14} />Edit wording</button>
         <button style={primary} disabled={!todo.length} onClick={() => setQueue({ list: todo, i: 0 })}>▶ Send one by one ({todo.length})</button>
       </div>
       {err && <div style={{ ...card, color: '#b91c1c', marginBottom: 10 }}>{err}</div>}
@@ -121,10 +122,10 @@ export default function Reminders() {
                   <td style={td}>KES {Number(t.owed).toLocaleString()}<div style={{ fontSize: 12, color: 'var(--muted, #6b7280)' }}>{t.months_behind} month{t.months_behind > 1 ? 's' : ''}</div></td>
                   <td style={{ ...td, color: LEVELS[t.level][1], fontWeight: 700 }}>{LEVELS[t.level][0]}</td>
                   <td style={td}>{t.last_reminded_at ? (sameDay(t.last_reminded_at) ? 'Today ✓' : new Date(t.last_reminded_at).toLocaleDateString('en-KE', { day: 'numeric', month: 'short' })) : '—'}</td>
-                  <td style={td}>{link(t) ? <button style={primary} onClick={() => send(t)}>💬 WhatsApp</button> : <span style={{ fontSize: 12, color: '#b91c1c' }}>No valid phone</span>}</td>
+                  <td style={td}>{link(t) ? <button style={primary} onClick={() => send(t)}><IconInline name="💬" size={14} />WhatsApp</button> : <span style={{ fontSize: 12, color: '#b91c1c' }}>No valid phone</span>}</td>
                 </tr>
               ))}
-              {!shown.length && <tr><td style={td} colSpan={6}>🎉 Nobody needs a reminder right now.</td></tr>}
+              {!shown.length && <tr><td style={td} colSpan={6}> Nobody needs a reminder right now.</td></tr>}
             </tbody>
           </table>
         </div>
@@ -141,7 +142,7 @@ export default function Reminders() {
               <button style={btn} onClick={() => setQueue(null)}>Stop</button>
               <div style={{ display: 'flex', gap: 8 }}>
                 <button style={btn} onClick={() => setQueue(q => q.i + 1 < q.list.length ? { ...q, i: q.i + 1 } : null)}>Skip</button>
-                <button style={primary} onClick={() => { send(cur); setQueue(q => q.i + 1 < q.list.length ? { ...q, i: q.i + 1 } : null); }}>💬 Open WhatsApp & next</button>
+                <button style={primary} onClick={() => { send(cur); setQueue(q => q.i + 1 < q.list.length ? { ...q, i: q.i + 1 } : null); }}><IconInline name="💬" size={14} />Open WhatsApp & next</button>
               </div>
             </div>
           </div>

@@ -19,6 +19,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import API from '../services/api';
 import { useAuth } from '../context/AuthContext';
+import { IconInline } from '../components/Icon';
 
 const inputStyle = { padding: '9px 14px', borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface2)', color: 'var(--text)', fontSize: 13, outline: 'none' };
 
@@ -104,10 +105,10 @@ export default function PermissionOverrides() {
 
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', flexWrap: 'wrap', gap: 12, marginBottom: 18 }}>
         <div>
-          <h2 style={{ margin: '0 0 4px', fontFamily: 'Space Grotesk, sans-serif', color: 'var(--text)' }}>🔑 Permission Overrides</h2>
+          <h1 style={{ fontFamily: 'Bricolage Grotesque', fontSize: 32, fontWeight: 700, letterSpacing: '-0.4px', margin: '0 0 4px', color: 'var(--text)' }}><IconInline name="🔑" size={14} />Permission Overrides</h1>
           <p style={{ color: 'var(--muted)', fontSize: 14, margin: 0 }}>
             Every grant/revoke currently set for a specific user, across every property. To add one, open that user's
-            🔑 Permissions on the Users page — this view is for seeing and removing what's already there.
+            <IconInline name="🔑" size={14} />Permissions on the Users page — this view is for seeing and removing what's already there.
           </p>
         </div>
       </div>
@@ -142,7 +143,7 @@ export default function PermissionOverrides() {
               type="text"
               value={search}
               onChange={e => setSearch(e.target.value)}
-              placeholder="🔍 Search permission, user, property…"
+              placeholder="Search permission, user, property…"
               style={{ ...inputStyle, flex: 1, minWidth: 200 }}
             />
           </div>
@@ -174,7 +175,7 @@ export default function PermissionOverrides() {
                         </div>
                       )}
                     </td>
-                    <td style={{ padding: '10px 14px', color: 'var(--muted)' }}>{o.plot_id ? `📍 ${o.plot_name || `Property #${o.plot_id}`}` : 'All properties'}</td>
+                    <td style={{ padding: '10px 14px', color: 'var(--muted)' }}>{o.plot_id ? `${o.plot_name || `Property #${o.plot_id}`}` : 'All properties'}</td>
                     <td style={{ padding: '10px 14px' }}>
                       <span style={{
                         background: o.effect === 'grant' ? 'var(--green-light, #dcfce7)' : 'var(--red-light, #fee2e2)',

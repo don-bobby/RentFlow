@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import API from '../services/api';
 import { priceText } from '../components/SpecialCard';
+import Icon, { IconInline } from '../components/Icon';
 
 const EMPTY = { kind: 'stay', title: '', description: '', price: '', price_unit: 'night', location: '', lat: '', lng: '', bedrooms: '', bathrooms: '', contact_phone: '', status: 'active' };
 const STATUS = { active: ['Live', '#16a34a'], hidden: ['Hidden', '#6b7280'], closed: ['Closed', '#b45309'] };
@@ -84,13 +85,13 @@ export default function Specials() {
   const card = { background: 'var(--card, #fff)', border: '1px solid var(--border, #e5e7eb)', borderRadius: 12, padding: 16 };
   const inp = { width: '100%', padding: '8px 10px', borderRadius: 8, border: '1px solid var(--border, #d1d5db)', background: 'var(--bg, #fff)', color: 'inherit', fontSize: 14, boxSizing: 'border-box' };
   const btn = { padding: '7px 13px', borderRadius: 8, border: '1px solid var(--border, #d1d5db)', background: 'var(--card, #fff)', color: 'inherit', cursor: 'pointer', fontSize: 13, fontWeight: 600 };
-  const primary = { ...btn, background: 'var(--primary, #7c3aed)', color: '#fff', border: 'none' };
+  const primary = { ...btn, background: 'var(--primary, #1b6b45)', color: '#fff', border: 'none' };
   const lab = { fontSize: 12, fontWeight: 700, color: 'var(--muted, #6b7280)', marginBottom: 3, display: 'block' };
 
   return (
     <div style={{ padding: 4 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 14 }}>
-        <h2 style={{ margin: 0 }}>⭐ Specials</h2>
+        <h1 style={{ fontFamily: 'Bricolage Grotesque', fontSize: 32, fontWeight: 700, letterSpacing: '-0.4px', margin: 0, color: 'var(--text)' }}><IconInline name="⭐" size={14} />Specials</h1>
         <span style={{ color: 'var(--muted, #6b7280)', fontSize: 13 }}>Airbnb stays and properties for sale, shown on the public listings page. Only admins can post here.</span>
         <div style={{ flex: 1 }} />
         <button style={primary} onClick={() => open(null)}>＋ New special</button>
@@ -102,7 +103,7 @@ export default function Specials() {
         {items.map(it => (
           <div key={it.id} style={{ ...card, padding: 0, overflow: 'hidden' }}>
             <div style={{ aspectRatio: '16/9', background: '#1f2937', display: 'grid', placeItems: 'center', fontSize: 34 }}>
-              {it.photos[0] && urls[it.photos[0]] ? <img src={urls[it.photos[0]]} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : (it.kind === 'sale' ? '🏡' : '🏖️')}
+              {it.photos[0] && urls[it.photos[0]] ? <img src={urls[it.photos[0]]} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : <Icon name={it.kind === 'sale' ? '🏡' : '🏖️'} size={34} />}
             </div>
             <div style={{ padding: 12 }}>
               <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 4 }}>

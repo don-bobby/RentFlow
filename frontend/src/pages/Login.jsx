@@ -29,7 +29,7 @@ const HERO_IMAGE = '/lgn.jpg';
 const HERO_OVERLAY = 'linear-gradient(90deg, rgba(18,53,36,0.94) 0%, rgba(18,53,36,0.80) 45%, rgba(18,53,36,0.62) 100%)';
 
 // Set this to wherever your tenant sign-in lives
-const TENANT_LOGIN_PATH = '/tenant-login';
+const TENANT_LOGIN_PATH = '/tenant/login';
 
 const inputStyle = {
   width: '100%', boxSizing: 'border-box', height: 48, padding: '0 14px',
@@ -119,9 +119,9 @@ export default function Login() {
   }
 
   const features = [
-    'Rent payments matched to tenants automatically',
-    'Vacant units listed with real photos and rent',
-    'Tenant balances always up to date',
+    'A direct line to the property manager whenever you need answers',
+    'Listings that show the real home and the real rent',
+    'Landlords, managers and tenants on the same page',
   ];
 
   const errorBox = error && (
@@ -168,10 +168,10 @@ export default function Login() {
 
           <section style={{ flex: '1 1 380px', maxWidth: 520, color: '#fff' }}>
             <h1 style={{ margin: '0 0 16px', fontFamily: DISPLAY, fontWeight: 700, fontSize: 'clamp(34px, 5vw, 52px)', lineHeight: 1.06, letterSpacing: -0.5 }}>
-              Every unit, tenant and payment in one place
+              Renting, built on trust and transparency
             </h1>
             <p style={{ margin: '0 0 36px', fontSize: 17, lineHeight: 1.5, color: '#d6e4da' }}>
-              Sign in to manage rent collection, vacancies and balances for your properties.
+              Rent payments, receipts and vacancies are recorded in one place that landlords, managers and tenants can all check.
             </p>
             <ul style={{ margin: 0, padding: 0, listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 14 }}>
               {features.map(f => (

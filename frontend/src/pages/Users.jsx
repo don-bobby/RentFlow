@@ -1,10 +1,11 @@
 import { useState, useEffect, useMemo } from 'react';
 import API from '../services/api';
 import { useAuth } from '../context/AuthContext';
+import Icon, { IconInline, Caret } from '../components/Icon';
 
 const labelStyle = { display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--muted)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.4px' };
 
-const AVATAR_COLORS = ['#7c3aed', '#2563eb', '#16a34a', '#d97706', '#dc2626', '#0891b2', '#db2777'];
+const AVATAR_COLORS = ['#1b6b45', '#2563eb', '#16a34a', '#d97706', '#dc2626', '#0891b2', '#db2777'];
 function initialsAvatar(name) {
   const clean = (name || '?').trim();
   const parts = clean.split(/\s+/);
@@ -399,8 +400,8 @@ export default function Users() {
 
   const roleBadge = (role, approved) => {
     const colors = {
-      admin:       { bg: 'var(--primary-light, #ede9fe)', color: 'var(--primary, #7c3aed)' },
-      super_admin: { bg: 'var(--primary-light, #ede9fe)', color: 'var(--primary, #7c3aed)' },
+      admin:       { bg: 'var(--primary-light, #e6efe8)', color: 'var(--primary, #1b6b45)' },
+      super_admin: { bg: 'var(--primary-light, #e6efe8)', color: 'var(--primary, #1b6b45)' },
       agent:       { bg: 'var(--pink-light, #fce7f3)',    color: '#db2777' },
       landlord:    { bg: 'var(--blue-light, #dbeafe)',    color: 'var(--blue, #2563eb)'    },
       caretaker:   { bg: 'var(--green-light, #dcfce7)',   color: 'var(--green, #16a34a)'   },
@@ -411,12 +412,12 @@ export default function Users() {
         <span style={{ background: c.bg, color: c.color, padding: '3px 10px', borderRadius: 99, fontSize: 12, fontWeight: 600 }}>{role}</span>
         {role === 'landlord' && (
           <span className={approved ? '' : 'us-pending-badge'} style={{ background: approved ? 'var(--green-light, #dcfce7)' : 'var(--amber-light, #fef3c7)', color: approved ? 'var(--green, #16a34a)' : 'var(--amber, #d97706)', padding: '3px 10px', borderRadius: 99, fontSize: 12, fontWeight: 600 }}>
-            {approved ? '✓ approved' : '⏳ pending'}
+            {approved ? '✓ approved' : 'pending'}
           </span>
         )}
         {role === 'agent' && (
           <span className={approved ? '' : 'us-pending-badge'} style={{ background: approved ? 'var(--green-light, #dcfce7)' : 'var(--red-light, #fee2e2)', color: approved ? 'var(--green, #16a34a)' : 'var(--red, #dc2626)', padding: '3px 10px', borderRadius: 99, fontSize: 12, fontWeight: 600 }}>
-            {approved ? '✓ active' : '⏸ suspended'}
+            {approved ? '✓ active' : 'suspended'}
           </span>
         )}
       </div>
@@ -427,7 +428,7 @@ export default function Users() {
     <div>
       <style>{`
         .us-row { transition: background 0.12s ease; }
-        .us-row:hover { background: var(--primary-light, #ede9fe) !important; }
+        .us-row:hover { background: var(--primary-light, #e6efe8) !important; }
         .us-skel { background: var(--surface2); border-radius: 6px; animation: us-pulse 1.3s ease-in-out infinite; }
         @keyframes us-pulse { 0%, 100% { opacity: .5; } 50% { opacity: 1; } }
         @keyframes us-glow { 0%, 100% { box-shadow: 0 0 0 0 rgba(217,119,6,0.4); } 50% { box-shadow: 0 0 0 4px rgba(217,119,6,0); } }
@@ -437,7 +438,7 @@ export default function Users() {
       {/* Header */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
         <div>
-          <h1 style={{ fontFamily: 'Space Grotesk', fontSize: 26, fontWeight: 700, marginBottom: 4, color: 'var(--text)' }}>Users</h1>
+          <h1 style={{ fontFamily: 'Bricolage Grotesque', fontSize: 32, fontWeight: 700, marginBottom: 4, letterSpacing: '-0.4px', color: 'var(--text)' }}>Users</h1>
           <p style={{ color: 'var(--muted)', fontSize: 14 }}>
             {visibleUsers.length} total user{visibleUsers.length !== 1 ? 's' : ''}
             {pendingLandlordCount > 0 && <> · <span style={{ color: 'var(--amber, #d97706)', fontWeight: 700 }}>{pendingLandlordCount} pending approval</span></>}
@@ -445,7 +446,7 @@ export default function Users() {
         </div>
         {(isAdmin || isAgent || can('users.create_caretaker')) && (
           <button onClick={() => { setForm({ name: '', email: '', password: '', role: 'caretaker', phone: '', plot_id: '' }); setError(''); setModal('create'); }}
-            style={{ padding: '10px 18px', borderRadius: 10, border: 'none', background: 'var(--primary, #7c3aed)', color: '#fff', fontWeight: 600, fontSize: 14, cursor: 'pointer' }}>
+            style={{ padding: '10px 18px', borderRadius: 10, border: 'none', background: 'var(--primary, #1b6b45)', color: '#fff', fontWeight: 600, fontSize: 14, cursor: 'pointer' }}>
             + Add User
           </button>
         )}
@@ -472,7 +473,7 @@ export default function Users() {
         ).map(r => {
           const count = r === 'all' ? visibleUsers.length : (roleCounts[r] || 0);
           return (
-            <button key={r} onClick={() => setRoleFilter(r)} style={{ padding: '7px 16px', borderRadius: 99, border: '1px solid var(--border)', background: roleFilter === r ? 'var(--primary, #7c3aed)' : 'var(--surface)', color: roleFilter === r ? '#fff' : 'var(--muted)', fontWeight: 600, fontSize: 13, textTransform: 'capitalize', cursor: 'pointer' }}>{r} ({count})</button>
+            <button key={r} onClick={() => setRoleFilter(r)} style={{ padding: '7px 16px', borderRadius: 99, border: '1px solid var(--border)', background: roleFilter === r ? 'var(--primary, #1b6b45)' : 'var(--surface)', color: roleFilter === r ? '#fff' : 'var(--muted)', fontWeight: 600, fontSize: 13, textTransform: 'capitalize', cursor: 'pointer' }}>{r} ({count})</button>
           );
         })}
         {pendingOnly && (
@@ -500,7 +501,7 @@ export default function Users() {
           </div>
         ) : filtered.length === 0 ? (
           <div style={{ padding: 60, textAlign: 'center', color: 'var(--muted)' }}>
-            <div style={{ fontSize: 32, marginBottom: 10 }}>👤</div>
+            <div style={{ marginBottom: 10, color: 'var(--muted)', display: 'flex', justifyContent: 'center' }}><Icon name="👤" size={32} /></div>
             No users found.
           </div>
         ) : (
@@ -528,9 +529,9 @@ export default function Users() {
                 <tr key={u.id} className="us-row" onClick={() => { if (opensOverview) openOverview(u); }}
                   style={{
                     borderTop: '1px solid var(--border)',
-                    background: isSelectedRow ? 'var(--primary-light, #ede9fe)' : (i % 2 === 0 ? 'var(--surface)' : 'var(--surface2)'),
+                    background: isSelectedRow ? 'var(--primary-light, #e6efe8)' : (i % 2 === 0 ? 'var(--surface)' : 'var(--surface2)'),
                     cursor: opensOverview ? 'pointer' : 'default',
-                    boxShadow: isSelectedRow ? 'inset 3px 0 0 var(--primary, #7c3aed)' : 'none',
+                    boxShadow: isSelectedRow ? 'inset 3px 0 0 var(--primary, #1b6b45)' : 'none',
                   }}>
                   <td style={{ padding: '12px 16px' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -564,12 +565,12 @@ export default function Users() {
           reached from here), and the same management actions that row used
           to carry inline. */}
       {modal === 'overview' && selected && (
-        <div style={{ width: 340, flexShrink: 0, background: 'var(--surface)', borderRadius: 14, border: '1px solid var(--primary, #7c3aed)', boxShadow: 'var(--shadow)', padding: 20, position: 'sticky', top: 16, maxHeight: '80vh', overflowY: 'auto' }}>
+        <div style={{ width: 340, flexShrink: 0, background: 'var(--surface)', borderRadius: 14, border: '1px solid var(--primary, #1b6b45)', boxShadow: 'var(--shadow)', padding: 20, position: 'sticky', top: 16, maxHeight: '80vh', overflowY: 'auto' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
-            <h2 style={{ fontFamily: 'Space Grotesk', fontWeight: 700, fontSize: 16 }}>🗂 {selected.name}</h2>
+            <h2 style={{ fontFamily: 'Bricolage Grotesque', fontWeight: 700, fontSize: 16 }}><IconInline name="🗂" size={18} />{selected.name}</h2>
             <div style={{ display: 'flex', gap: 4 }}>
               {isAdmin && !editingProfile && (
-                <button onClick={() => setEditingProfile(true)} title="Edit name, email, phone" style={{ width: 28, height: 28, borderRadius: '50%', border: 'none', background: 'var(--surface2)', cursor: 'pointer', fontSize: 13 }}>✏️</button>
+                <button onClick={() => setEditingProfile(true)} title="Edit name, email, phone" style={{ width: 28, height: 28, borderRadius: '50%', border: 'none', background: 'var(--surface2)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--muted)' }}><Icon name="✏️" size={15} /></button>
               )}
               <button onClick={() => { setModal(null); setOverview(null); setOverviewOverrides([]); setEditingProfile(false); }} style={{ width: 28, height: 28, borderRadius: '50%', border: 'none', background: 'var(--surface2)', cursor: 'pointer', fontSize: 15, color: 'var(--muted)' }}>×</button>
             </div>
@@ -584,7 +585,7 @@ export default function Users() {
               <input value={editForm.phone} onChange={e => setEditForm(f => ({ ...f, phone: e.target.value }))} placeholder="Phone"
                 style={{ padding: '8px 10px', borderRadius: 7, border: '1px solid var(--border)', background: 'var(--surface2)', fontSize: 13, color: 'var(--text)' }} />
               <div style={{ display: 'flex', gap: 6 }}>
-                <button onClick={handleSaveProfile} disabled={saving} style={{ flex: 1, padding: '7px', borderRadius: 7, border: 'none', background: 'var(--primary, #7c3aed)', color: '#fff', fontWeight: 600, fontSize: 12, cursor: 'pointer' }}>
+                <button onClick={handleSaveProfile} disabled={saving} style={{ flex: 1, padding: '7px', borderRadius: 7, border: 'none', background: 'var(--primary, #1b6b45)', color: '#fff', fontWeight: 600, fontSize: 12, cursor: 'pointer' }}>
                   {saving ? 'Saving...' : 'Save'}
                 </button>
                 <button onClick={() => { setEditingProfile(false); setEditForm({ name: selected.name || '', email: selected.email || '', phone: selected.phone || '' }); setError(''); }}
@@ -636,8 +637,8 @@ export default function Users() {
                   <label style={{ ...labelStyle, marginBottom: 0 }}>
                     Properties {selected.role !== 'agent' && `(${overview?.properties?.length || 0})`}
                   </label>
-                  <button onClick={() => openPlots(selected)} style={{ padding: '2px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--surface2)', fontSize: 11, fontWeight: 600, color: 'var(--primary, #7c3aed)', cursor: 'pointer' }}>
-                    ⚙️ Manage
+                  <button onClick={() => openPlots(selected)} style={{ padding: '2px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--surface2)', fontSize: 11, fontWeight: 600, color: 'var(--primary, #1b6b45)', cursor: 'pointer' }}>
+                    <IconInline name="⚙️" size={14} />Manage
                   </button>
                 </div>
                 {selected.role === 'agent' ? (
@@ -704,8 +705,8 @@ export default function Users() {
                     {selected.role === 'agent' && !selected.is_approved && (
                       <button onClick={() => { handleReactivate(selected); setModal(null); }} style={{ flex: '1 1 auto', padding: '8px', borderRadius: 7, border: 'none', background: 'var(--green, #16a34a)', color: '#fff', fontWeight: 600, fontSize: 11.5, cursor: 'pointer' }}>Reactivate</button>
                     )}
-                    <button onClick={() => handleResetPassword(selected)} style={{ flex: '1 1 auto', padding: '8px', borderRadius: 7, border: '1px solid var(--border)', background: 'var(--surface2)', color: 'var(--text)', fontWeight: 600, fontSize: 11.5, cursor: 'pointer' }}>🔁 Reset</button>
-                    <button onClick={() => openPermissions(selected)} style={{ flex: '1 1 auto', padding: '8px', borderRadius: 7, border: '1px solid var(--border)', background: 'var(--primary-light, #ede9fe)', color: 'var(--primary, #7c3aed)', fontWeight: 600, fontSize: 11.5, cursor: 'pointer' }}>🔑 Manage</button>
+                    <button onClick={() => handleResetPassword(selected)} style={{ flex: '1 1 auto', padding: '8px', borderRadius: 7, border: '1px solid var(--border)', background: 'var(--surface2)', color: 'var(--text)', fontWeight: 600, fontSize: 11.5, cursor: 'pointer' }}><IconInline name="🔁" size={13} gap={4} />Reset</button>
+                    <button onClick={() => openPermissions(selected)} style={{ flex: '1 1 auto', padding: '8px', borderRadius: 7, border: '1px solid var(--border)', background: 'var(--primary-light, #e6efe8)', color: 'var(--primary, #1b6b45)', fontWeight: 600, fontSize: 11.5, cursor: 'pointer' }}><IconInline name="🔑" size={13} gap={4} />Manage</button>
                   </div>
                 </div>
               )}
@@ -719,7 +720,7 @@ export default function Users() {
       {modal === 'create' && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, padding: 20 }}>
           <div style={{ background: 'var(--surface)', borderRadius: 16, padding: 28, width: '100%', maxWidth: 460, boxShadow: 'var(--shadow-lg)' }}>
-            <h2 style={{ fontFamily: 'Space Grotesk', fontWeight: 700, fontSize: 18, marginBottom: 20 }}>Add User</h2>
+            <h2 style={{ fontFamily: 'Bricolage Grotesque', fontWeight: 700, fontSize: 18, marginBottom: 20 }}>Add User</h2>
             {error && <div style={{ background: 'var(--red-light, #fee2e2)', color: 'var(--red, #dc2626)', padding: '9px 14px', borderRadius: 8, marginBottom: 14, fontSize: 13 }}>{error}</div>}
             <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
               <Field label="Full Name"  value={form.name}     onChange={v => setForm(f => ({ ...f, name: v }))}     placeholder="e.g. John Kamau" />
@@ -747,7 +748,7 @@ export default function Users() {
             </div>
             <div style={{ display: 'flex', gap: 10, marginTop: 24, justifyContent: 'flex-end' }}>
               <button onClick={() => setModal(null)} style={{ padding: '10px 20px', borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface)', fontWeight: 600, fontSize: 14, cursor: 'pointer' }}>Cancel</button>
-              <button onClick={handleCreate} disabled={saving} style={{ padding: '10px 20px', borderRadius: 10, border: 'none', background: 'var(--primary, #7c3aed)', color: '#fff', fontWeight: 600, fontSize: 14, cursor: 'pointer' }}>
+              <button onClick={handleCreate} disabled={saving} style={{ padding: '10px 20px', borderRadius: 10, border: 'none', background: 'var(--primary, #1b6b45)', color: '#fff', fontWeight: 600, fontSize: 14, cursor: 'pointer' }}>
                 {saving ? 'Creating...' : 'Create User'}
               </button>
             </div>
@@ -759,7 +760,7 @@ export default function Users() {
       {modal === 'approve' && approveTarget && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, padding: 20 }}>
           <div style={{ background: 'var(--surface)', borderRadius: 16, padding: 28, width: '100%', maxWidth: 440, boxShadow: 'var(--shadow-lg)' }}>
-            <h2 style={{ fontFamily: 'Space Grotesk', fontWeight: 700, fontSize: 18, marginBottom: 8 }}>Approve Landlord</h2>
+            <h2 style={{ fontFamily: 'Bricolage Grotesque', fontWeight: 700, fontSize: 18, marginBottom: 8 }}>Approve Landlord</h2>
             <p style={{ color: 'var(--muted)', fontSize: 13, marginBottom: 20 }}>
               Approving <strong>{approveTarget.name}</strong>. Their properties start self-managed; assign an agent to any individual property from the Properties page.
             </p>
@@ -779,8 +780,8 @@ export default function Users() {
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, padding: 20 }}>
           <div style={{ background: 'var(--surface)', borderRadius: 16, padding: 28, width: '100%', maxWidth: 480, boxShadow: 'var(--shadow-lg)' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
-              <h2 style={{ fontFamily: 'Space Grotesk', fontWeight: 700, fontSize: 18 }}>
-                🏢 {selected.role === 'landlord' ? 'Properties' : selected.role === 'agent' ? 'Managed Properties' : 'Assigned Plots'} — {selected.name}
+              <h2 style={{ fontFamily: 'Bricolage Grotesque', fontWeight: 700, fontSize: 18 }}>
+                <IconInline name="🏢" size={16} />{selected.role === 'landlord' ? 'Properties' : selected.role === 'agent' ? 'Managed Properties' : 'Assigned Plots'} — {selected.name}
               </h2>
               <button onClick={() => setModal(null)} style={{ width: 30, height: 30, borderRadius: '50%', border: 'none', background: 'var(--surface2)', cursor: 'pointer', fontSize: 16, color: 'var(--muted)' }}>×</button>
             </div>
@@ -799,7 +800,7 @@ export default function Users() {
                       <div key={p.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'var(--surface2)', border: '1px solid var(--border)', borderRadius: 8, padding: '10px 14px' }}>
                         <div>
                           <div style={{ fontWeight: 600, fontSize: 14 }}>{p.name}</div>
-                          {p.location && <div style={{ fontSize: 12, color: 'var(--muted)' }}>📍 {p.location}</div>}
+                          {p.location && <div style={{ fontSize: 12, color: 'var(--muted)' }}><IconInline name="📍" size={12} gap={4} />{p.location}</div>}
                         </div>
                         <span style={{ background: 'var(--blue-light, #dbeafe)', color: 'var(--blue, #2563eb)', padding: '2px 8px', borderRadius: 6, fontSize: 12, fontWeight: 600 }}>Owner</span>
                       </div>
@@ -824,7 +825,7 @@ export default function Users() {
                       <div key={p.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'var(--surface2)', border: '1px solid var(--border)', borderRadius: 8, padding: '10px 14px' }}>
                         <div>
                           <div style={{ fontWeight: 600, fontSize: 14 }}>{p.name}</div>
-                          {p.location && <div style={{ fontSize: 12, color: 'var(--muted)' }}>📍 {p.location}</div>}
+                          {p.location && <div style={{ fontSize: 12, color: 'var(--muted)' }}><IconInline name="📍" size={12} gap={4} />{p.location}</div>}
                         </div>
                         <span style={{ background: 'var(--pink-light, #fce7f3)', color: '#db2777', padding: '2px 8px', borderRadius: 6, fontSize: 12, fontWeight: 600 }}>Agent</span>
                       </div>
@@ -845,7 +846,7 @@ export default function Users() {
                         <div key={p.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'var(--surface2)', border: '1px solid var(--border)', borderRadius: 8, padding: '10px 14px' }}>
                           <div>
                             <div style={{ fontWeight: 600, fontSize: 14 }}>{p.name}</div>
-                            {p.location && <div style={{ fontSize: 12, color: 'var(--muted)' }}>📍 {p.location}</div>}
+                            {p.location && <div style={{ fontSize: 12, color: 'var(--muted)' }}><IconInline name="📍" size={12} gap={4} />{p.location}</div>}
                           </div>
                           <button onClick={() => handleRemovePlot(p.id)} style={{ padding: '4px 10px', borderRadius: 6, border: 'none', background: 'var(--red-light, #fee2e2)', color: 'var(--red, #dc2626)', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>Remove</button>
                         </div>
@@ -872,7 +873,7 @@ export default function Users() {
                           );
                         })}
                     </select>
-                    <button onClick={handleAddPlot} disabled={!addingPlot} style={{ padding: '10px 16px', borderRadius: 8, border: 'none', background: 'var(--primary, #7c3aed)', color: '#fff', fontWeight: 600, fontSize: 14, cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                    <button onClick={handleAddPlot} disabled={!addingPlot} style={{ padding: '10px 16px', borderRadius: 8, border: 'none', background: 'var(--primary, #1b6b45)', color: '#fff', fontWeight: 600, fontSize: 14, cursor: 'pointer', whiteSpace: 'nowrap' }}>
                       + Add
                     </button>
                   </div>
@@ -895,7 +896,7 @@ export default function Users() {
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, padding: 20 }}>
           <div style={{ background: 'var(--surface)', borderRadius: 16, padding: 28, width: '100%', maxWidth: 560, boxShadow: 'var(--shadow-lg)', maxHeight: '85vh', overflowY: 'auto' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-              <h2 style={{ fontFamily: 'Space Grotesk', fontWeight: 700, fontSize: 18 }}>🔑 Permissions — {selected.name}</h2>
+              <h2 style={{ fontFamily: 'Bricolage Grotesque', fontWeight: 700, fontSize: 18 }}><IconInline name="🔑" size={18} />Permissions — {selected.name}</h2>
               <button onClick={() => { setModal(null); setPermData(null); }} style={{ width: 30, height: 30, borderRadius: '50%', border: 'none', background: 'var(--surface2)', cursor: 'pointer', fontSize: 16, color: 'var(--muted)' }}>×</button>
             </div>
             <p style={{ color: 'var(--muted)', fontSize: 13, marginBottom: 18 }}>
@@ -933,7 +934,7 @@ export default function Users() {
                           <div style={{ minWidth: 0 }}>
                             <div style={{ fontWeight: 600, fontSize: 13 }}>{o.permission}</div>
                             <div style={{ fontSize: 12, color: 'var(--muted)' }}>
-                              {o.plot_id ? `📍 ${o.plot_name || `Property #${o.plot_id}`}` : 'All properties'}
+                              {o.plot_id ? `${o.plot_name || `Property #${o.plot_id}`}` : 'All properties'}
                             </div>
                             {o.reason && (
                               <div style={{ fontSize: 11.5, color: 'var(--muted)', fontStyle: 'italic', marginTop: 2 }}>
@@ -1005,7 +1006,7 @@ export default function Users() {
                       style={{ ...inputStyle, resize: 'vertical', fontFamily: 'inherit' }}
                     />
                     <button onClick={handleAddOverride} disabled={!newOverride.permission || saving}
-                      style={{ padding: '10px 16px', borderRadius: 8, border: 'none', background: 'var(--primary, #7c3aed)', color: '#fff', fontWeight: 600, fontSize: 14, cursor: 'pointer' }}>
+                      style={{ padding: '10px 16px', borderRadius: 8, border: 'none', background: 'var(--primary, #1b6b45)', color: '#fff', fontWeight: 600, fontSize: 14, cursor: 'pointer' }}>
                       {saving ? 'Saving...' : '+ Add Override'}
                     </button>
                   </div>

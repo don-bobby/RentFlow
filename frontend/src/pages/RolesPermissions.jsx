@@ -15,6 +15,7 @@
 import { useState, useEffect, useMemo, Fragment } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { getRolePermissions, setRolePermission } from '../services/api';
+import { IconInline } from '../components/Icon';
 
 const PROFILE_LABELS = {
   agent:               'Agent',
@@ -143,7 +144,7 @@ export default function RolesPermissions() {
           background: #fff; border-radius: 50%; transition: transform 0.15s ease;
           box-shadow: 0 1px 3px rgba(0,0,0,0.25);
         }
-        .rp2-switch input:checked + .rp2-slider { background: var(--green, #16a34a); }
+        .rp2-switch input:checked + .rp2-slider { background: var(--primary, #1b6b45); }
         .rp2-switch input:checked + .rp2-slider::before { transform: translateX(16px); }
         .rp2-switch input:disabled + .rp2-slider { opacity: 0.5; cursor: wait; }
         .rp2-skel { background: var(--surface2); border-radius: 8px; animation: rp2-pulse 1.3s ease-in-out infinite; }
@@ -153,7 +154,7 @@ export default function RolesPermissions() {
 
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', flexWrap: 'wrap', gap: 12, marginBottom: 18 }}>
         <div>
-          <h2 style={{ margin: '0 0 4px', fontFamily: 'Space Grotesk, sans-serif', color: 'var(--text)' }}>🛡️ Roles &amp; Permissions</h2>
+          <h1 style={{ fontFamily: 'Bricolage Grotesque', fontSize: 32, fontWeight: 700, letterSpacing: '-0.4px', margin: '0 0 4px', color: 'var(--text)' }}><IconInline name="🛡️" size={14} />Roles &amp; Permissions</h1>
           <p style={{ color: 'var(--muted)', fontSize: 14, margin: 0 }}>
             Control what each role can do. Super admin always has full access and isn't shown here.
           </p>
@@ -163,7 +164,7 @@ export default function RolesPermissions() {
             type="text"
             value={search}
             onChange={e => setSearch(e.target.value)}
-            placeholder="🔍 Search permissions…"
+            placeholder="Search permissions…"
             style={{
               padding: '9px 14px', borderRadius: 10, border: '1px solid var(--border)',
               background: 'var(--surface2)', color: 'var(--text)', fontSize: 13,
@@ -218,7 +219,7 @@ export default function RolesPermissions() {
                         color: 'var(--muted)', background: 'var(--surface)',
                         borderTop: '1px solid var(--border)',
                       }}>
-                        {GROUP_ICONS[group] || '•'} {group}
+                        <IconInline name={GROUP_ICONS[group]} size={14} />{group}
                       </td>
                     </tr>
                     {perms.map(({ key, label }) => (

@@ -2,6 +2,7 @@
 // they have done for you and what you spent. Vendors are assigned to requests on the Maintenance page.
 import { useEffect, useMemo, useState } from 'react';
 import API from '../services/api';
+import { IconInline } from '../components/Icon';
 
 const TRADES = ['Plumber', 'Electrician', 'Painter', 'Carpenter', 'Mason', 'Cleaner', 'Welder', 'Security', 'Other'];
 const kes = (n) => `KES ${Number(n || 0).toLocaleString('en-KE', { maximumFractionDigits: 0 })}`;
@@ -42,7 +43,7 @@ export default function Vendors() {
   const card = { background: 'var(--card, #fff)', border: '1px solid var(--border, #e5e7eb)', borderRadius: 14, padding: 16, marginBottom: 14 };
   const inp = { padding: '8px 10px', borderRadius: 8, border: '1px solid var(--border, #d1d5db)', background: 'var(--bg, #fff)', color: 'inherit', fontSize: 14, boxSizing: 'border-box', width: '100%' };
   const btn = { padding: '7px 12px', borderRadius: 8, border: '1px solid var(--border, #d1d5db)', background: 'var(--card, #fff)', color: 'inherit', cursor: 'pointer', fontSize: 13, fontWeight: 600, textDecoration: 'none', display: 'inline-block' };
-  const primary = { ...btn, background: 'var(--primary, #7c3aed)', color: '#fff', border: 'none' };
+  const primary = { ...btn, background: 'var(--primary, #1b6b45)', color: '#fff', border: 'none' };
   const muted = { color: 'var(--muted, #6b7280)', fontSize: 13 };
   const lbl = { ...muted, display: 'flex', flexDirection: 'column', gap: 4, flex: '1 1 200px' };
   const canAdd = landlords.length > 0;
@@ -52,7 +53,7 @@ export default function Vendors() {
   return (
     <div style={{ maxWidth: 960, margin: '0 auto', padding: 4 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-        <h2 style={{ margin: 0 }}>🔧 Vendors</h2><div style={{ flex: 1 }} />
+        <h1 style={{ fontFamily: 'Bricolage Grotesque', fontSize: 32, fontWeight: 700, letterSpacing: '-0.4px', margin: 0, color: 'var(--text)' }}><IconInline name="🔧" size={14} />Vendors</h1><div style={{ flex: 1 }} />
         {canAdd && !form && <button style={primary} onClick={() => setForm({ ...EMPTY, landlord_id: landlords[0].id })}>+ Add vendor</button>}
       </div>
       <p style={{ ...muted, marginTop: 4 }}>Trades people you use. Assign one to a request on the Maintenance page and their cost shows up here.</p>

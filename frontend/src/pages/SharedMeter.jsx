@@ -4,6 +4,7 @@
 // is not an expense or income, and never touches rent.
 import { Fragment, useCallback, useEffect, useState } from 'react';
 import API from '../services/api';
+import { IconInline } from '../components/Icon';
 
 const today = () => new Date().toISOString().slice(0, 10);
 const kes = (n) => `KES ${Number(n || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
@@ -293,7 +294,7 @@ export default function SharedMeter({ plotId, plotName, type, month, setMonth, s
               <b style={{ color: bill.pct >= 100 ? '#16a34a' : '#b45309' }}>{bill.pct}%</b>
             </div>
             <div style={{ height: 14, borderRadius: 99, background: 'var(--border, #e5e7eb)', overflow: 'hidden', margin: '8px 0' }} role="progressbar" aria-valuenow={bill.pct} aria-valuemin={0} aria-valuemax={100}>
-              <div style={{ width: `${bill.pct}%`, height: '100%', background: bill.pct >= 100 ? '#16a34a' : '#7c3aed', transition: 'width .4s' }} />
+              <div style={{ width: `${bill.pct}%`, height: '100%', background: bill.pct >= 100 ? '#16a34a' : '#1b6b45', transition: 'width .4s' }} />
             </div>
             <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', fontSize: 14 }}>
               <span>Still needed: <b>{kes(bill.outstanding)}</b></span>
@@ -334,12 +335,12 @@ export default function SharedMeter({ plotId, plotName, type, month, setMonth, s
                   return (
                     <Fragment key={rk}>
                     <tr style={r.status === 'paid' ? undefined : { background: r.status === 'unpaid' ? 'rgba(220,38,38,.05)' : 'rgba(180,83,9,.06)' }}>
-                      <td style={td}><b>{r.unit_number}</b>{r.payer_id && <span title="A second business sharing this unit" style={{ fontSize: 11, color: '#7c3aed' }}> +shared</span>}</td><td style={td}>{r.tenant_name || '—'}</td><td style={td}>{isCat ? (r.category || '—') : r.weight}</td>
+                      <td style={td}><b>{r.unit_number}</b>{r.payer_id && <span title="A second business sharing this unit" style={{ fontSize: 11, color: '#1b6b45' }}> +shared</span>}</td><td style={td}>{r.tenant_name || '—'}</td><td style={td}>{isCat ? (r.category || '—') : r.weight}</td>
                       <td style={td}>{kes(r.share)}</td><td style={td}>{kes(r.received ?? r.paid)}{r.extra > 0 && <div style={{ fontSize: 11, color: '#16a34a' }}>incl. {kes(r.extra)} extra, credit for next bill</div>}</td><td style={td}>{kes(r.balance)}</td>
                       <td style={{ ...td, color: ST[r.status][1], fontWeight: 700 }}>{ST[r.status][0]}</td>
                       <td style={{ ...td, whiteSpace: 'nowrap' }}>
-                        {r.status !== 'paid' && wa && <a style={{ ...btn, textDecoration: 'none', display: 'inline-block', marginRight: 6 }} href={`https://wa.me/${wa}?text=${encodeURIComponent(reminder(r))}`} target="_blank" rel="noopener noreferrer">💬 Remind</a>}
-                        <button style={{ ...btn, marginRight: 6 }} onClick={() => toggleHist(r)} title="See, edit or delete this row's payments">🧾 Payments</button>
+                        {r.status !== 'paid' && wa && <a style={{ ...btn, textDecoration: 'none', display: 'inline-block', marginRight: 6 }} href={`https://wa.me/${wa}?text=${encodeURIComponent(reminder(r))}`} target="_blank" rel="noopener noreferrer"><IconInline name="💬" size={14} />Remind</a>}
+                        <button style={{ ...btn, marginRight: 6 }} onClick={() => toggleHist(r)} title="See, edit or delete this row's payments"><IconInline name="🧾" size={14} />Payments</button>
                         {(r.tenant_id || r.payer_id) && <button style={primary} onClick={() => setContrib({ tenant_id: r.tenant_id, payer_id: r.payer_id, name: r.tenant_name, unit: r.unit_number, amount: r.balance || '', method: 'Cash', reference: '', date: today() })}>+ Record</button>}
                       </td>
                     </tr>
@@ -376,7 +377,7 @@ export default function SharedMeter({ plotId, plotName, type, month, setMonth, s
             {sum.bills.map(b => (
               <div key={b.id} onClick={() => setMonth(b.billing_month)} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 0', cursor: 'pointer', borderTop: '1px solid var(--border, #f1f5f9)', fontWeight: b.billing_month === month ? 700 : 400 }}>
                 <span style={{ width: 130 }}>{monthName(b.billing_month)}</span>
-                <div style={{ flex: 1, height: 8, borderRadius: 99, background: 'var(--border, #e5e7eb)', overflow: 'hidden' }}><div style={{ width: `${b.pct}%`, height: '100%', background: b.pct >= 100 ? '#16a34a' : '#7c3aed' }} /></div>
+                <div style={{ flex: 1, height: 8, borderRadius: 99, background: 'var(--border, #e5e7eb)', overflow: 'hidden' }}><div style={{ width: `${b.pct}%`, height: '100%', background: b.pct >= 100 ? '#16a34a' : '#1b6b45' }} /></div>
                 <span style={{ width: 170, textAlign: 'right', fontSize: 13 }}>{kes(b.funded)} / {kes(b.amount)}</span>
               </div>))}
           </div>

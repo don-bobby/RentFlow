@@ -42,7 +42,7 @@ function initials(name) {
 }
 
 const AVATAR_PALETTE = [
-  ['#4f46e5', '#818cf8'], ['#0891b2', '#67e8f9'], ['#be185d', '#f472b6'],
+  ['#1b6b45', '#818cf8'], ['#0891b2', '#67e8f9'], ['#be185d', '#f472b6'],
   ['#b45309', '#fbbf24'], ['#15803d', '#86efac'], ['#6d28d9', '#c4b5fd'],
 ];
 function avatarGradient(name) {
@@ -145,7 +145,7 @@ export default function SmsMessages() {
   return (
     <div style={{ maxWidth: 820, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 20 }}>
       <div>
-        <h1 style={{ fontFamily: 'Space Grotesk', fontWeight: 700, fontSize: 22, color: 'var(--text)', marginBottom: 4 }}>
+        <h1 style={{ fontFamily: 'Bricolage Grotesque', fontWeight: 700, fontSize: 22, color: 'var(--text)', marginBottom: 4 }}>
           Messaging
         </h1>
         <p style={{ fontSize: 13, color: 'var(--muted)', margin: 0 }}>
