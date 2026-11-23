@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, Fragment } from 'react';
 import { exportReportPdf } from '../utils/pdfReport';
 import API from '../services/api';
 import { useAuth } from '../context/AuthContext';
@@ -14,10 +14,9 @@ import Icon, { IconInline } from '../components/Icon';
 const REPORTS = [
   { id: 'payments',       icon: '💳', label: 'Payment Collection',    desc: 'All rent payments received',           color: 'var(--green)',   light: 'var(--green-light)',   permission: 'reports.payment_collection' },
   { id: 'paymenthistory', icon: '🧾', label: 'Payment History',       desc: 'One tenant\'s full rent + deposit timeline', color: 'var(--primary)', light: 'var(--primary-light)', permission: 'reports.payment_collection' },
-  { id: 'unpaid',         icon: '⚠️', label: 'Unpaid Rent',           desc: 'Outstanding balances, with aging',     color: 'var(--red)',     light: 'var(--red-light)',     permission: 'reports.unpaid_rent' },
+  { id: 'unpaid',         icon: '⚠️', label: 'Unpaid Rent',           desc: 'Outstanding balances, aging and payment risk',     color: 'var(--red)',     light: 'var(--red-light)',     permission: 'reports.unpaid_rent' },
   { id: 'tenants',        icon: '👥', label: 'Tenant List',           desc: 'All active and inactive tenants',      color: 'var(--primary)', light: 'var(--primary-light)', permission: 'reports.tenant_list' },
   { id: 'ownerstatement', icon: '🏢', label: 'Owner Statement',       desc: 'Monthly income, expenses and net per property, as a PDF', color: 'var(--primary)', light: 'var(--primary-light)', permission: 'reports.revenue_summary' },
-  { id: 'arrearsrisk',    icon: '🚨', label: 'Arrears Aging & Risk',  desc: 'Who owes, how long, and who is likely to fall behind', color: 'var(--red)', light: 'var(--red-light)', permission: 'reports.unpaid_rent' },
   { id: 'maintperf',      icon: '🛠️', label: 'Maintenance Performance', desc: 'Resolution time, cost and repeat issues per property', color: 'var(--amber)', light: 'var(--amber-light)', permission: 'reports.maintenance' },
   { id: 'maintenance',    icon: '🔧', label: 'Maintenance Records',   desc: 'All maintenance requests by status',   color: 'var(--amber)',   light: 'var(--amber-light)',   permission: 'reports.maintenance' },
   { id: 'properties',     icon: '🏢', label: 'Property Summary',      desc: 'Plots, units, occupancy overview',     color: 'var(--blue)',    light: 'var(--blue-light)',    permission: 'reports.property_summary' },
@@ -143,6 +142,32 @@ const isNumCol = (c) => /KES|Amount|Balance|Total|Rent|Cost|Loss|Gap|Months|Unit
 
 // Money columns that represent a cost/shortfall are shown in red.
 const isNegativeCol = (c) => /Arrears|Loss|Expenses|Gap/.test(c);
+
+// ── Unpaid Rent helpers ──────────────────────────────────────────────────────
+const AGING_BUCKETS = ['0–30 days', '31–60 days', '61–90 days', '90+ days'];
+const BUCKET_TONE   = { '0–30 days': 'var(--green)', '31–60 days': 'var(--amber)', '61–90 days': '#ea580c', '90+ days': 'var(--red)' };
+const BUCKET_BADGE  = { '0–30 days': 'green', '31–60 days': 'amber', '61–90 days': 'orange', '90+ days': 'red' };
+
+// Kenyan mobile/landline -> international digits (2547XXXXXXXX). ok=false for
+// placeholders like 00000007 so the report can flag them instead of letting a
+// reminder silently go nowhere.
+function kePhone(raw) {
+  const digits = String(raw || '').replace(/\D/g, '');
+  let intl = '';
+  if (/^254[17]\d{8}$/.test(digits)) intl = digits;
+  else if (/^0[17]\d{8}$/.test(digits)) intl = '254' + digits.slice(1);
+  else if (/^[17]\d{8}$/.test(digits)) intl = '254' + digits;
+  return { ok: !!intl, intl };
+}
+
+function reminderText(row) {
+  return `Hello ${row.Tenant ?? row.Name}, a friendly reminder that your rent balance for ${row['Property / Unit']} is KES ${row['Balance (KES)']}. Kindly clear it at your earliest convenience. Thank you.`;
+}
+
+// WhatsApp text: a balance reminder when money is owed, otherwise just a greeting.
+function waText(row) {
+  return row._bal > 0 ? reminderText(row) : `Hello ${row.Tenant ?? row.Name}, `;
+}
 
 const STYLES = `
 .rp-page {
@@ -335,6 +360,21 @@ const STYLES = `
 .rp-table tbody tr:nth-child(even) { background: transparent; }
 .rp-table td { padding: 13px 16px; }
 .rp-badge { text-transform: none; }
+.rp-badge-orange { background: color-mix(in srgb, #ea580c 16%, transparent); color: #ea580c; }
+.rp-money.plain { color: var(--rp-text); font-weight: 600; }
+.rp-kpi.clickable { cursor: pointer; transition: border-color .15s, box-shadow .15s; }
+.rp-kpi.clickable:hover { border-color: var(--rp-tone); }
+.rp-kpi.on { border-color: var(--rp-tone); box-shadow: 0 0 0 1px var(--rp-tone); }
+.rp-hrow.clickable { cursor: pointer; border-radius: 8px; transition: opacity .15s; }
+.rp-hrow.clickable:hover { background: var(--rp-surface2); }
+.rp-hrow.dim { opacity: .4; }
+a.rp-mini { text-decoration: none; display: inline-block; white-space: nowrap; }
+.rp-actions { display: flex; gap: 6px; flex-wrap: nowrap; }
+.rp-tel { color: inherit; text-decoration: none; }
+.rp-tel:hover { text-decoration: underline; }
+.rp-warnchip { display: inline-block; margin-left: 6px; padding: 1px 7px; border-radius: 99px; font-size: 11px; font-weight: 600; background: color-mix(in srgb, var(--rp-amber) 18%, transparent); color: var(--rp-amber); white-space: nowrap; }
+.rp-table tr.rp-group-row td { background: var(--rp-surface2); font-weight: 700; border-top: 2px solid var(--rp-border); }
+.rp-table tfoot td { font-weight: 700; background: var(--rp-surface2); border-top: 2px solid var(--rp-border); }
 @media print { .rp-scroll { max-height: none !important; overflow: visible !important; } .rp-table th { position: static !important; } }
 `;
 
@@ -533,7 +573,7 @@ function AuditTable({ rows, open, toggle }) {
 
 // Compact horizontal bar chart: one or two bars per row (e.g. income vs expenses).
 // data: [{ label, values: [n, ...] }], series: [{ name, color }]
-function HBarChart({ title, data, series, format = (v) => Number(v).toLocaleString(), max: maxProp, note }) {
+function HBarChart({ title, data, series, format = (v) => Number(v).toLocaleString(), max: maxProp, note, selected, onSelect }) {
   const rowsData = data.slice(0, 8);
   const max = maxProp || Math.max(1, ...rowsData.flatMap(d => d.values));
   return (
@@ -550,12 +590,16 @@ function HBarChart({ title, data, series, format = (v) => Number(v).toLocaleStri
       </div>
       <div className="rp-hbars">
         {rowsData.map(d => (
-          <div className="rp-hrow" key={d.label}>
+          <div key={d.label}
+            className={`rp-hrow${onSelect ? ' clickable' : ''}${selected && selected !== 'all' && selected !== d.label ? ' dim' : ''}`}
+            onClick={onSelect ? () => onSelect(d.label) : undefined}
+            role={onSelect ? 'button' : undefined} tabIndex={onSelect ? 0 : undefined}
+            onKeyDown={onSelect ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSelect(d.label); } } : undefined}>
             <div className="rp-hlabel" title={d.label}>{d.label}</div>
             <div className="rp-hlines">
               {d.values.map((v, i) => (
                 <div className="rp-hline" key={i}>
-                  <div className="rp-hbar" style={{ width: `${v > 0 ? Math.max(2, (v / max) * 100) : 0}%`, background: tone(series[i].color) }} />
+                  <div className="rp-hbar" style={{ width: `${v > 0 ? Math.max(2, (v / max) * 100) : 0}%`, background: tone(d.color || series[i].color) }} />
                   <span className="rp-hval">{format(v)}</span>
                 </div>
               ))}
@@ -767,6 +811,13 @@ export default function Reports() {
   // Unpaid Rent's own property filter (kept out of `filters` so changing it
   // narrows the already-loaded data instead of refetching everything).
   const [unpaidPlot, setUnpaidPlot] = useState('all');
+  const [unpaidBucket, setUnpaidBucket] = useState('all');   // aging-bucket filter (tiles + chart bars)
+  const [unpaidAgeBy, setUnpaidAgeBy] = useState('oldest');   // 'oldest' = by oldest unpaid month, 'lastpay' = by days since last payment
+  const [unpaidGroup, setUnpaidGroup] = useState(false);      // group rows by property with subtotals
+  // Tenant List's own filters/grouping (kept out of `filters` so they narrow the loaded data without refetching)
+  const [tenantsPlot, setTenantsPlot] = useState('all');
+  const [tenantTile, setTenantTile] = useState('all');         // 'all' | 'active' | 'inactive' | 'owing'
+  const [tenantsGroup, setTenantsGroup] = useState(false);
   const [ownerPlot, setOwnerPlot] = useState('all');
   const [ownerMonth, setOwnerMonth] = useState(() => { const d = new Date(); d.setMonth(d.getMonth() - 1); return d.toISOString().slice(0, 7); });
   async function downloadOwnerStatement() {
@@ -1170,81 +1221,188 @@ export default function Reports() {
     }
 
     if (active === 'unpaid') {
-      // Aging is approximate: it's based on each tenant's most recent recorded
-      // payment (matched by name), or their move-in date if they have never
-      // paid. There's no monthly rent-charge history table, so this can't
-      // reflect exactly which month(s) are unpaid — only how long it's been
-      // since money was last seen from them.
-      const lastPaymentByTenant = {};
-      payments.forEach(p => {
-        if (!p.tenant_name) return;
+      // Aging is still approximate: it's based on each tenant's most recent
+      // received payment (matched by tenant id, not name), or their move-in
+      // date if they have never paid. Months behind / oldest unpaid month come
+      // from the arrears-risk data when it has this tenant, else balance ÷ rent.
+      const lastPayByTenant = {};
+      payments.filter(isCollected).forEach(p => {
+        if (!p.tenant_id) return;
         const d = new Date(p.payment_date);
-        if (!lastPaymentByTenant[p.tenant_name] || d > lastPaymentByTenant[p.tenant_name]) lastPaymentByTenant[p.tenant_name] = d;
+        const cur = lastPayByTenant[p.tenant_id];
+        if (!cur || d > cur.date) lastPayByTenant[p.tenant_id] = { date: d, amount: parseFloat(p.amount || 0) };
       });
+      const riskById = {}, riskByKey = {};
+      riskData.forEach(r => {
+        const id = r.tenant_id ?? r.id;
+        if (id != null) riskById[String(id)] = r;
+        riskByKey[`${r.full_name}|${r.plot_id}`] = r;
+      });
+      const riskFor = t => { const r = riskById[String(t.id)]; return (r && r.full_name === t.full_name) ? r : riskByKey[`${t.full_name}|${t.plot_id}`]; };
+      const unpaidHouseById = Object.fromEntries((houses || []).map(h => [h.id, h]));
+
       // A property-specific revoke of reports.unpaid_rent hides just that
       // property's tenants from this report (trims the data, doesn't hide
       // the whole report) — see canForPlot above.
       const visibleTenants = tenants
         .filter(t => canForPlot('reports.unpaid_rent', t.plot_id, plotPermissions))
         .filter(t => unpaidPlot === 'all' || String(t.plot_id) === String(unpaidPlot));
-      // A balance owed is a snapshot of today, so it is NOT narrowed by the period picker
-      // (that picker used to filter on move-in date and hid everyone who moved in earlier).
+      // A balance owed is a snapshot of today, so it is NOT narrowed by the period picker.
       const unpaid = visibleTenants.filter(t => t.is_active && parseFloat(t.balance || 0) > 0);
       const total  = unpaid.reduce((s, t) => s + parseFloat(t.balance || 0), 0);
       const now = new Date();
       const withAging = unpaid.map(t => {
-        const baseline = lastPaymentByTenant[t.full_name] || (t.move_in_date ? new Date(t.move_in_date) : now);
+        const lp = lastPayByTenant[t.id];
+        const baseline = lp ? lp.date : (t.move_in_date ? new Date(t.move_in_date) : now);
         const days = Math.max(0, daysBetween(now, baseline));
-        return { t, days, bucket: agingBucket(days) };
-      }).sort((a, b) => parseFloat(b.t.balance || 0) - parseFloat(a.t.balance || 0));   // biggest balance first
-      columns = ['Tenant', 'Phone', 'Unit', 'Plot', 'Balance (KES)', 'Days Since Last Payment', 'Aging Bucket', 'Move-in', 'Due Day'];
-      rows    = withAging.map(({ t, days, bucket }) => ({
+        const risk = riskFor(t);
+        const rent = parseFloat(t.rent_amount ?? unpaidHouseById[t.house_id]?.rent_amount ?? 0) || 0;
+        const bal  = parseFloat(t.balance || 0);
+        const months = risk?.months_owed != null ? risk.months_owed : (rent > 0 ? Math.round((bal / rent) * 10) / 10 : null);
+        // Two ways to age a debt, both kept: how long the OLDEST unpaid month has been unpaid
+        // (from the arrears data), and how long since ANY payment. The toggle picks which one
+        // drives the bucket/tiles/chart; both always show as columns.
+        const od = Number(risk?.oldest_days);
+        const oldestDays = Number.isFinite(od) && risk?.oldest_days != null ? Math.max(0, od) : null;
+        const basisDays = (unpaidAgeBy === 'oldest' && oldestDays != null) ? oldestDays : days;
+        return { t, days, oldestDays, bucket: agingBucket(basisDays), lp, risk, rent, bal, months, phone: kePhone(t.phone) };
+      }).sort((a, b) => b.bal - a.bal);   // biggest balance first
+      const bucketCount = b => withAging.filter(x => x.bucket === b).length;
+      const shown = unpaidBucket === 'all' ? withAging : withAging.filter(x => x.bucket === unpaidBucket);
+
+      columns = ['Tenant', 'Phone', 'Property / Unit', 'Rent (KES)', 'Balance (KES)', 'Months Behind', 'Oldest Unpaid', 'Last Payment', 'Last Paid (KES)', 'Days Overdue', 'Days Since Last Payment', 'Aging Bucket', 'Risk', 'Late Payments (last 6)', 'Move-in', 'Due Day'];
+      rows = shown.map(({ t, days, oldestDays, bucket, lp, risk, rent, bal, months, phone }) => ({
         Tenant: t.full_name,
         Phone: t.phone || '—',
-        Unit: t.unit_number || `#${t.house_id}`,
-        Plot: t.plot_name || '—',
-        'Balance (KES)': parseFloat(t.balance).toLocaleString(),
+        'Property / Unit': `${t.plot_name || '—'} · ${t.unit_number || `#${t.house_id}`}`,
+        'Rent (KES)': rent ? rent.toLocaleString() : '—',
+        'Balance (KES)': bal.toLocaleString(),
+        'Months Behind': months ?? '—',
+        'Oldest Unpaid': risk?.oldest_label || '—',
+        'Last Payment': lp ? lp.date.toLocaleDateString('en-KE') : 'Never',
+        'Last Paid (KES)': lp ? lp.amount.toLocaleString() : '—',
+        'Days Overdue': oldestDays ?? '—',
         'Days Since Last Payment': days,
         'Aging Bucket': bucket,
+        // Risk of falling (further) behind, from the arrears-risk data (Critical / High / Medium / Low)
+        Risk: risk?.risk_level ? `${risk.risk_level}${risk.risk_score != null ? ` (${risk.risk_score})` : ''}` : '—',
+        'Late Payments (last 6)': risk?.paid_months_checked ? `${risk.late_months}/${risk.paid_months_checked}${risk.late_months ? ` (avg ${risk.avg_days_late}d late)` : ''}` : '—',
         'Move-in': t.move_in_date ? new Date(t.move_in_date).toLocaleDateString('en-KE') : '—',
         'Due Day': t.rent_due_day || '—',
+        // hidden helpers (never exported or searched — leading underscore)
+        _tenantId: t.id, _plot: t.plot_name || '—', _bal: bal, _rent: rent,
+        _phoneOk: phone.ok, _phoneIntl: phone.intl,
+        _riskScore: risk?.risk_score ?? null, _riskLevel: risk?.risk_level || '', _lateMonths: risk?.late_months ?? null,
       }));
-      const bucketCount = b => withAging.filter(x => x.bucket === b).length;
       summary = [
         { label: 'Tenants Owing', value: unpaid.length, color: 'var(--red)' },
         { label: 'Total Unpaid', value: `KES ${total.toLocaleString()}`, color: 'var(--red)' },
-        { label: '0–30 days', value: bucketCount('0–30 days'), color: 'var(--green)' },
-        { label: '31–60 days', value: bucketCount('31–60 days'), color: 'var(--amber)' },
-        { label: '61–90 days', value: bucketCount('61–90 days'), color: '#f97316' },
-        { label: '90+ days', value: bucketCount('90+ days'), color: 'var(--red)' },
+        ...AGING_BUCKETS.map(b => ({ label: b, value: bucketCount(b), color: BUCKET_TONE[b], bucket: b })),
       ];
+      const badPhones = unpaid.filter(t => !kePhone(t.phone).ok).length;
+      const noOldest = unpaidAgeBy === 'oldest' ? withAging.filter(x => x.oldestDays == null).length : 0;
+      const ageNote = unpaidAgeBy === 'oldest'
+        ? `Aging buckets use how long the oldest unpaid month has been overdue${noOldest ? ` (${noOldest} tenant${noOldest === 1 ? '' : 's'} with no arrears data fall back to days since last payment)` : ''}.`
+        : 'Aging buckets use days since the tenant last paid anything.';
+      note = ageNote;
+      if (badPhones) note = ageNote + ' ' + `${badPhones} owing tenant${badPhones === 1 ? ' has' : 's have'} a phone number that looks invalid (flagged "check number") — fix it before sending reminders.`;
       const unpaidPlotName = unpaidPlot !== 'all' ? plotById[unpaidPlot]?.name || plots.find(p => String(p.id) === String(unpaidPlot))?.name : null;
-      title = unpaidPlotName ? `Unpaid Rent Report — ${unpaidPlotName}` : 'Unpaid Rent Report';
-      chart = <HBarChart title="Tenants by aging bucket" series={[{ name: 'Tenants', color: 'var(--red)' }]}
-        data={['0–30 days', '31–60 days', '61–90 days', '90+ days'].map(b => ({ label: b, values: [bucketCount(b)] }))} format={v => v} />;
+      title = `${unpaidPlotName ? `Unpaid Rent Report — ${unpaidPlotName}` : 'Unpaid Rent Report'}${unpaidBucket !== 'all' ? ` (${unpaidBucket})` : ''}`;
+      chart = <HBarChart title={`Tenants by aging bucket — ${unpaidAgeBy === 'oldest' ? 'oldest unpaid month' : 'last payment'} (click a bar to filter)`} series={[{ name: 'Tenants', color: 'var(--red)' }]}
+        data={AGING_BUCKETS.map(b => ({ label: b, values: [bucketCount(b)], color: BUCKET_TONE[b] }))} format={v => v}
+        selected={unpaidBucket} onSelect={b => setUnpaidBucket(cur => cur === b ? 'all' : b)} />;
     }
 
     if (active === 'tenants') {
       // See canForPlot above — a property-specific revoke of
       // reports.tenant_list trims that property's tenants out rather than
       // hiding the whole report.
-      const filtered = tenants
+      const tenantHouseById = Object.fromEntries((houses || []).map(h => [h.id, h]));
+      const baseAll = tenants
         .filter(t => canForPlot('reports.tenant_list', t.plot_id, plotPermissions))
         .filter(t => filters.status === 'all' || (filters.status === 'active' ? t.is_active : !t.is_active))
         .filter(t => filters.landlord === 'all' || t.owner_name === filters.landlord);
-      columns = ['Name', 'Phone', 'Email', 'Unit', 'Plot', 'Move-in', 'Balance (KES)', 'Status'];
-      rows    = filtered.map(t => ({
-        Name: t.full_name,
-        Phone: t.phone || '—',
-        Email: t.email || '—',
-        Unit: t.unit_number || `#${t.house_id}`,
-        Plot: t.plot_name || '—',
-        'Move-in': t.move_in_date ? new Date(t.move_in_date).toLocaleDateString('en-KE') : '—',
-        'Balance (KES)': parseFloat(t.balance || 0).toLocaleString(),
-        Status: t.is_active ? 'Active' : 'Inactive',
-      }));
-      summary = [{ label: 'Total Tenants', value: filtered.length, color: 'var(--primary)' }, { label: 'Active', value: filtered.filter(t=>t.is_active).length, color: 'var(--green)' }];
-      title = 'Tenant List Report';
+      const base = baseAll.filter(t => tenantsPlot === 'all' || String(t.plot_id) === String(tenantsPlot));
+      const owes = t => t.is_active && parseFloat(t.balance || 0) > 0;
+      // Risk data (same source Unpaid Rent uses) — covers EVERY tenant, not just those who owe,
+      // which is what makes "who might fall behind" possible.
+      const tRiskById = {}, tRiskByKey = {};
+      riskData.forEach(r => {
+        const id = r.tenant_id ?? r.id;
+        if (id != null) tRiskById[String(id)] = r;
+        tRiskByKey[`${r.full_name}|${r.plot_id}`] = r;
+      });
+      const riskOf = t => { const r = tRiskById[String(t.id)]; return (r && r.full_name === t.full_name) ? r : tRiskByKey[`${t.full_name}|${t.plot_id}`]; };
+      // "At risk" = active, not owing yet, but rated Critical or High
+      const atRisk = t => t.is_active && !owes(t) && ['Critical', 'High'].includes(riskOf(t)?.risk_level);
+      const shown = tenantTile === 'active' ? base.filter(t => t.is_active)
+        : tenantTile === 'inactive' ? base.filter(t => !t.is_active)
+        : tenantTile === 'owing' ? base.filter(owes)
+        : tenantTile === 'atrisk' ? base.filter(atRisk)
+        : base;
+      const nowT = new Date();
+      const monthsSince = (d) => {
+        const m = new Date(d);
+        if (isNaN(m)) return null;
+        let n = (nowT.getFullYear() - m.getFullYear()) * 12 + (nowT.getMonth() - m.getMonth());
+        if (nowT.getDate() < m.getDate()) n -= 1;
+        return Math.max(0, n);
+      };
+      columns = ['Name', 'Phone', 'Email', 'Property / Unit', 'Rent (KES)', 'Due Day', 'Move-in', 'Tenancy (Months)', 'Balance (KES)', 'Risk', 'Late Payments (last 6)', 'Status'];
+      rows    = shown.map(t => {
+        const rent  = parseFloat(t.rent_amount ?? tenantHouseById[t.house_id]?.rent_amount ?? 0) || 0;
+        const bal   = parseFloat(t.balance || 0);
+        const phone = kePhone(t.phone);
+        const risk  = riskOf(t);
+        return {
+          Name: t.full_name,
+          Phone: t.phone || '—',
+          Email: t.email || '—',
+          'Property / Unit': `${t.plot_name || '—'} · ${t.unit_number || `#${t.house_id}`}`,
+          'Rent (KES)': rent ? rent.toLocaleString() : '—',
+          'Due Day': t.rent_due_day || '—',
+          'Move-in': t.move_in_date ? new Date(t.move_in_date).toLocaleDateString('en-KE') : '—',
+          // Months since move-in, active tenants only (there's no move-out date to measure inactive ones against)
+          'Tenancy (Months)': (t.is_active && t.move_in_date) ? (monthsSince(t.move_in_date) ?? '—') : '—',
+          'Balance (KES)': bal.toLocaleString(),
+          Risk: risk?.risk_level ? `${risk.risk_level}${risk.risk_score != null ? ` (${risk.risk_score})` : ''}` : '—',
+          'Late Payments (last 6)': risk?.paid_months_checked ? `${risk.late_months}/${risk.paid_months_checked}${risk.late_months ? ` (avg ${risk.avg_days_late}d late)` : ''}` : '—',
+          Status: !t.is_active ? 'Inactive' : owes(t) ? 'Owing' : 'Active',
+          // hidden helpers (never exported or searched — leading underscore)
+          _tenantId: t.id, _plot: t.plot_name || '—', _bal: bal, _rent: rent,
+          _active: !!t.is_active, _owing: owes(t),
+          _riskScore: risk?.risk_score ?? null, _riskLevel: risk?.risk_level || '', _lateMonths: risk?.late_months ?? null,
+          _phoneOk: phone.ok, _phoneIntl: phone.intl,
+        };
+      });
+      const owingList = base.filter(owes);
+      summary = [
+        { label: 'Total Tenants', value: base.length, color: 'var(--primary)' },
+        { label: 'Active', value: base.filter(t => t.is_active).length, color: 'var(--green)', tile: 'active' },
+        { label: 'Inactive', value: base.filter(t => !t.is_active).length, color: 'var(--amber)', tile: 'inactive' },
+        { label: 'Owing', value: owingList.length, color: 'var(--red)', tile: 'owing' },
+        { label: 'At Risk (not owing yet)', value: base.filter(atRisk).length, color: 'var(--amber)', tile: 'atrisk' },
+        { label: 'Total Owed', value: `KES ${owingList.reduce((s2, t) => s2 + parseFloat(t.balance || 0), 0).toLocaleString()}`, color: 'var(--red)' },
+      ];
+      const badPhones = base.filter(t => t.is_active && t.phone && !kePhone(t.phone).ok).length;
+      if (badPhones) note = `${badPhones} active tenant${badPhones === 1 ? ' has' : 's have'} a phone number that looks invalid (flagged "check number") — fix it so reminders reach them.`;
+      const tileLabel = { active: 'Active', inactive: 'Inactive', owing: 'Owing', atrisk: 'At risk' }[tenantTile];
+      title = `Tenant List Report${tileLabel ? ` (${tileLabel})` : ''}`;
+      // Active tenants per property. Built from the list BEFORE the property filter, so the
+      // chart keeps showing every property and a bar can be clicked to filter to it.
+      const perPlot = {}, plotIdByName = {};
+      baseAll.filter(t => t.is_active).forEach(t => {
+        const nm = t.plot_name || '—';
+        perPlot[nm] = (perPlot[nm] || 0) + 1;
+        plotIdByName[nm] = t.plot_id;
+      });
+      const plotCounts = Object.entries(perPlot).sort((a, b) => b[1] - a[1]);
+      const selectedPlotName = tenantsPlot === 'all' ? 'all' : (Object.keys(plotIdByName).find(nm => String(plotIdByName[nm]) === String(tenantsPlot)) || 'all');
+      if (plotCounts.length > 1) {
+        chart = <HBarChart title="Active tenants by property (click a bar to filter)" series={[{ name: 'Tenants', color: 'var(--primary)' }]}
+          data={plotCounts.map(([nm, n]) => ({ label: nm, values: [n], color: 'var(--primary)' }))} format={v => v}
+          selected={selectedPlotName} onSelect={nm => setTenantsPlot(cur => String(cur) === String(plotIdByName[nm]) ? 'all' : String(plotIdByName[nm]))} />;
+      }
     }
 
     if (active === 'maintenance') {
@@ -1898,6 +2056,11 @@ export default function Reports() {
     : rows;
   if (sortCol && active !== 'audittrail') {
     visibleRows = [...visibleRows].sort((a, b) => {
+      if ((active === 'unpaid' || active === 'tenants') && (sortCol === 'Risk' || sortCol === 'Late Payments (last 6)')) {
+        const k = sortCol === 'Risk' ? '_riskScore' : '_lateMonths';
+        const c = (a[k] ?? -1) - (b[k] ?? -1);     // rows with no data sort lowest
+        return sortDir === 'asc' ? c : -c;
+      }
       if (sortCol === 'Allocated To') {
         const pa = a[sortCol] === 'Security deposit', pb = b[sortCol] === 'Security deposit';
         if (pa !== pb) return pa ? -1 : 1;          // deposit row always stays at the top
@@ -1910,6 +2073,27 @@ export default function Reports() {
       return sortDir === 'asc' ? cmp : -cmp;
     });
   }
+
+  // Unpaid Rent + Tenant List: optional grouping by property (stable, so the user's sort holds inside each group)
+  const grouping = (active === 'unpaid' && unpaidGroup) || (active === 'tenants' && tenantsGroup);
+  const unpaidGroupTotals = {};
+  if (grouping) {
+    visibleRows = [...visibleRows].sort((a, b) => String(a._plot).localeCompare(String(b._plot)));
+    visibleRows.forEach(r => {
+      const g = unpaidGroupTotals[r._plot] || (unpaidGroupTotals[r._plot] = { n: 0, bal: 0, owing: 0 });
+      g.n += 1; g.bal += Math.max(0, r._bal || 0); if (r._owing) g.owing += 1;
+    });
+  }
+  // Clickable summary tiles: Unpaid Rent filters by aging bucket, Tenant List by status.
+  const tileKey = (sm) => sm.bucket || sm.tile;
+  const tileSelected = active === 'tenants' ? tenantTile : unpaidBucket;
+  const toggleTile = (k) => (active === 'tenants' ? setTenantTile : setUnpaidBucket)(cur => cur === k ? 'all' : k);
+  // Colour of money cells. Owed balances are red; rent amounts are neutral; everything else as before.
+  const moneyClass = (c, row) => {
+    if (active === 'unpaid') { if (c === 'Balance (KES)') return ' neg'; if (c === 'Rent (KES)') return ' plain'; }
+    if (active === 'tenants') { if (c === 'Balance (KES)') return row._bal > 0 ? ' neg' : ' plain'; if (c === 'Rent (KES)') return ' plain'; }
+    return (isNegativeCol(c) || String(row[c]).trim().startsWith('-')) ? ' neg' : '';
+  };
 
   function handleSort(col) {
     if (sortCol === col) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
@@ -2174,6 +2358,35 @@ export default function Reports() {
                     .map(pl => <option key={pl.id} value={pl.id}>{pl.name}</option>)}
                 </select>
               )}
+              {active === 'unpaid' && (
+                <select value={unpaidAgeBy} onChange={e => setUnpaidAgeBy(e.target.value)} className="rp-select" title="What the aging buckets measure">
+                  <option value="oldest">Age by: oldest unpaid month</option>
+                  <option value="lastpay">Age by: last payment</option>
+                </select>
+              )}
+              {active === 'unpaid' && unpaidBucket !== 'all' && (
+                <button type="button" className="rp-btn" onClick={() => setUnpaidBucket('all')} title="Clear aging filter">Aging: {unpaidBucket} ✕</button>
+              )}
+              {active === 'unpaid' && (
+                <button type="button" className="rp-btn" onClick={() => setUnpaidGroup(g => !g)} title="Group rows by property with subtotals">{unpaidGroup ? '✓ ' : ''}Group by property</button>
+              )}
+
+              {/* Tenant List: property filter, status chip, grouping */}
+              {active === 'tenants' && (
+                <select value={tenantsPlot} onChange={e => setTenantsPlot(e.target.value)} className="rp-select" title="Filter by property">
+                  <option value="all">All properties</option>
+                  {(data.plots || [])
+                    .filter(pl => canForPlot('reports.tenant_list', pl.id, data.plotPermissions))
+                    .sort((a, b) => String(a.name).localeCompare(String(b.name)))
+                    .map(pl => <option key={pl.id} value={pl.id}>{pl.name}</option>)}
+                </select>
+              )}
+              {active === 'tenants' && tenantTile !== 'all' && (
+                <button type="button" className="rp-btn" onClick={() => setTenantTile('all')} title="Clear status filter">Showing: {{ active: 'Active', inactive: 'Inactive', owing: 'Owing', atrisk: 'At risk' }[tenantTile]} ✕</button>
+              )}
+              {active === 'tenants' && (
+                <button type="button" className="rp-btn" onClick={() => setTenantsGroup(g => !g)} title="Group rows by property with subtotals">{tenantsGroup ? '✓ ' : ''}Group by property</button>
+              )}
 
               {/* Bulk tenant statements — only where it's meaningful */}
               {active === 'rentroll' && (
@@ -2222,12 +2435,15 @@ export default function Reports() {
           {/* Summary cards */}
           {summary && (
             <div className="rp-kpis">
-              {summary.map(sm => (
-                <div key={sm.label} className={`rp-card rp-kpi${isWarn(sm.color) ? ' warn' : ''}`} style={{ '--rp-tone': tone(sm.color) }}>
+              {summary.map(sm => { const tk = tileKey(sm); return (
+                <div key={sm.label} className={`rp-card rp-kpi${isWarn(sm.color) ? ' warn' : ''}${tk ? ' clickable' : ''}${tk && tileSelected === tk ? ' on' : ''}`} style={{ '--rp-tone': tone(sm.color) }}
+                  onClick={tk ? () => toggleTile(tk) : undefined}
+                  role={tk ? 'button' : undefined} tabIndex={tk ? 0 : undefined}
+                  onKeyDown={tk ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleTile(tk); } } : undefined}>
                   <div className="rp-kpi-label">{sm.label}</div>
                   <div className="rp-kpi-value">{sm.value}</div>
                 </div>
-              ))}
+              ); })}
             </div>
           )}
 
@@ -2267,17 +2483,38 @@ export default function Reports() {
                         </th>
                       ))}
                       {active === 'rentroll' && <th className="no-print static">Statement</th>}
+                      {(active === 'unpaid' || active === 'tenants') && <th className="no-print static">Actions</th>}
                     </tr>
                   </thead>
                   <tbody>
                     {visibleRows.map((row, i) => (
-                      <tr key={i}>
+                      <Fragment key={i}>
+                      {grouping && (i === 0 || visibleRows[i - 1]._plot !== row._plot) && (
+                        <tr className="rp-group-row">
+                          <td colSpan={columns.length + 1}>
+                            {row._plot} — {unpaidGroupTotals[row._plot].n} tenant{unpaidGroupTotals[row._plot].n === 1 ? '' : 's'}{active === 'tenants' ? ` · ${unpaidGroupTotals[row._plot].owing} owing` : ''} · KES {unpaidGroupTotals[row._plot].bal.toLocaleString()} owed
+                          </td>
+                        </tr>
+                      )}
+                      <tr>
                         {columns.map(c => (
                           <td key={c} className={isNumCol(c) ? 'rp-num' : undefined}>
-                            {c === 'Status' || c === 'Severity' ? (
+                            {active === 'tenants' && c === 'Status' ? (
+                              <span className={`rp-badge rp-badge-${{ Active: 'green', Owing: 'orange', Inactive: 'red' }[row[c]] || 'amber'}`}>{row[c]}</span>
+                            ) : c === 'Status' || c === 'Severity' ? (
                               <span className={`rp-badge rp-badge-${statusKind(row[c])}`}>{typeof row[c] === 'string' ? sentence(row[c]) : row[c]}</span>
                             ) : c.includes('KES') || c === 'Balance (KES)' ? (
-                              <span className={`rp-money${isNegativeCol(c) || String(row[c]).trim().startsWith('-') ? ' neg' : ''}`}>{row[c]}</span>
+                              <span className={`rp-money${moneyClass(c, row)}`}>{row[c]}</span>
+                            ) : (active === 'unpaid' || active === 'tenants') && c === 'Phone' ? (
+                              row._phoneOk
+                                ? <a className="rp-tel" href={`tel:+${row._phoneIntl}`}>{row[c]}</a>
+                                : <>{row[c]}{row[c] !== '—' && <span className="rp-warnchip" title="This doesn't look like a valid Kenyan phone number">⚠ check number</span>}</>
+                            ) : (active === 'unpaid' || active === 'tenants') && c === 'Risk' ? (
+                              row._riskLevel
+                                ? <span className={`rp-badge rp-badge-${{ Critical: 'red', High: 'orange', Medium: 'amber', Low: 'green' }[row._riskLevel] || 'amber'}`}>{row[c]}</span>
+                                : '—'
+                            ) : active === 'unpaid' && c === 'Aging Bucket' ? (
+                              <span className={`rp-badge rp-badge-${BUCKET_BADGE[row[c]] || 'amber'}`}>{row[c]}</span>
                             ) : pretty(c, row[c])}
                           </td>
                         ))}
@@ -2288,9 +2525,34 @@ export default function Reports() {
                             ) : '—'}
                           </td>
                         )}
+                        {(active === 'unpaid' || active === 'tenants') && (
+                          <td className="no-print">
+                            <div className="rp-actions">
+                              {row._phoneOk && <a className="rp-mini" href={`tel:+${row._phoneIntl}`}>Call</a>}
+                              {row._phoneOk && <a className="rp-mini" href={`https://wa.me/${row._phoneIntl}?text=${encodeURIComponent(waText(row))}`} target="_blank" rel="noopener noreferrer" title="Open WhatsApp with a reminder ready to send">WhatsApp</a>}
+                              <button type="button" className="rp-mini" onClick={() => downloadStatement(row._tenantId, row.Tenant ?? row.Name)}><IconInline name="📄" size={14} />PDF</button>
+                            </div>
+                          </td>
+                        )}
                       </tr>
+                      </Fragment>
                     ))}
                   </tbody>
+                  {(active === 'unpaid' || active === 'tenants') && (
+                    <tfoot>
+                      <tr>
+                        {columns.map((c, ci) => (
+                          <td key={c} className={isNumCol(c) ? 'rp-num' : undefined}>
+                            {ci === 0 ? `Total · ${visibleRows.length} tenant${visibleRows.length === 1 ? '' : 's'}`
+                              : c === 'Rent (KES)' ? visibleRows.filter(r => r._active !== false).reduce((s, r) => s + (r._rent || 0), 0).toLocaleString()
+                              : c === 'Balance (KES)' ? <span className="rp-money neg">{visibleRows.reduce((s, r) => s + Math.max(0, r._bal || 0), 0).toLocaleString()}</span>
+                              : ''}
+                          </td>
+                        ))}
+                        <td className="no-print" />
+                      </tr>
+                    </tfoot>
+                  )}
                 </table>
               </div>
             )}
