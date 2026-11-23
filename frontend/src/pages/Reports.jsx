@@ -1146,11 +1146,13 @@ export default function Reports() {
             Method: '—',
             Reference: '—',
             Status: '—',
+            _top: d.type === 'collected',   // the deposit collected at move-in leads the timeline
           }));
 
-        const combined = [...rentRows, ...depositRows].sort((a, b) => a._date - b._date);
+        // Collected deposit first, then everything else oldest -> newest.
+        const combined = [...rentRows, ...depositRows].sort((a, b) => ((b._top ? 1 : 0) - (a._top ? 1 : 0)) || (a._date - b._date));
         columns = ['Date', 'Type', 'Amount (KES)', 'Allocated To', 'Method', 'Reference', 'Status'];
-        rows = combined.map(({ _date, ...r }) => r);
+        rows = combined.map(({ _date, _top, ...r }) => r);
 
         const totalRent     = rentRows.filter(r => isCollected({ status: r.Status })).reduce((s, r) => s + parseFloat(r['Amount (KES)'].replace(/,/g, '')), 0);
         const depositNet    = (deposits || []).filter(d => String(d.tenant_id) === String(tenant.id))
@@ -1896,6 +1898,10 @@ export default function Reports() {
     : rows;
   if (sortCol && active !== 'audittrail') {
     visibleRows = [...visibleRows].sort((a, b) => {
+      if (sortCol === 'Allocated To') {
+        const pa = a[sortCol] === 'Security deposit', pb = b[sortCol] === 'Security deposit';
+        if (pa !== pb) return pa ? -1 : 1;          // deposit row always stays at the top
+      }
       const av = sortableValue(a[sortCol]), bv = sortableValue(b[sortCol]);
       // Mixed cells in one column (e.g. a month next to "Not allocated" or "Security deposit"):
       // dates/numbers first, text after, so the order stays consistent.
