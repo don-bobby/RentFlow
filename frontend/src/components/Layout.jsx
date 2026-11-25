@@ -381,6 +381,12 @@ export default function Layout() {
   const unreadFor = (label) => label === 'Messages' ? unreadMsg : label === 'Users' ? pendingLandlords : label === 'Properties' ? pendingUnits : 0;
   const isRail = collapsed && !isMobile;
 
+  // Approval notices sit in the page flow (never on top of tables). They are hidden on the
+  // pages that already show the same information: the dashboard strip, Users and Properties.
+  const onDashboard = location.pathname === '/' || location.pathname === '/dashboard';
+  const showLandlordsNotice = pendingLandlords > 0 && pendingLandlords !== dismissedLandlordsAt && !onDashboard && !location.pathname.startsWith('/users');
+  const showUnitsNotice     = pendingUnits > 0 && pendingUnits !== dismissedUnitsAt && !onDashboard && !location.pathname.startsWith('/properties');
+
   // Bottom nav shows max 5 most-used items on mobile
   const bottomNav = sidebarNav.slice(0, 5);
   const roleColor = { admin: '#8fd1ad', super_admin: '#8fd1ad', agent: '#f472b6', landlord: '#34d399', caretaker: '#fbbf24' };
@@ -652,6 +658,22 @@ export default function Layout() {
         {/* ── Page content ── */}
         <div style={{ flex: 1, padding: isMobile ? '16px 14px calc(84px + env(safe-area-inset-bottom, 0px))' : 28, overflow: 'auto' }}>
           <OfflineBar />
+          {(showLandlordsNotice || showUnitsNotice) && (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginBottom: 16 }}>
+              {[
+                showLandlordsNotice && { key: 'l', text: `${pendingLandlords} landlord${pendingLandlords > 1 ? 's' : ''} waiting for approval`, go: '/users?filter=pending', dismiss: dismissLandlordsToast },
+                showUnitsNotice && { key: 'u', text: `${pendingUnits} unit${pendingUnits > 1 ? 's' : ''} waiting for approval`, go: '/properties', dismiss: dismissUnitsToast },
+              ].filter(Boolean).map(n => (
+                <div key={n.key} role="status" style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '8px 8px 8px 14px', background: 'var(--surface)', border: '1px solid var(--border)', borderLeft: '4px solid var(--amber, #b45309)', borderRadius: 12, fontSize: 14, color: 'var(--text)' }}>
+                  <span style={{ fontWeight: 600 }}>{n.text}</span>
+                  <button onClick={() => navigate(n.go)} style={{ minHeight: 36, padding: '0 14px', borderRadius: 8, border: 'none', background: 'var(--primary, #1b6b45)', color: '#fff', fontWeight: 600, fontSize: 13, cursor: 'pointer' }}>Review</button>
+                  <button onClick={n.dismiss} aria-label="Dismiss" style={{ width: 36, height: 36, border: 'none', background: 'transparent', color: 'var(--muted)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 8 }}>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
           <Outlet />
           <QuickSearch />
         </div>
@@ -797,67 +819,6 @@ export default function Layout() {
         </ModalWrapper>
       )}
 
-      {/* ── Floating approval toasts (bottom-right) ──────────────────────────
-          Replaces the old full-width Dashboard banners. Global (lives in
-          Layout, not Dashboard), so it follows you to whichever page you're
-          on. Dismissal is per-session and keyed to the count at dismiss
-          time — closing "3 pending" won't hide a later "4 pending". */}
-      <div style={{
-        position: 'fixed', bottom: 20, right: 20, zIndex: 200,
-        display: 'flex', flexDirection: 'column', gap: 10, maxWidth: 340,
-      }}>
-        {pendingLandlords > 0 && pendingLandlords !== dismissedLandlordsAt && (
-          <div style={{
-            display: 'flex', alignItems: 'flex-start', gap: 10, padding: '14px 16px',
-            background: 'var(--surface)', border: '1px solid var(--amber, #d97706)',
-            borderLeft: '4px solid var(--amber, #d97706)', borderRadius: 12,
-            boxShadow: '0 8px 24px rgba(0,0,0,0.18)',
-            animation: 'toast-in 0.25s ease',
-          }}>
-            <Icon name="⏳" size={20} />
-            <div style={{ flex: 1 }}>
-              <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)', marginBottom: 6 }}>
-                {pendingLandlords} landlord{pendingLandlords > 1 ? 's' : ''} waiting for approval
-              </div>
-              <button onClick={() => navigate('/users?filter=pending')} style={{
-                padding: '5px 12px', borderRadius: 7, border: 'none',
-                background: 'var(--amber, #d97706)', color: '#fff',
-                fontWeight: 700, fontSize: 12, cursor: 'pointer',
-              }}>Review</button>
-            </div>
-            <button onClick={dismissLandlordsToast} aria-label="Dismiss" style={{
-              border: 'none', background: 'transparent', color: 'var(--muted)',
-              fontSize: 16, cursor: 'pointer', lineHeight: 1, padding: 2,
-            }}>×</button>
-          </div>
-        )}
-        {pendingUnits > 0 && pendingUnits !== dismissedUnitsAt && (
-          <div style={{
-            display: 'flex', alignItems: 'flex-start', gap: 10, padding: '14px 16px',
-            background: 'var(--surface)', border: '1px solid var(--amber, #d97706)',
-            borderLeft: '4px solid var(--amber, #d97706)', borderRadius: 12,
-            boxShadow: '0 8px 24px rgba(0,0,0,0.18)',
-            animation: 'toast-in 0.25s ease',
-          }}>
-            <Icon name="🏠" size={20} />
-            <div style={{ flex: 1 }}>
-              <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)', marginBottom: 6 }}>
-                {pendingUnits} unit{pendingUnits > 1 ? 's' : ''} waiting for approval
-              </div>
-              <button onClick={() => navigate('/properties')} style={{
-                padding: '5px 12px', borderRadius: 7, border: 'none',
-                background: 'var(--amber, #d97706)', color: '#fff',
-                fontWeight: 700, fontSize: 12, cursor: 'pointer',
-              }}>Review</button>
-            </div>
-            <button onClick={dismissUnitsToast} aria-label="Dismiss" style={{
-              border: 'none', background: 'transparent', color: 'var(--muted)',
-              fontSize: 16, cursor: 'pointer', lineHeight: 1, padding: 2,
-            }}>×</button>
-          </div>
-        )}
-      </div>
-      <style>{`@keyframes toast-in { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }`}</style>
     </div>
   );
 }

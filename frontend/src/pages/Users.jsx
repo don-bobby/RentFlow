@@ -383,6 +383,17 @@ export default function Users() {
   const roleCounts = visibleUsers.reduce((m, u) => { m[u.role] = (m[u.role] || 0) + 1; return m; }, {});
   const pendingLandlordCount = visibleUsers.filter(u => u.role === 'landlord' && !u.is_approved).length;
 
+  // Landlords waiting for approval are highlighted when you arrive from the dashboard (?filter=pending).
+  const isPendingHit = (u) => pendingOnly && u.role === 'landlord' && !u.is_approved;
+  useEffect(() => {
+    if (loading || !pendingOnly) return;
+    const first = visibleUsers.find(isPendingHit);
+    if (!first) return;
+    const tm = setTimeout(() => document.getElementById(`user-row-${first.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 200);
+    return () => clearTimeout(tm);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, pendingOnly, users]);
+
   const filtered = visibleUsers.filter(u => {
     const matchRole    = roleFilter === 'all' || u.role === roleFilter;
     const matchSearch  = search === '' || u.name?.toLowerCase().includes(search.toLowerCase()) || u.email?.toLowerCase().includes(search.toLowerCase());
@@ -526,12 +537,12 @@ export default function Users() {
                   : (u.role === 'landlord' || u.role === 'agent') && isAdmin;
                 const isSelectedRow = opensOverview && modal === 'overview' && selected?.id === u.id;
                 return (
-                <tr key={u.id} className="us-row" onClick={() => { if (opensOverview) openOverview(u); }}
+                <tr key={u.id} id={`user-row-${u.id}`} className="us-row" onClick={() => { if (opensOverview) openOverview(u); }}
                   style={{
                     borderTop: '1px solid var(--border)',
-                    background: isSelectedRow ? 'var(--primary-light, #e6efe8)' : (i % 2 === 0 ? 'var(--surface)' : 'var(--surface2)'),
+                    background: isSelectedRow ? 'var(--primary-light, #e6efe8)' : isPendingHit(u) ? 'var(--amber-light, #fef3c7)' : (i % 2 === 0 ? 'var(--surface)' : 'var(--surface2)'),
                     cursor: opensOverview ? 'pointer' : 'default',
-                    boxShadow: isSelectedRow ? 'inset 3px 0 0 var(--primary, #1b6b45)' : 'none',
+                    boxShadow: isSelectedRow ? 'inset 3px 0 0 var(--primary, #1b6b45)' : isPendingHit(u) ? 'inset 3px 0 0 var(--amber, #b45309)' : 'none',
                   }}>
                   <td style={{ padding: '12px 16px' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>

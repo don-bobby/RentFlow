@@ -17,8 +17,7 @@ const REPORTS = [
   { id: 'unpaid',         icon: '⚠️', label: 'Unpaid Rent',           desc: 'Outstanding balances, aging and payment risk',     color: 'var(--red)',     light: 'var(--red-light)',     permission: 'reports.unpaid_rent' },
   { id: 'tenants',        icon: '👥', label: 'Tenant List',           desc: 'All active and inactive tenants',      color: 'var(--primary)', light: 'var(--primary-light)', permission: 'reports.tenant_list' },
   { id: 'ownerstatement', icon: '🏢', label: 'Owner Statement',       desc: 'Monthly income, expenses and net per property, as a PDF', color: 'var(--primary)', light: 'var(--primary-light)', permission: 'reports.revenue_summary' },
-  { id: 'maintperf',      icon: '🛠️', label: 'Maintenance Performance', desc: 'Resolution time, cost and repeat issues per property', color: 'var(--amber)', light: 'var(--amber-light)', permission: 'reports.maintenance' },
-  { id: 'maintenance',    icon: '🔧', label: 'Maintenance Records',   desc: 'All maintenance requests by status',   color: 'var(--amber)',   light: 'var(--amber-light)',   permission: 'reports.maintenance' },
+  { id: 'maintperf',      icon: '🛠️', label: 'Maintenance', desc: 'Requests, resolution time, cost and vendors', color: 'var(--amber)', light: 'var(--amber-light)', permission: 'reports.maintenance' },
   { id: 'properties',     icon: '🏢', label: 'Property Summary',      desc: 'Plots, units, occupancy overview',     color: 'var(--blue)',    light: 'var(--blue-light)',    permission: 'reports.property_summary' },
   { id: 'occupancy',      icon: '📊', label: 'Occupancy Report',      desc: 'Vacant vs occupied units over time',   color: '#8b5cf6',       light: '#e6efe8',              permission: 'reports.occupancy' },
   { id: 'expenses',       icon: '💸', label: 'Expenses Report',       desc: 'All property expenses by category',   color: '#f97316',       light: '#fff7ed',              permission: 'reports.expenses' },
@@ -138,7 +137,14 @@ function pretty(col, v) {
   if (/^[a-z]+(_[a-z]+)+$/.test(v)) return sentence(v);                    // snake_case values
   return v;
 }
-const isNumCol = (c) => /KES|Amount|Balance|Total|Rent|Cost|Loss|Gap|Months|Units|Days/.test(c);
+const isNumCol = (c) => /KES|Amount|Balance|Total|Rent|Cost|Loss|Gap|Months|Units|Days|Last Month/.test(c);
+
+// '2026-11' shifted by n months -> '2026-10' (used by the Owner Statement month arrows and month-on-month change)
+function shiftMonth(ym, n) {
+  const [y, m] = String(ym).split('-').map(Number);
+  const d = new Date(y, (m || 1) - 1 + n, 1);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
 
 // Money columns that represent a cost/shortfall are shown in red.
 const isNegativeCol = (c) => /Arrears|Loss|Expenses|Gap/.test(c);
@@ -167,6 +173,123 @@ function reminderText(row) {
 // WhatsApp text: a balance reminder when money is owed, otherwise just a greeting.
 function waText(row) {
   return row._bal > 0 ? reminderText(row) : `Hello ${row.Tenant ?? row.Name}, `;
+}
+
+// ── Maintenance Performance: the requests behind a property's numbers ────────
+const pickField = (o, keys) => { for (const k of keys) { const v = o?.[k]; if (v != null && v !== '' && typeof v !== 'object') return v; } return null; };
+const fmtDay = (d) => d ? new Date(d).toLocaleDateString('en-KE', { day: 'numeric', month: 'short', year: 'numeric' }) : '—';
+const MAINT_STATUS_BADGE = { completed: 'green', in_progress: 'blue', pending: 'amber' };
+
+// Everything we can say about one maintenance request, in one place — used by the
+// "All requests" table AND the details panel so the two can never disagree.
+// Field names are matched loosely; anything not found comes back null and shows as "Not recorded".
+function maintInfo(r, vendorById, expenses) {
+  const linked = (expenses || []).filter(e => e.maintenance_request_id != null && String(e.maintenance_request_id) === String(r.id));
+  const fallback = pickField(r, ['cost', 'actual_cost', 'repair_cost']);
+  const total = linked.length ? linked.reduce((a, e) => a + parseFloat(e.amount || 0), 0) : (fallback != null ? parseFloat(fallback) || 0 : 0);
+  const vid = r.vendor_id != null && r.vendor_id !== '' ? r.vendor_id : null;
+  const reg = vid != null ? vendorById[String(vid)] : null;
+  const nested = r.vendor && typeof r.vendor === 'object' ? r.vendor : null;
+  const vName = reg?.name ?? nested?.name ?? pickField(r, ['vendor_name', 'vendor', 'contractor_name', 'contractor']);
+  const vKind = (vid != null || reg) ? 'registered' : vName ? 'unregistered' : 'none';
+  const requesterName = pickField(r, ['requested_by_name', 'reported_by_name', 'created_by_name', 'requester_name']);
+  const done = r.status === 'completed';
+  return {
+    linked, fallback, total, vName, vKind,
+    vPhone: reg?.phone ?? nested?.phone ?? pickField(r, ['vendor_phone', 'contractor_phone']),
+    vEmail: reg?.email ?? nested?.email ?? pickField(r, ['vendor_email', 'contractor_email']),
+    vTrade: reg?.category ?? reg?.trade ?? reg?.service ?? nested?.category ?? pickField(r, ['vendor_category', 'vendor_trade']),
+    requester: requesterName || pickField(r, ['tenant_name']),
+    requesterRole: pickField(r, ['requested_by_role', 'reported_by_role', 'requester_role']) || (!requesterName && r.tenant_name ? 'Tenant' : null),
+    closedBy: pickField(r, ['completed_by_name', 'resolved_by_name', 'closed_by_name']),
+    done,
+    daysTaken: done && r.resolved_at ? ((new Date(r.resolved_at) - new Date(r.reported_at)) / 86400000).toFixed(1) : null,
+    workDone: pickField(r, ['resolution_notes', 'resolution', 'completion_notes', 'work_done', 'repair_notes']),
+    details: pickField(r, ['description', 'details', 'notes']),
+    unit: r.unit_number || (r.house_id != null ? `#${r.house_id}` : '—'),
+  };
+}
+
+function MaintenanceDetails({ plotName, requests, vendors, expenses, onClose }) {
+  const ref = useRef(null);
+  useEffect(() => { ref.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }, [plotName, requests.length, requests[0]?.id]);
+  const vendorById = Object.fromEntries((vendors || []).map(v => [String(v.id), v]));
+  const sorted = [...requests].sort((a, b) => new Date(b.reported_at) - new Date(a.reported_at));
+  const infos = sorted.map(r => [r, maintInfo(r, vendorById, expenses)]);
+  const grand = infos.reduce((a, [, i]) => a + i.total, 0);
+
+  return (
+    <div className="rp-detail" ref={ref}>
+      <div className="rp-detail-head">
+        <div>
+          <div className="rp-detail-title">{plotName} — {sorted.length} request{sorted.length === 1 ? '' : 's'}</div>
+          <div className="rp-detail-sub">Total charges KES {grand.toLocaleString()}{sorted.length > 1 ? ' · click a request to expand it' : ''}</div>
+        </div>
+        <button type="button" className="rp-btn no-print" onClick={onClose}>Close ✕</button>
+      </div>
+      {!sorted.length && <div className="rp-detail-sub" style={{ marginTop: 10 }}>No maintenance requests for this property in the selected period.</div>}
+      {infos.map(([r, i]) => (
+        <details className="rp-req" key={r.id} open={sorted.length === 1}>
+          <summary>
+            <span className="rp-req-grow">#{r.id} · Unit {i.unit} · {r.issue}</span>
+            <span className={`rp-badge rp-badge-${MAINT_STATUS_BADGE[r.status] || 'amber'}`}>{String(r.status || '').replace('_', ' ')}</span>
+            {r.priority && <span className="rp-muted" style={{ fontSize: 12 }}>{r.priority} priority</span>}
+            <span style={{ fontWeight: 700 }}>KES {i.total.toLocaleString()}</span>
+          </summary>
+          <dl className="rp-req-body">
+            <div className="rp-req-wide">
+              <dt>What was reported / repaired</dt>
+              <dd>{r.issue}{i.details && i.details !== r.issue ? <div className="rp-muted">{i.details}</div> : null}{i.workDone ? <div><strong>Work done:</strong> {i.workDone}</div> : null}</dd>
+            </div>
+            <div><dt>Unit</dt><dd>{plotName} · {i.unit}</dd></div>
+            <div>
+              <dt>Requested by</dt>
+              <dd>{i.requester ? <>{i.requester}{i.requesterRole ? <span className="rp-muted"> ({i.requesterRole})</span> : null}</> : <span className="rp-muted">Not recorded</span>}<div className="rp-muted">{fmtDay(r.reported_at)}</div></dd>
+            </div>
+            <div>
+              <dt>Closed by</dt>
+              <dd>
+                {i.done
+                  ? <>{i.closedBy || <span className="rp-muted">Not recorded (see the Audit Trail report)</span>}<div className="rp-muted">{fmtDay(r.resolved_at)}{i.daysTaken != null ? ` · took ${i.daysTaken} days` : ''}</div></>
+                  : <span className="rp-muted">Not closed yet ({String(r.status || '').replace('_', ' ') || 'open'})</span>}
+              </dd>
+            </div>
+            <div>
+              <dt>Vendor</dt>
+              <dd>
+                {i.vKind === 'none' ? <span className="rp-muted">No vendor recorded</span> : (
+                  <>
+                    <span className={`rp-badge rp-badge-${i.vKind === 'registered' ? 'green' : 'amber'}`}>{i.vKind === 'registered' ? 'Registered vendor' : 'Unregistered vendor'}</span>
+                    <div style={{ marginTop: 4 }}>{i.vName || <span className="rp-muted">Name not recorded</span>}{i.vTrade ? <span className="rp-muted"> · {i.vTrade}</span> : null}</div>
+                    {i.vPhone ? <div><a className="rp-tel" href={`tel:${String(i.vPhone).replace(/\s+/g, '')}`}>{i.vPhone}</a></div> : null}
+                    {i.vEmail ? <div className="rp-muted">{i.vEmail}</div> : null}
+                  </>
+                )}
+              </dd>
+            </div>
+            <div className="rp-req-wide">
+              <dt>Charges</dt>
+              <dd>
+                {i.linked.length ? (
+                  <table className="rp-mini-table"><tbody>
+                    {i.linked.map(e => (
+                      <tr key={e.id}>
+                        <td>{fmtDay(e.expense_date)}</td>
+                        <td>{e.description || e.category || 'Expense'}</td>
+                        <td>{e.status === 'pending' ? <span className="rp-warnchip">pending</span> : null}</td>
+                        <td className="rp-num">KES {parseFloat(e.amount || 0).toLocaleString()}</td>
+                      </tr>
+                    ))}
+                    <tr><td colSpan={3}><strong>Total</strong></td><td className="rp-num">KES {i.total.toLocaleString()}</td></tr>
+                  </tbody></table>
+                ) : i.fallback != null ? `KES ${i.total.toLocaleString()}` : <span className="rp-muted">No charges recorded for this request</span>}
+              </dd>
+            </div>
+          </dl>
+        </details>
+      ))}
+    </div>
+  );
 }
 
 const STYLES = `
@@ -360,6 +483,26 @@ const STYLES = `
 .rp-table tbody tr:nth-child(even) { background: transparent; }
 .rp-table td { padding: 13px 16px; }
 .rp-badge { text-transform: none; }
+.rp-detail { margin-top: 16px; padding: 16px 18px; border: 1px solid var(--rp-border); border-radius: 14px; background: var(--rp-surface2); }
+.rp-detail-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.rp-detail-title { font-size: 15px; font-weight: 700; color: var(--rp-text); }
+.rp-detail-sub { font-size: 12px; color: var(--rp-muted); margin-top: 2px; }
+.rp-req { margin-top: 10px; border: 1px solid var(--rp-border); border-radius: 10px; background: var(--rp-surface); }
+.rp-req > summary { cursor: pointer; padding: 10px 14px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; list-style: none; font-size: 14px; color: var(--rp-text); }
+.rp-req > summary::-webkit-details-marker { display: none; }
+.rp-req > summary::before { content: '▸'; color: var(--rp-muted); }
+.rp-req[open] > summary::before { content: '▾'; }
+.rp-req-grow { flex: 1 1 200px; font-weight: 600; }
+.rp-req-body { padding: 4px 14px 14px; display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 14px 22px; border-top: 1px solid var(--rp-border); padding-top: 12px; }
+.rp-req-body dt { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--rp-muted); margin-bottom: 3px; }
+.rp-req-body dd { margin: 0; font-size: 14px; color: var(--rp-text); line-height: 1.45; }
+.rp-req-body .rp-req-wide { grid-column: 1 / -1; }
+.rp-muted { color: var(--rp-muted); }
+.rp-mini-table { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 4px; }
+.rp-mini-table td { padding: 5px 6px; border-top: 1px solid var(--rp-border); }
+.rp-mini-table td.rp-num { text-align: right; white-space: nowrap; font-weight: 600; }
+.rp-table tr.rp-clickrow { cursor: pointer; }
+.rp-table tr.rp-clickrow:hover td { background: var(--rp-surface2); }
 .rp-badge-orange { background: color-mix(in srgb, #ea580c 16%, transparent); color: #ea580c; }
 .rp-money.plain { color: var(--rp-text); font-weight: 600; }
 .rp-kpi.clickable { cursor: pointer; transition: border-color .15s, box-shadow .15s; }
@@ -723,10 +866,14 @@ export default function Reports() {
         userActivity = arr(uar.data);
       } catch (e) { userActivity = []; userActivityDenied = e?.response?.status === 403; } // 403 for non-admins — expected, not an error
 
+      // Vendor directory for the maintenance details panel; optional — swallowed on failure like users above.
+      let vendors = [];
+      try { const vr = await API.get('/vendors'); vendors = arr(vr.data); } catch { vendors = []; }
+
       setData({
         tenants: arr(tr.data), payments: arr(pr.data), houses: arr(hr.data),
         requests: arr(mr.data), plots: arr(plr.data), expenses: arr(er.data), utilities, riskData, users, deposits, auditLog, auditDenied, caretakerPlots,
-        plotPermissions, userActivity, userActivityDenied,
+        plotPermissions, userActivity, userActivityDenied, vendors,
       });
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
@@ -819,6 +966,12 @@ export default function Reports() {
   const [tenantTile, setTenantTile] = useState('all');         // 'all' | 'active' | 'inactive' | 'owing'
   const [tenantsGroup, setTenantsGroup] = useState(false);
   const [ownerPlot, setOwnerPlot] = useState('all');
+  const [maintView, setMaintView] = useState('property');      // Maintenance: 'property' (performance) or 'requests' (full list)
+  const [maintReq, setMaintReq] = useState(null);                // Maintenance, All requests view: expanded request id
+  const [maintPlot, setMaintPlot] = useState(null);             // Maintenance Performance: property whose requests are expanded
+  const [ownerOwner, setOwnerOwner] = useState('all');          // Owner Statement: filter by owner (landlord)
+  const [ownerHideEmpty, setOwnerHideEmpty] = useState(false);   // Owner Statement: hide properties with no activity
+  const [ownerGroup, setOwnerGroup] = useState(false);           // Owner Statement: group by owner with subtotals
   const [ownerMonth, setOwnerMonth] = useState(() => { const d = new Date(); d.setMonth(d.getMonth() - 1); return d.toISOString().slice(0, 7); });
   async function downloadOwnerStatement() {
     try {
@@ -847,10 +1000,11 @@ export default function Reports() {
 
   // ── Compute report rows ────────────────────────────────────────────────────
   let rows = [], columns = [], title = '', summary = null, chart = null, note = '';
+  let ownerMulti = false;   // Owner Statement: more than one owner in view (shows the Owner column + filter)
   let auditOptions = { actions: [], entities: [], users: [] };
 
   if (data.payments) {
-    const { tenants, payments, houses, requests, plots, expenses, utilities = [], riskData = [], users, deposits, auditLog, caretakerPlots, plotPermissions, userActivity } = data;
+    const { tenants, payments, houses, requests, plots, expenses, utilities = [], riskData = [], users, deposits, auditLog, caretakerPlots, plotPermissions, userActivity, vendors = [] } = data;
 
     // Shared lookups for the analytical reports below
     const houseById = Object.fromEntries(houses.map(h => [h.id, h]));
@@ -1426,30 +1580,82 @@ export default function Reports() {
     }
 
     if (active === 'ownerstatement') {
-      const inMonth = (d) => String(d || '').slice(0, 7) === ownerMonth;
+      const inMonth = (d, ym = ownerMonth) => String(d || '').slice(0, 7) === ym;
       const okPay = (p) => p.status !== 'failed' && p.status !== 'pending' && p.method !== 'balance_charge';
-      const visPlots = plots.filter(pl => canForPlot('reports.revenue_summary', pl.id, plotPermissions) && (ownerPlot === 'all' || String(pl.id) === String(ownerPlot)));
-      columns = ['Property', 'Rent Collected (KES)', 'Utilities Recovered (KES)', 'Expenses (KES)', 'Agent Fee (KES)', 'Net to Owner (KES)'];
-      rows = visPlots.map(pl => {
-        const rent = payments.filter(p => p.plot_id === pl.id && okPay(p) && inMonth(p.payment_date)).reduce((a, p) => a + parseFloat(p.amount || 0), 0);
-        const util = utilities.filter(u => u.plot_id === pl.id && inMonth(u.payment_date)).reduce((a, u) => a + parseFloat(u.amount || 0), 0);
-        const exp  = expenses.filter(e => e.plot_id === pl.id && inMonth(e.expense_date) && e.status !== 'pending').reduce((a, e) => a + parseFloat(e.amount || 0), 0);
+      const ownerOf = (pl) => pl.owner_name || '—';
+      const allVis = plots.filter(pl => canForPlot('reports.revenue_summary', pl.id, plotPermissions) && (ownerOwner === 'all' || ownerOf(pl) === ownerOwner));
+      const visPlots = allVis.filter(pl => ownerPlot === 'all' || String(pl.id) === String(ownerPlot));
+      ownerMulti = new Set(plots.filter(pl => canForPlot('reports.revenue_summary', pl.id, plotPermissions)).map(ownerOf)).size > 1;
+      // One month's money for one property (same rules as before: rent + utilities − expenses − agent fee)
+      const figures = (pl, ym) => {
+        const rent = payments.filter(p => p.plot_id === pl.id && okPay(p) && inMonth(p.payment_date, ym)).reduce((a, p) => a + parseFloat(p.amount || 0), 0);
+        const util = utilities.filter(u => u.plot_id === pl.id && inMonth(u.payment_date, ym)).reduce((a, u) => a + parseFloat(u.amount || 0), 0);
+        const exp  = expenses.filter(e => e.plot_id === pl.id && inMonth(e.expense_date, ym) && e.status !== 'pending').reduce((a, e) => a + parseFloat(e.amount || 0), 0);
         const pct = pl.agent_id && pl.agent_fee_percent != null ? parseFloat(pl.agent_fee_percent) : null;
         const fee = pct != null ? (rent * pct) / 100 : 0;
-        return { Property: pl.name, 'Rent Collected (KES)': rent.toLocaleString(), 'Utilities Recovered (KES)': util.toLocaleString(), 'Expenses (KES)': exp.toLocaleString(),
-                 'Agent Fee (KES)': pl.agent_id ? `${Math.round(fee).toLocaleString()}${pct != null ? ` (${pct}%)` : ' (no % set)'}` : '—',
-                 'Net to Owner (KES)': Math.round(rent + util - exp - fee).toLocaleString(), _rent: rent, _util: util, _exp: exp, _fee: fee };
+        return { rent, util, exp, pct, fee, net: rent + util - exp - fee };
+      };
+      const prevYm = shiftMonth(ownerMonth, -1);
+      const expectedOf = (pl) => houses.filter(h => h.plot_id === pl.id && h.status === 'occupied').reduce((a, h) => a + parseFloat(h.rent_amount || 0), 0);
+      // Month-on-month change in net: percentage, "New" when last month was 0, "—" when both are 0
+      const change = (net, prev) => {
+        if (!prev) return { text: net ? 'New' : '—', delta: null };
+        const d = ((net - prev) / Math.abs(prev)) * 100;
+        return { text: `${d >= 0 ? '▲' : '▼'} ${Math.abs(Math.round(d))}%`, delta: d };
+      };
+      const built = visPlots.map(pl => {
+        const f = figures(pl, ownerMonth), pv = figures(pl, prevYm);
+        return { pl, owner: ownerOf(pl), expected: expectedOf(pl), ...f, prevNet: pv.net };
       });
-      const tot = (k) => rows.reduce((a, r) => a + r[k], 0);
+      // "No activity" = nothing expected, collected, recovered or spent (an empty/vacant property).
+      // A property with rent expected but 0 collected is NOT hidden — that is a bad month, not an empty one.
+      const kept = ownerHideEmpty ? built.filter(b => b.rent || b.util || b.exp || b.expected) : built;
+      const noPctCount = built.filter(b => b.pl.agent_id && b.pct == null).length;
+
+      columns = [...(ownerMulti ? ['Owner'] : []), 'Property', 'Rent Expected (KES)', 'Rent Collected (KES)', 'Collected % of Rent', 'Utilities Recovered (KES)', 'Expenses (KES)', 'Agent Fee (KES)', 'Net to Owner (KES)', 'Net vs Last Month'];
+      rows = kept.map(b => {
+        const ch = change(b.net, b.prevNet);
+        return {
+          ...(ownerMulti ? { Owner: b.owner } : {}),
+          Property: b.pl.name,
+          'Rent Expected (KES)': Math.round(b.expected).toLocaleString(),
+          'Rent Collected (KES)': b.rent.toLocaleString(),
+          'Collected % of Rent': b.expected > 0 ? `${Math.round((b.rent / b.expected) * 100)}%` : '—',
+          'Utilities Recovered (KES)': b.util.toLocaleString(),
+          'Expenses (KES)': b.exp.toLocaleString(),
+          'Agent Fee (KES)': b.pl.agent_id ? `${Math.round(b.fee).toLocaleString()}${b.pct != null ? ` (${b.pct}%)` : ' (no % set)'}` : '—',
+          'Net to Owner (KES)': Math.round(b.net).toLocaleString(),
+          'Net vs Last Month': ch.text,
+          // hidden helpers (never exported or searched — leading underscore)
+          _plotId: b.pl.id, _plot: b.owner,        // _plot doubles as the owner group key
+          _expected: b.expected, _rent: b.rent, _util: b.util, _exp: b.exp, _fee: b.fee, _net: b.net, _prevNet: b.prevNet,
+          _delta: ch.delta, _feeWarn: !!(b.pl.agent_id && b.pct == null),
+        };
+      });
+      const tot = (k) => built.reduce((a, b) => a + b[k], 0);
+      const totNet = tot('net'), totPrev = tot('prevNet'), totCh = change(totNet, totPrev);
       summary = [
-        { label: 'Rent collected', value: `KES ${tot('_rent').toLocaleString()}`, color: 'var(--green)' },
-        { label: 'Utilities recovered', value: `KES ${tot('_util').toLocaleString()}`, color: 'var(--blue)' },
-        { label: 'Expenses', value: `KES ${tot('_exp').toLocaleString()}`, color: 'var(--red)' },
-        { label: 'Agent fees', value: `KES ${Math.round(tot('_fee')).toLocaleString()}`, color: 'var(--amber)' },
-        { label: 'Net to owner', value: `KES ${Math.round(tot('_rent') + tot('_util') - tot('_exp') - tot('_fee')).toLocaleString()}`, color: 'var(--primary)' },
+        { label: 'Rent collected', value: `KES ${tot('rent').toLocaleString()}`, color: 'var(--green)' },
+        { label: 'Utilities recovered', value: `KES ${tot('util').toLocaleString()}`, color: 'var(--blue)' },
+        { label: 'Expenses', value: `KES ${tot('exp').toLocaleString()}`, color: tot('exp') > 0 ? 'var(--red)' : 'var(--primary)' },
+        { label: 'Agent fees', value: `KES ${Math.round(tot('fee')).toLocaleString()}`, color: 'var(--amber)' },
+        { label: 'Net to owner', value: `KES ${Math.round(totNet).toLocaleString()}`, color: totNet < 0 ? 'var(--red)' : 'var(--primary)' },
+        { label: `Net vs ${new Date(prevYm + '-01').toLocaleString('en-KE', { month: 'long' })}`, value: totCh.text, color: totCh.delta != null && totCh.delta < 0 ? 'var(--red)' : 'var(--primary)' },
       ];
       title = `Owner Statement - ${new Date(ownerMonth + '-01').toLocaleString('en-KE', { month: 'long', year: 'numeric' })}`;
-      note = 'Pick a property and month, then press "Owner statement (PDF)" for the full statement: tenant payments, itemised expenses, miscellaneous expenses, agent fee and net payable to the owner.';
+      note = 'Net to owner = rent collected + utilities recovered − expenses − agent fee, so utility bills you paid should be recorded under Expenses. Agent fee is a % of rent collected.'
+        + (noPctCount ? ` ⚠ ${noPctCount} propert${noPctCount === 1 ? 'y has an agent but no fee % set, so its fee shows 0' : 'ies have an agent but no fee % set, so their fee shows 0'}.` : '')
+        + ' Click a row or a bar to filter to that property, then press "Owner statement (PDF)" for the full statement: tenant payments, itemised expenses, agent fee and net payable.';
+      // Net per property across everything in view (built from allVis, not the property filter, so every bar stays visible)
+      if (allVis.length > 1) {
+        const idByName = Object.fromEntries(allVis.map(pl => [pl.name, pl.id]));
+        const figs = allVis.map(pl => ({ pl, net: Math.round(figures(pl, ownerMonth).net) })).sort((a, b) => b.net - a.net);
+        const selName = ownerPlot === 'all' ? 'all' : (allVis.find(pl => String(pl.id) === String(ownerPlot))?.name || 'all');
+        chart = <HBarChart title="Net to owner by property (click a bar to filter)" series={[{ name: 'Net', color: 'var(--primary)' }]}
+          data={figs.map(x => ({ label: x.pl.name, values: [x.net], color: x.net < 0 ? 'var(--red)' : 'var(--primary)' }))}
+          format={v => `KES ${v.toLocaleString()}`}
+          selected={selName} onSelect={nm => setOwnerPlot(cur => String(cur) === String(idByName[nm]) ? 'all' : String(idByName[nm]))} />;
+      }
     }
 
     if (active === 'arrearsrisk') {
@@ -1484,6 +1690,44 @@ export default function Reports() {
       const vis = requests.filter(r => canForPlot('reports.maintenance', r.plot_id, plotPermissions));
       const fr = filterByPeriod(vis, 'reported_at');
       const plotName = Object.fromEntries(plots.map(p => [p.id, p.name]));
+      if (maintView === 'requests') {
+        // Full list of requests (this replaces the old "Maintenance Records" report)
+        const vendorByIdM = Object.fromEntries(vendors.map(v => [String(v.id), v]));
+        const list = fr.filter(r => filters.status === 'all' || r.status === filters.status)
+          .sort((a, b) => new Date(b.reported_at) - new Date(a.reported_at));
+        const infos = list.map(r => [r, maintInfo(r, vendorByIdM, expenses)]);
+        columns = ['#', 'Property', 'Unit', 'Issue', 'Priority', 'Status', 'Requested By', 'Reported', 'Closed By', 'Resolved', 'Days to Resolve', 'Vendor', 'Vendor Type', 'Cost (KES)'];
+        rows = infos.map(([r, i]) => ({
+          '#': r.id,
+          Property: plotName[r.plot_id] || `Plot ${r.plot_id}`,
+          Unit: r.unit_number || `#${r.house_id}`,
+          Issue: r.issue,
+          Priority: r.priority,
+          Status: r.status,
+          'Requested By': i.requester || '—',
+          Reported: new Date(r.reported_at).toLocaleDateString('en-KE'),
+          'Closed By': i.done ? (i.closedBy || '—') : '—',
+          Resolved: r.resolved_at ? new Date(r.resolved_at).toLocaleDateString('en-KE') : '—',
+          'Days to Resolve': i.daysTaken != null ? i.daysTaken : '—',
+          Vendor: i.vName || '—',
+          'Vendor Type': i.vKind === 'registered' ? 'Registered' : i.vKind === 'unregistered' ? 'Unregistered' : '—',
+          'Cost (KES)': i.total.toLocaleString(),
+          _reqId: r.id,   // hidden: lets a click on the row open this request
+        }));
+        summary = [
+          { label: 'Total', value: list.length, color: 'var(--amber)' },
+          { label: 'Pending', value: list.filter(r => r.status === 'pending').length, color: 'var(--red)' },
+          { label: 'In progress', value: list.filter(r => r.status === 'in_progress').length, color: 'var(--blue)' },
+          { label: 'Completed', value: list.filter(r => r.status === 'completed').length, color: 'var(--green)' },
+          { label: 'Repair cost', value: `KES ${infos.reduce((a, [, i]) => a + i.total, 0).toLocaleString()}`, color: 'var(--red)' },
+        ];
+        title = 'Maintenance — all requests';
+        note = 'Click a row to see the full details of that request: what was repaired, who requested and closed it, the vendor (registered or not) and the charges.';
+        const chosenReq = maintReq != null ? list.find(r => String(r.id) === String(maintReq)) : null;
+        chart = chosenReq
+          ? <MaintenanceDetails plotName={plotName[chosenReq.plot_id] || `Plot ${chosenReq.plot_id}`} requests={[chosenReq]} vendors={vendors} expenses={expenses} onClose={() => setMaintReq(null)} />
+          : null;
+      } else {
       const costByReq = {};
       expenses.forEach(e => { if (e.maintenance_request_id) costByReq[e.maintenance_request_id] = (costByReq[e.maintenance_request_id] || 0) + parseFloat(e.amount || 0); });
       const now = new Date();
@@ -1492,7 +1736,7 @@ export default function Reports() {
       fr.forEach(r => { const k = norm(r); counts[k] = (counts[k] || 0) + 1; });
       const groups = {};
       fr.forEach(r => {
-        const g = (groups[r.plot_id] ||= { name: plotName[r.plot_id] || `Plot ${r.plot_id}`, total: 0, done: 0, days: [], open7: 0, urgent: 0, cost: 0, repeats: 0 });
+        const g = (groups[r.plot_id] ||= { plotId: r.plot_id, name: plotName[r.plot_id] || `Plot ${r.plot_id}`, total: 0, done: 0, days: [], open7: 0, urgent: 0, cost: 0, repeats: 0 });
         g.total++;
         if (r.status === 'completed') { g.done++; if (r.resolved_at) g.days.push((new Date(r.resolved_at) - new Date(r.reported_at)) / 86400000); }
         else if ((now - new Date(r.reported_at)) / 86400000 > 7) g.open7++;
@@ -1508,6 +1752,7 @@ export default function Reports() {
         'Completion %': g.total ? `${Math.round((g.done / g.total) * 100)}%` : '—',
         'Avg Days to Resolve': avg(g.days) != null ? avg(g.days).toFixed(1) : '—',
         'Open > 7 days': g.open7, 'Urgent Open': g.urgent, 'Repeat Issues': g.repeats, 'Cost (KES)': g.cost.toLocaleString(),
+        _plotId: g.plotId,   // hidden: lets a click on the row open this property's requests
       }));
       const allDays = list.flatMap(g => g.days);
       summary = [
@@ -1516,9 +1761,27 @@ export default function Reports() {
         { label: 'Open > 7 days', value: list.reduce((x, g) => x + g.open7, 0), color: 'var(--red)' },
         { label: 'Repair cost', value: `KES ${list.reduce((x, g) => x + g.cost, 0).toLocaleString()}`, color: 'var(--red)' },
       ];
-      title = 'Maintenance Performance';
-      chart = <HBarChart title="Average days to resolve" series={[{ name: 'Days', color: 'var(--amber)' }]}
-        data={list.filter(g => g.days.length).map(g => ({ label: g.name, values: [Number(avg(g.days).toFixed(1))] }))} format={v => `${v} days`} />;
+      title = 'Maintenance — by property';
+      // Click a bar (or a table row) to open the requests behind that property's numbers.
+      const withDays = list.filter(g => g.days.length);
+      const idByName = Object.fromEntries(list.map(g => [g.name, g.plotId]));
+      const chosen = maintPlot != null ? list.find(g => String(g.plotId) === String(maintPlot)) : null;
+      note = 'Click a bar or a row to see the requests behind it: what was repaired, who requested and closed it, the vendor (registered or not) and the charges.';
+      chart = (
+        <>
+          {withDays.length > 0 && (
+            <HBarChart title="Average days to resolve (click a bar to see its requests)" series={[{ name: 'Days', color: 'var(--amber)' }]}
+              data={withDays.map(g => ({ label: g.name, values: [Number(avg(g.days).toFixed(1))] }))} format={v => `${v} days`}
+              selected={chosen ? chosen.name : 'all'}
+              onSelect={nm => setMaintPlot(cur => String(cur) === String(idByName[nm]) ? null : idByName[nm])} />
+          )}
+          {chosen && (
+            <MaintenanceDetails plotName={chosen.name} requests={fr.filter(r => String(r.plot_id) === String(chosen.plotId))}
+              vendors={vendors} expenses={expenses} onClose={() => setMaintPlot(null)} />
+          )}
+        </>
+      );
+      }
     }
 
     if (active === 'properties') {
@@ -2061,6 +2324,10 @@ export default function Reports() {
         const c = (a[k] ?? -1) - (b[k] ?? -1);     // rows with no data sort lowest
         return sortDir === 'asc' ? c : -c;
       }
+      if (active === 'ownerstatement' && sortCol === 'Net vs Last Month') {
+        const c = (a._delta ?? -Infinity) - (b._delta ?? -Infinity);
+        return Number.isNaN(c) ? 0 : (sortDir === 'asc' ? c : -c);
+      }
       if (sortCol === 'Allocated To') {
         const pa = a[sortCol] === 'Security deposit', pb = b[sortCol] === 'Security deposit';
         if (pa !== pb) return pa ? -1 : 1;          // deposit row always stays at the top
@@ -2075,13 +2342,15 @@ export default function Reports() {
   }
 
   // Unpaid Rent + Tenant List: optional grouping by property (stable, so the user's sort holds inside each group)
-  const grouping = (active === 'unpaid' && unpaidGroup) || (active === 'tenants' && tenantsGroup);
+  const grouping = (active === 'unpaid' && unpaidGroup) || (active === 'tenants' && tenantsGroup) || (active === 'ownerstatement' && ownerGroup && ownerMulti);
   const unpaidGroupTotals = {};
   if (grouping) {
     visibleRows = [...visibleRows].sort((a, b) => String(a._plot).localeCompare(String(b._plot)));
     visibleRows.forEach(r => {
       const g = unpaidGroupTotals[r._plot] || (unpaidGroupTotals[r._plot] = { n: 0, bal: 0, owing: 0 });
-      g.n += 1; g.bal += Math.max(0, r._bal || 0); if (r._owing) g.owing += 1;
+      g.n += 1;
+      if (active === 'ownerstatement') g.bal += r._net || 0;   // owner subtotal = their net (can be negative)
+      else { g.bal += Math.max(0, r._bal || 0); if (r._owing) g.owing += 1; }
     });
   }
   // Clickable summary tiles: Unpaid Rent filters by aging bucket, Tenant List by status.
@@ -2092,8 +2361,16 @@ export default function Reports() {
   const moneyClass = (c, row) => {
     if (active === 'unpaid') { if (c === 'Balance (KES)') return ' neg'; if (c === 'Rent (KES)') return ' plain'; }
     if (active === 'tenants') { if (c === 'Balance (KES)') return row._bal > 0 ? ' neg' : ' plain'; if (c === 'Rent (KES)') return ' plain'; }
+    if (active === 'ownerstatement') {
+      if (c === 'Rent Expected (KES)' || c === 'Agent Fee (KES)') return ' plain';
+      if (c === 'Rent Collected (KES)') return row._rent > 0 ? '' : ' plain';
+      if (c === 'Utilities Recovered (KES)') return row._util > 0 ? '' : ' plain';
+      if (c === 'Expenses (KES)') return row._exp > 0 ? ' neg' : ' plain';
+      if (c === 'Net to Owner (KES)') return row._net < 0 ? ' neg' : row._net > 0 ? '' : ' plain';
+    }
     return (isNegativeCol(c) || String(row[c]).trim().startsWith('-')) ? ' neg' : '';
   };
+  const ownerSum = (k) => visibleRows.reduce((a, r) => a + (r[k] || 0), 0);   // Owner Statement totals row
 
   function handleSort(col) {
     if (sortCol === col) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
@@ -2338,7 +2615,13 @@ export default function Reports() {
               <option value="inactive">Inactive Only</option>
             </select>
           )}
-          {active === 'maintenance' && (
+          {active === 'maintperf' && (
+            <>
+              <button type="button" className="rp-btn" onClick={() => { setMaintView('property'); setMaintReq(null); }} title="Per-property performance">{maintView === 'property' ? '✓ ' : ''}By property</button>
+              <button type="button" className="rp-btn" onClick={() => { setMaintView('requests'); setMaintPlot(null); }} title="Every request, one per row">{maintView === 'requests' ? '✓ ' : ''}All requests</button>
+            </>
+          )}
+          {active === 'maintperf' && maintView === 'requests' && (
             <select value={filters.status} onChange={e => setFilters(f => ({ ...f, status: e.target.value }))} className="rp-select">
               <option value="all">All Status</option>
               <option value="pending">Pending</option>
@@ -2371,6 +2654,22 @@ export default function Reports() {
                 <button type="button" className="rp-btn" onClick={() => setUnpaidGroup(g => !g)} title="Group rows by property with subtotals">{unpaidGroup ? '✓ ' : ''}Group by property</button>
               )}
 
+              {/* Owner Statement: owner filter, hide empty, group by owner */}
+              {active === 'ownerstatement' && ownerMulti && (
+                <select value={ownerOwner} onChange={e => setOwnerOwner(e.target.value)} className="rp-select" title="Filter by owner">
+                  <option value="all">All owners</option>
+                  {[...new Set((data.plots || []).filter(pl => canForPlot('reports.revenue_summary', pl.id, data.plotPermissions)).map(pl => pl.owner_name || '—'))]
+                    .sort((a, b) => String(a).localeCompare(String(b)))
+                    .map(o => <option key={o} value={o}>{o}</option>)}
+                </select>
+              )}
+              {active === 'ownerstatement' && (
+                <button type="button" className="rp-btn" onClick={() => setOwnerHideEmpty(h => !h)} title="Hide properties with no rent expected, collected, recovered or spent">{ownerHideEmpty ? '✓ ' : ''}Hide empty properties</button>
+              )}
+              {active === 'ownerstatement' && ownerMulti && (
+                <button type="button" className="rp-btn" onClick={() => setOwnerGroup(g => !g)} title="Group properties by owner with subtotals">{ownerGroup ? '✓ ' : ''}Group by owner</button>
+              )}
+
               {/* Tenant List: property filter, status chip, grouping */}
               {active === 'tenants' && (
                 <select value={tenantsPlot} onChange={e => setTenantsPlot(e.target.value)} className="rp-select" title="Filter by property">
@@ -2401,7 +2700,9 @@ export default function Reports() {
                       {(data?.plots || []).filter(pl => canForPlot('reports.revenue_summary', pl.id, data?.plotPermissions)).map(pl => <option key={pl.id} value={pl.id}>{pl.name}</option>)}
                     </select>
                   )}
+                  {active === 'ownerstatement' && <button type="button" className="rp-btn" onClick={() => setOwnerMonth(m => shiftMonth(m, -1))} title="Previous month" aria-label="Previous month">‹</button>}
                   <input type="month" value={ownerMonth} onChange={e => setOwnerMonth(e.target.value)} className="rp-select" title="Statement month" />
+                  {active === 'ownerstatement' && <button type="button" className="rp-btn" onClick={() => setOwnerMonth(m => shiftMonth(m, 1))} title="Next month" aria-label="Next month">›</button>}
                   <button type="button" className="rp-btn" onClick={downloadOwnerStatement}><IconInline name="🏢" size={14} />Owner statement (PDF)</button>
                 </span>
               )}
@@ -2492,14 +2793,29 @@ export default function Reports() {
                       {grouping && (i === 0 || visibleRows[i - 1]._plot !== row._plot) && (
                         <tr className="rp-group-row">
                           <td colSpan={columns.length + 1}>
-                            {row._plot} — {unpaidGroupTotals[row._plot].n} tenant{unpaidGroupTotals[row._plot].n === 1 ? '' : 's'}{active === 'tenants' ? ` · ${unpaidGroupTotals[row._plot].owing} owing` : ''} · KES {unpaidGroupTotals[row._plot].bal.toLocaleString()} owed
+                            {active === 'ownerstatement'
+                              ? `${row._plot} — ${unpaidGroupTotals[row._plot].n} propert${unpaidGroupTotals[row._plot].n === 1 ? 'y' : 'ies'} · Net KES ${Math.round(unpaidGroupTotals[row._plot].bal).toLocaleString()}`
+                              : <>{row._plot} — {unpaidGroupTotals[row._plot].n} tenant{unpaidGroupTotals[row._plot].n === 1 ? '' : 's'}{active === 'tenants' ? ` · ${unpaidGroupTotals[row._plot].owing} owing` : ''} · KES {unpaidGroupTotals[row._plot].bal.toLocaleString()} owed</>}
                           </td>
                         </tr>
                       )}
-                      <tr>
+                      <tr className={(active === 'ownerstatement' || active === 'maintperf') ? 'rp-clickrow' : undefined}
+                        onClick={active === 'maintperf' && row._reqId != null ? () => setMaintReq(cur => String(cur) === String(row._reqId) ? null : row._reqId)
+                          : row._plotId == null ? undefined
+                          : active === 'ownerstatement' ? () => setOwnerPlot(cur => String(cur) === String(row._plotId) ? 'all' : String(row._plotId))
+                          : active === 'maintperf' ? () => setMaintPlot(cur => String(cur) === String(row._plotId) ? null : row._plotId)
+                          : undefined}
+                        title={active === 'ownerstatement' ? 'Click to filter to this property' : active === 'maintperf' ? (row._reqId != null ? "Click to see this request's details" : "Click to see this property's requests") : undefined}>
                         {columns.map(c => (
                           <td key={c} className={isNumCol(c) ? 'rp-num' : undefined}>
-                            {active === 'tenants' && c === 'Status' ? (
+                            {active === 'ownerstatement' && c === 'Agent Fee (KES)' ? (
+                              <>
+                                <span className="rp-money plain">{row._feeWarn ? '0' : row[c]}</span>
+                                {row._feeWarn && <span className="rp-warnchip" title="This property has an agent but no fee percentage set, so no agent fee was deducted">⚠ no fee % set</span>}
+                              </>
+                            ) : active === 'ownerstatement' && c === 'Net vs Last Month' ? (
+                              <span className={`rp-money${row._delta == null ? ' plain' : row._delta < 0 ? ' neg' : ''}`}>{row[c]}</span>
+                            ) : active === 'tenants' && c === 'Status' ? (
                               <span className={`rp-badge rp-badge-${{ Active: 'green', Owing: 'orange', Inactive: 'red' }[row[c]] || 'amber'}`}>{row[c]}</span>
                             ) : c === 'Status' || c === 'Severity' ? (
                               <span className={`rp-badge rp-badge-${statusKind(row[c])}`}>{typeof row[c] === 'string' ? sentence(row[c]) : row[c]}</span>
@@ -2550,6 +2866,31 @@ export default function Reports() {
                           </td>
                         ))}
                         <td className="no-print" />
+                      </tr>
+                    </tfoot>
+                  )}
+                  {active === 'ownerstatement' && (
+                    <tfoot>
+                      <tr>
+                        {columns.map((c, ci) => {
+                          const fmt = (v) => Math.round(v).toLocaleString();
+                          const net = ownerSum('_net'), prev = ownerSum('_prevNet');
+                          const dl = prev ? ((net - prev) / Math.abs(prev)) * 100 : null;
+                          return (
+                            <td key={c} className={isNumCol(c) ? 'rp-num' : undefined}>
+                              {ci === 0 ? `Total · ${visibleRows.length} propert${visibleRows.length === 1 ? 'y' : 'ies'}`
+                                : c === 'Rent Expected (KES)' ? fmt(ownerSum('_expected'))
+                                : c === 'Rent Collected (KES)' ? fmt(ownerSum('_rent'))
+                                : c === 'Collected % of Rent' ? (ownerSum('_expected') > 0 ? `${Math.round((ownerSum('_rent') / ownerSum('_expected')) * 100)}%` : '—')
+                                : c === 'Utilities Recovered (KES)' ? fmt(ownerSum('_util'))
+                                : c === 'Expenses (KES)' ? fmt(ownerSum('_exp'))
+                                : c === 'Agent Fee (KES)' ? fmt(ownerSum('_fee'))
+                                : c === 'Net to Owner (KES)' ? <span className={`rp-money${net < 0 ? ' neg' : ''}`}>{fmt(net)}</span>
+                                : c === 'Net vs Last Month' ? (dl == null ? (net ? 'New' : '—') : `${dl >= 0 ? '▲' : '▼'} ${Math.abs(Math.round(dl))}%`)
+                                : ''}
+                            </td>
+                          );
+                        })}
                       </tr>
                     </tfoot>
                   )}

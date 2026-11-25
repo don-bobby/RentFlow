@@ -2,7 +2,8 @@ import { useState, useEffect, useRef } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import API from '../services/api';
 import { useAuth } from '../context/AuthContext';
-import Icon, { IconInline, Caret } from '../components/Icon';
+import Icon, { Caret } from '../components/Icon';
+import TenantFormModal from '../components/TenantFormModal';
 
 function hexToRgba(hex, alpha) {
   const n = parseInt(hex.replace('#', ''), 16);
@@ -70,27 +71,19 @@ function ActionMenu({ id, openMenu, setOpenMenu, items, size = 'md' }) {
   );
 }
 
-const emptyForm = {
-  full_name: '', phone: '', email: '', national_id: '',
-  house_id: '', move_in_date: '', rent_due_day: 5, deposit_paid: '', emergency_phone: '',
-};
-
 export default function Tenants() {
   const [tenants,  setTenants]  = useState([]);
-  const [houses,   setHouses]   = useState([]);
   const [allHouses,setAllHouses]= useState([]);
   const [loading,  setLoading]  = useState(true);
   const [modal,    setModal]    = useState(null); // null | 'add' | 'edit'
   const [editing,  setEditing]  = useState(null);
-  const [saving,   setSaving]   = useState(false);
-  const [error,    setError]    = useState('');
   const [search,   setSearch]   = useState('');
   const [propertyFilter, setPropertyFilter] = useState('all');
   const [statusFilter,   setStatusFilter]   = useState('all');
   const [moveInFrom,     setMoveInFrom]     = useState('');
   const [moveInTo,       setMoveInTo]       = useState('');
   const [moveInPreset,   setMoveInPreset]   = useState('any'); // any | month | 3m | year | custom
-  const [form,     setForm]     = useState(emptyForm);
+  const [owingIds,       setOwingIds]       = useState([]);   // set when arriving from the dashboard's "tenants with an outstanding balance"
 
   const [pinModal,  setPinModal]  = useState(null); // tenant object
   const [pin,       setPin]       = useState('');
@@ -123,18 +116,26 @@ export default function Tenants() {
   const addablePlotIds = [...new Set(allHouses.map(h => h.plot_id).filter(id => id != null))]
     .filter(plotId => can('tenants.create', plotId));
   const canAdd = addablePlotIds.length > 0;
-  // Plain global flag, kept separate from canAdd above — used below to
-  // decide whether the unit dropdown needs narrowing at all. When this is
-  // true, every property-having-a-vacant-unit is already addable and no
-  // filtering is needed; when it's false, canAdd being true only because
-  // of a property-specific grant means the dropdown must be narrowed to
-  // just those properties, or she could still submit a tenant for a unit
-  // she doesn't actually have the permission for.
-  const canAddGlobally = can('tenants.create');
   const isDark    = useIsDarkMode();
   const location  = useLocation();
   useEffect(() => { if (location.state?.search) setSearch(location.state.search); }, [location.state]); // from Ctrl+K quick search
   const navigate  = useNavigate();
+
+  // From the dashboard ("N tenants have an outstanding balance"): show exactly those
+  // tenants, highlighted, and scroll to the first one.
+  useEffect(() => {
+    const ids = location.state?.highlightTenantIds;
+    if (ids?.length) {
+      setOwingIds(ids);
+      setSearch(''); setPropertyFilter('all'); setStatusFilter('all');
+      setMoveInFrom(''); setMoveInTo(''); setMoveInPreset('any');
+    }
+  }, [location.state]);
+  useEffect(() => {
+    if (!owingIds.length || loading) return;
+    const tm = setTimeout(() => document.getElementById(`tenant-row-${owingIds[0]}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 200);
+    return () => clearTimeout(tm);
+  }, [owingIds, loading]);
 
   async function load() {
     setLoading(true);
@@ -143,7 +144,6 @@ export default function Tenants() {
       setTenants(Array.isArray(tr.data) ? tr.data : (tr.data.data || []));
       const ah = Array.isArray(hr.data) ? hr.data : (hr.data.data || []);
       setAllHouses(ah);
-      setHouses(ah.filter(h => h.status === 'vacant'));
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
   }
@@ -175,40 +175,12 @@ export default function Tenants() {
 
   function openAdd() {
     setEditing(null);
-    setForm({ ...emptyForm, house_id: addableHouses[0]?.id || '' });
-    setModal('add'); setError('');
+    setModal('add');
   }
 
   function openEdit(tenant) {
     setEditing(tenant);
-    setForm({
-      full_name:       tenant.full_name || '',
-      phone:           tenant.phone || '',
-      email:           tenant.email || '',
-      national_id:     tenant.national_id || '',
-      house_id:        tenant.house_id || '',
-      move_in_date:    tenant.move_in_date ? tenant.move_in_date.slice(0, 10) : '',
-      rent_due_day:    tenant.rent_due_day || 5,
-      deposit_paid:    tenant.deposit_paid || '',
-      emergency_phone: tenant.emergency_phone || '',
-      is_active:       tenant.is_active ?? true,
-    });
-    setModal('edit'); setError('');
-  }
-
-  async function handleSave() {
-    setSaving(true); setError('');
-    try {
-      if (modal === 'edit' && editing) {
-        await API.put(`/tenants/${editing.id}`, form);
-      } else {
-        await API.post('/tenants', form);
-      }
-      await load();
-      setModal(null); setEditing(null);
-    } catch (e) {
-      setError(e.response?.data?.message || e.response?.data?.error || e.message || 'Failed to save tenant');
-    } finally { setSaving(false); }
+    setModal('edit');
   }
 
   async function handleSetPin() {
@@ -303,8 +275,71 @@ export default function Tenants() {
     const matchesStatus = statusFilter === 'all' || (statusFilter === 'active' ? t.is_active : !t.is_active);
     const matchesMoveIn = (!moveInFrom || (t.move_in_date && t.move_in_date.slice(0, 10) >= moveInFrom)) &&
       (!moveInTo || (t.move_in_date && t.move_in_date.slice(0, 10) <= moveInTo));
-    return matchesSearch && matchesProperty && matchesStatus && matchesMoveIn;
+    const matchesOwing = !owingIds.length || owingIds.includes(t.id);
+    return matchesSearch && matchesProperty && matchesStatus && matchesMoveIn && matchesOwing;
   });
+  if (owingIds.length) filtered.sort((a, b) => parseFloat(b.balance || 0) - parseFloat(a.balance || 0));
+  if (owingIds.length) filtered.sort((a, b) => parseFloat(b.balance || 0) - parseFloat(a.balance || 0));   // largest balances first
+
+
+  // ── Owing tenants: summary, CSV download and printable list ──────────────────
+  const owingNowIds = tenants.filter(x => x.is_active && parseFloat(x.balance || 0) > 0).map(x => x.id);
+  const owingRows   = filtered;                       // already sorted biggest balance first while the owing view is on
+  const owingTotal  = owingRows.reduce((a, x) => a + parseFloat(x.balance || 0), 0);
+  const todayStamp  = new Date().toISOString().slice(0, 10);
+
+  // How far behind each tenant is: balance divided by their unit's monthly rent.
+  const rentOf       = (x) => parseFloat(allHouses.find(h => h.id === x.house_id)?.rent_amount || 0);
+  const monthsBehind = (x) => { const r = rentOf(x); return r > 0 ? parseFloat(x.balance || 0) / r : null; };
+  const sevOf        = (x) => { const m = monthsBehind(x); return m == null ? 'red' : m >= 2 ? 'red' : m >= 1 ? 'amber' : 'low'; };
+  const SEV = {
+    red:   { bar: '#b42318', bg: 'var(--red-light, #fdecea)',     fg: 'var(--red, #b42318)',     label: '2+ months behind' },
+    amber: { bar: '#b45309', bg: 'var(--amber-light, #fef3c7)',   fg: 'var(--amber, #b45309)',   label: '1 to 2 months behind' },
+    low:   { bar: '#8a9a90', bg: 'var(--surface2, #f7faf7)',      fg: 'var(--text)',             label: 'Under 1 month' },
+  };
+  const sevCounts = owingRows.reduce((a, x) => { const k = sevOf(x); a[k] = (a[k] || 0) + 1; return a; }, {});
+  const monthsText = (x) => { const m = monthsBehind(x); if (m == null) return ''; if (m < 0.95) return 'less than 1 month'; const r = Math.round(m * 10) / 10; return `about ${r} month${r === 1 ? '' : 's'}`; };
+
+  function downloadOwingCsv() {
+    const q = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+    const cols = ['Tenant', 'Phone', 'Email', 'Property', 'Unit', 'Move-in date', 'Rent due day', 'Monthly rent (KES)', 'Months behind', 'Rent balance (KES)'];
+    const lines = [cols.map(q).join(',')];
+    owingRows.forEach(x => lines.push([
+      q(x.full_name), `="${String(x.phone || '').replace(/"/g, '')}"`, q(x.email), q(tenantPlotName(x)),
+      q(x.unit_number ? `Unit ${x.unit_number}` : ''), q(x.move_in_date ? String(x.move_in_date).slice(0, 10) : ''),
+      q(x.rent_due_day || ''), rentOf(x) || '', monthsBehind(x) == null ? '' : Math.round(monthsBehind(x) * 10) / 10, parseFloat(x.balance || 0),
+    ].join(',')));
+    lines.push([q('TOTAL'), '', '', '', '', '', '', '', '', owingTotal].join(','));
+    const blob = new Blob(['\uFEFF' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8;' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `tenants-owing-${todayStamp}.csv`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  }
+
+  function printOwing() {
+    const esc = (v) => String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const rows = owingRows.map((x, i) => `<tr><td>${i + 1}</td><td><b>${esc(x.full_name)}</b></td><td>${esc(x.phone)}</td><td>${esc(tenantPlotName(x))}</td><td>${esc(x.unit_number ? 'Unit ' + x.unit_number : '')}</td><td>${esc(monthsText(x))}</td><td style="text-align:right"><b>KES ${parseFloat(x.balance || 0).toLocaleString()}</b></td></tr>`).join('');
+    const w = window.open('', '_blank');
+    if (!w) { alert('Allow pop-ups to print this list.'); return; }
+    w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Tenants with outstanding balances</title>
+      <style>body{font-family:'DM Sans',Arial,sans-serif;color:#0f1f17;margin:32px}h1{font-size:22px;margin:0 0 4px}p{margin:0 0 18px;color:#55645b;font-size:13px}
+      table{width:100%;border-collapse:collapse;font-size:13px}th{text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:#55645b;border-bottom:2px solid #cdd8d0;padding:8px}
+      td{padding:8px;border-bottom:1px solid #e3e9e4}tfoot td{border-top:2px solid #0f1f17;border-bottom:0;font-size:14px}</style></head><body>
+      <h1>Tenants with outstanding balances</h1>
+      <p>${owingRows.length} tenant${owingRows.length !== 1 ? 's' : ''} &middot; KES ${owingTotal.toLocaleString()} in total &middot; ${new Date().toLocaleDateString('en-KE', { day: 'numeric', month: 'long', year: 'numeric' })}</p>
+      <table><thead><tr><th>#</th><th>Tenant</th><th>Phone</th><th>Property</th><th>Unit</th><th>Behind</th><th style="text-align:right">Balance</th></tr></thead><tbody>${rows}</tbody>
+      <tfoot><tr><td colspan="6"><b>Total</b></td><td style="text-align:right"><b>KES ${owingTotal.toLocaleString()}</b></td></tr></tfoot></table></body></html>`);
+    w.document.close(); w.focus();
+    setTimeout(() => w.print(), 300);
+  }
+
+  function toggleOwing() {
+    if (owingIds.length) { setOwingIds([]); navigate(location.pathname, { replace: true, state: {} }); return; }
+    setOwingIds(owingNowIds);
+    setSearch(''); setPropertyFilter('all'); setStatusFilter('all'); setMoveInFrom(''); setMoveInTo(''); setMoveInPreset('any');
+  }
 
   // ── Filter bar helpers ──────────────────────────────────────────────
   const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -336,48 +371,6 @@ export default function Tenants() {
     inactive: tenants.filter(t => !t.is_active).length,
   };
 
-  // Vacant units this user can actually add a tenant to. When tenants.create
-  // is a plain global permission (canAddGlobally), every vacant unit
-  // qualifies, same as before. When it's only true because of a
-  // property-specific grant, narrow this to just those properties — showing
-  // every vacant unit here would let her pick one she doesn't actually have
-  // tenants.create for, and the backend's own per-plot check (same pattern
-  // as the edit/set-pin routes) would then reject the save anyway.
-  const addableHouses = canAddGlobally ? houses : houses.filter(h => addablePlotIds.includes(h.plot_id));
-
-  // For edit modal, include the tenant's current unit even if occupied
-  const unitOptions = modal === 'edit'
-    ? allHouses.filter(h => h.status === 'vacant' || h.id === editing?.house_id)
-    : addableHouses;
-
-  // Grouped by plot so the dropdown reads as "Wa Chege Building > Unit B1"
-  // instead of a flat, unlabeled list of units from every property mixed
-  // together — the only way to tell which property a unit belongs to
-  // before this was to already know the unit numbering scheme by heart.
-  const unitOptionsByPlot = (() => {
-    const groups = {};
-    for (const h of unitOptions) {
-      const plotName = h.plot_name || 'No Property';
-      (groups[plotName] ||= []).push(h);
-    }
-    return Object.entries(groups)
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([plotName, list]) => [
-        plotName,
-        [...list].sort((a, b) => (a.unit_number || '').localeCompare(b.unit_number || '', undefined, { numeric: true })),
-      ]);
-  })();
-
-  // Required deposit for whichever unit is currently selected in the form —
-  // shown as a hint next to "Deposit Paid" so a short deposit is caught at
-  // entry time, instead of silently disappearing into a field with no
-  // context (which is how an 8,000 payment against a 10,000 requirement
-  // went unnoticed before: nothing on screen said 10,000 was expected).
-  const selectedUnitDeposit = allHouses.find(h => h.id === Number(form.house_id))?.deposit;
-  const depositShortfall = selectedUnitDeposit != null && form.deposit_paid !== ''
-    ? Math.max(0, parseFloat(selectedUnitDeposit) - parseFloat(form.deposit_paid || 0))
-    : 0;
-
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
@@ -402,9 +395,9 @@ export default function Tenants() {
             <div style={filterLabelStyle}>Status</div>
             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
               {[['all', 'All'], ['active', 'Active'], ['inactive', 'Inactive']].map(([val, label]) => {
-                const on = statusFilter === val;
+                const on = statusFilter === val && !owingIds.length;
                 return (
-                  <button key={val} onClick={() => setStatusFilter(val)} style={{
+                  <button key={val} onClick={() => { setStatusFilter(val); if (owingIds.length) { setOwingIds([]); navigate(location.pathname, { replace: true, state: {} }); } }} style={{
                     padding: '7px 12px', borderRadius: 99, fontSize: 12, fontWeight: 600, cursor: 'pointer',
                     border: `1px solid ${on ? 'var(--primary, #1b6b45)' : 'var(--border)'}`,
                     background: on ? 'var(--primary, #1b6b45)' : 'var(--surface)',
@@ -414,6 +407,16 @@ export default function Tenants() {
                   </button>
                 );
               })}
+              {owingNowIds.length > 0 && (
+                <button onClick={toggleOwing} aria-pressed={owingIds.length > 0} style={{
+                  padding: '7px 12px', borderRadius: 99, fontSize: 12, fontWeight: 600, cursor: 'pointer',
+                  border: `1px solid ${owingIds.length ? 'var(--red, #b42318)' : 'var(--border)'}`,
+                  background: owingIds.length ? 'var(--red-light, #fdecea)' : 'var(--surface)',
+                  color: 'var(--red, #b42318)',
+                }}>
+                  Owing <span style={{ opacity: 0.8, marginLeft: 2 }}>{owingNowIds.length}</span>
+                </button>
+              )}
             </div>
           </div>
 
@@ -462,6 +465,45 @@ export default function Tenants() {
         </div>
       </div>
 
+      {owingIds.length > 0 && (
+        <section role="status" aria-label="Tenants with an outstanding balance" style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderLeft: '4px solid var(--red, #b42318)', borderRadius: 14, padding: '18px 22px', marginBottom: 14, display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: 16 }}>
+          <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 28 }}>
+            <div>
+              <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--muted)' }}>Tenants owing</div>
+              <div style={{ fontFamily: 'Bricolage Grotesque', fontWeight: 700, fontSize: 28, color: 'var(--text)', lineHeight: 1.15 }}>{owingRows.length}</div>
+            </div>
+            <div>
+              <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--muted)' }}>Total outstanding</div>
+              <div style={{ fontFamily: 'Bricolage Grotesque', fontWeight: 700, fontSize: 28, color: 'var(--red, #b42318)', lineHeight: 1.15 }}>KES {owingTotal.toLocaleString()}</div>
+            </div>
+            {owingRows[0] && (
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--muted)' }}>Largest balance</div>
+                <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--text)', marginTop: 4 }}>{owingRows[0].full_name} · KES {parseFloat(owingRows[0].balance || 0).toLocaleString()}</div>
+              </div>
+            )}
+          </div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
+            <button onClick={downloadOwingCsv} style={{ display: 'flex', alignItems: 'center', gap: 8, minHeight: 44, padding: '0 18px', borderRadius: 10, border: 'none', background: 'var(--primary, #1b6b45)', color: '#fff', fontWeight: 600, fontSize: 14, cursor: 'pointer' }}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 4v11M7 11l5 5 5-5M5 20h14"/></svg>Download CSV
+            </button>
+            <button onClick={printOwing} style={{ display: 'flex', alignItems: 'center', gap: 8, minHeight: 44, padding: '0 18px', borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontWeight: 600, fontSize: 14, cursor: 'pointer' }}>
+              <Icon name="🖨️" size={16} />Print / PDF
+            </button>
+            <button onClick={toggleOwing} style={{ minHeight: 44, padding: '0 14px', border: 'none', background: 'none', color: 'var(--primary, #1b6b45)', fontWeight: 600, fontSize: 14, cursor: 'pointer' }}>Show all tenants</button>
+          </div>
+          <div style={{ flex: '1 0 100%', display: 'flex', flexWrap: 'wrap', gap: 20, paddingTop: 12, borderTop: '1px solid var(--border)', fontSize: 13, color: 'var(--muted)' }}>
+            {['red', 'amber', 'low'].filter(k => sevCounts[k]).map(k => (
+              <span key={k} style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                <i aria-hidden="true" style={{ width: 4, height: 16, borderRadius: 2, background: SEV[k].bar, display: 'inline-block' }} />
+                <b style={{ color: 'var(--text)' }}>{sevCounts[k]}</b> {SEV[k].label}
+              </span>
+            ))}
+            <span>Left bar colour shows how far behind each tenant is (balance divided by monthly rent).</span>
+          </div>
+        </section>
+      )}
+
       <div style={{ background: 'var(--surface)', borderRadius: 'var(--radius)', boxShadow: 'var(--shadow)', border: '1px solid var(--border)', overflow: 'hidden' }}>
         {loading ? (
           <div style={{ padding: 40, textAlign: 'center', color: 'var(--muted)' }}>Loading...</div>
@@ -472,7 +514,7 @@ export default function Tenants() {
             <thead>
               <tr style={{ background: 'var(--surface2)' }}>
                 {['Name', 'Phone', 'Unit', 'Property', 'Move-in', 'Rent Balance', 'Deposit', 'Status', ...(canManageAny ? [''] : ['Last Payment'])].map(h => (
-                  <th key={h} style={{ padding: '10px 20px', textAlign: 'left', fontSize: 12, fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>{h}</th>
+                  <th key={h} style={{ padding: '10px 20px', textAlign: 'left', fontSize: 12, fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>{h}{owingIds.length > 0 && /balance/i.test(h) ? ' \u2193' : ''}</th>
                 ))}
               </tr>
             </thead>
@@ -487,7 +529,7 @@ export default function Tenants() {
                 const canDeactivateRow = can('tenants.deactivate', plotId);
                 const canManageRow = canEditRow || canSetPin || canDeactivateRow || isEraseAdmin;
                 return (
-                <tr key={t.id} style={{ borderTop: '1px solid var(--border)', background: i % 2 === 0 ? 'var(--surface)' : 'var(--surface2)' }}>
+                <tr key={t.id} id={`tenant-row-${t.id}`} style={{ borderTop: '1px solid var(--border)', background: i % 2 === 0 ? 'var(--surface)' : 'var(--surface2)', boxShadow: owingIds.includes(t.id) ? `inset 4px 0 0 ${SEV[sevOf(t)].bar}` : 'none' }}>
                   <td style={{ padding: '13px 20px' }}>
                     <div style={{ fontWeight: 600, color: 'var(--text)' }}>{t.full_name}</div>
                     <div style={{ fontSize: 12, color: 'var(--muted)' }}>{t.email}</div>
@@ -497,13 +539,20 @@ export default function Tenants() {
                     {t.unit_number ? `Unit ${t.unit_number}` : `#${t.house_id}`}
                   </td>
                   <td style={{ padding: '13px 20px', color: 'var(--muted)' }}>{tenantPlotName(t)}</td>
-                  <td style={{ padding: '13px 20px', color: 'var(--muted)', fontSize: 13, fontWeight: 700 }}>
-                    {t.move_in_date ? new Date(t.move_in_date).toLocaleDateString('en-KE') : '—'}
+                  <td style={{ padding: '13px 20px', color: 'var(--muted)', fontSize: 13, fontWeight: 500 }}>
+                    {t.move_in_date ? new Date(t.move_in_date).toLocaleDateString('en-KE', { day: 'numeric', month: 'short', year: 'numeric' }) : '—'}
                   </td>
                   <td style={{ padding: '13px 20px' }}>
-                    <span style={{ fontWeight: 700, color: parseFloat(t.balance) > 0 ? 'var(--red, #dc2626)' : 'var(--green, #16a34a)' }}>
-                      KES {parseFloat(t.balance || 0).toLocaleString()}
-                    </span>
+                    {parseFloat(t.balance) > 0 ? (
+                      <div>
+                        <span style={{ display: 'inline-block', padding: '4px 12px', borderRadius: 99, background: SEV[sevOf(t)].bg, color: SEV[sevOf(t)].fg, fontWeight: 700, fontSize: 13, whiteSpace: 'nowrap', border: sevOf(t) === 'low' ? '1px solid var(--border)' : '1px solid transparent' }}>
+                          KES {parseFloat(t.balance).toLocaleString()}
+                        </span>
+                        {monthsText(t) && <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 4 }}>{monthsText(t)} behind</div>}
+                      </div>
+                    ) : (
+                      <span style={{ fontWeight: 600, fontSize: 13, color: 'var(--muted)' }}>KES 0</span>
+                    )}
                   </td>
                   <td style={{ padding: '13px 20px', fontSize: 12 }}>
                     {(() => {
@@ -649,81 +698,15 @@ export default function Tenants() {
         </div>
       )}
 
-      {/* Add / Edit Modal */}
+      {/* Add / Edit Modal — shared with the Dashboard (components/TenantFormModal.jsx) */}
       {modal && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, padding: 20, overflowY: 'auto' }}>
-          <div style={{ background: 'var(--surface)', borderRadius: 16, padding: 28, width: '100%', maxWidth: 500, boxShadow: 'var(--shadow-lg)', margin: 'auto' }}>
-            <h2 style={{ fontFamily: 'Bricolage Grotesque', fontWeight: 700, fontSize: 18, marginBottom: 20, color: 'var(--text)' }}>
-              {modal === 'edit' ? `Edit Tenant — ${editing?.full_name}` : 'Add New Tenant'}
-            </h2>
-            {error && <div style={{ background: isDark ? hexToRgba('#dc2626', 0.2) : 'var(--red-light)', color: isDark ? '#f87171' : 'var(--red)', padding: '10px 14px', borderRadius: 8, marginBottom: 16, fontSize: 13 }}>{error}</div>}
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
-              <Field label="Full Name"       value={form.full_name}       onChange={v => setForm(f=>({...f,full_name:v}))}       placeholder="Jane Doe"     span />
-              <Field label="Phone"           value={form.phone}           onChange={v => setForm(f=>({...f,phone:v}))}           placeholder="0712345678" />
-              <Field label="Email"           value={form.email}           onChange={v => setForm(f=>({...f,email:v}))}           placeholder="jane@email.com" type="email" />
-              <Field label="National ID"     value={form.national_id}     onChange={v => setForm(f=>({...f,national_id:v}))}     placeholder="12345678" />
-              <div style={{ gridColumn: '1/-1' }}>
-                <label style={labelStyle}>Assign Unit</label>
-                <select value={form.house_id} onChange={e => setForm(f=>({...f,house_id:e.target.value}))} style={inputStyle}>
-                  <option value="">— Select unit —</option>
-                  {unitOptionsByPlot.map(([plotName, list]) => (
-                    <optgroup key={plotName} label={plotName}>
-                      {list.map(h => (
-                        <option key={h.id} value={h.id}>
-                          Unit {h.unit_number} — KES {parseFloat(h.rent_amount).toLocaleString()} {h.id === editing?.house_id ? '(current)' : ''}
-                        </option>
-                      ))}
-                    </optgroup>
-                  ))}
-                </select>
-              </div>
-
-              {/* Move-in date — highlighted as key field */}
-              <div style={{ gridColumn: '1/-1', background: isDark ? hexToRgba('#1b6b45', 0.15) : 'var(--primary-light)', border: '1px solid var(--primary, #1b6b45)', borderRadius: 10, padding: '12px 14px' }}>
-                <label style={{ ...labelStyle, color: 'var(--primary, #1b6b45)' }}><IconInline name="📅" size={14} />Move-in date</label>
-                <input type="date" value={form.move_in_date} onChange={e => setForm(f=>({...f,move_in_date:e.target.value}))}
-                  style={{ ...inputStyle, background: 'var(--surface)', borderColor: 'var(--primary, #1b6b45)' }} />
-                <div style={{ fontSize: 11, color: 'var(--primary, #1b6b45)', marginTop: 6 }}>
-                  This determines which months are counted as unpaid on the dashboard.
-                </div>
-              </div>
-
-              <Field label="Rent Due Day"    value={form.rent_due_day}    onChange={v => setForm(f=>({...f,rent_due_day:v}))}    placeholder="5"     type="number" />
-              <div>
-                <Field label="Deposit Paid" value={form.deposit_paid} onChange={v => setForm(f=>({...f,deposit_paid:v}))} placeholder="15000" type="number" />
-                {selectedUnitDeposit != null && (
-                  <div style={{ fontSize: 11, marginTop: 4, color: depositShortfall > 0 ? 'var(--amber, #d97706)' : 'var(--muted)' }}>
-                    {depositShortfall > 0
-                      ? `Short by KES ${depositShortfall.toLocaleString()} — this unit requires KES ${parseFloat(selectedUnitDeposit).toLocaleString()}`
-                      : `Required for this unit: KES ${parseFloat(selectedUnitDeposit).toLocaleString()}`}
-                  </div>
-                )}
-              </div>
-              <Field label="Emergency Phone" value={form.emergency_phone} onChange={v => setForm(f=>({...f,emergency_phone:v}))} placeholder="0700000000" span />
-
-              {modal === 'edit' && (
-                <div style={{ gridColumn: '1/-1' }}>
-                  <label style={labelStyle}>Status</label>
-                  <select value={form.is_active} onChange={e => setForm(f=>({...f,is_active:e.target.value==='true'}))} style={inputStyle}>
-                    <option value="true">Active</option>
-                    <option value="false">Inactive</option>
-                  </select>
-                </div>
-              )}
-            </div>
-
-            <div style={{ display: 'flex', gap: 10, marginTop: 24, justifyContent: 'flex-end' }}>
-              <button onClick={() => { setModal(null); setEditing(null); }}
-                style={{ padding: '10px 20px', borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface)', fontWeight: 600, fontSize: 14, color: 'var(--text)' }}>
-                Cancel
-              </button>
-              <button onClick={handleSave} disabled={saving}
-                style={{ padding: '10px 20px', borderRadius: 10, border: 'none', background: 'var(--primary, #1b6b45)', color: '#fff', fontWeight: 600, fontSize: 14 }}>
-                {saving ? 'Saving...' : modal === 'edit' ? 'Update Tenant' : 'Add Tenant'}
-              </button>
-            </div>
-          </div>
-        </div>
+        <TenantFormModal
+          mode={modal}
+          tenant={editing}
+          houses={allHouses}
+          onClose={() => { setModal(null); setEditing(null); }}
+          onSaved={() => load()}
+        />
       )}
     </div>
   );
@@ -733,15 +716,6 @@ const labelStyle = { display: 'block', fontSize: 12, fontWeight: 600, color: 'va
 const inputStyle = { width: '100%', padding: '10px 12px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface2)', fontSize: 14, color: 'var(--text)', outline: 'none' };
 const filterLabelStyle = { fontSize: 10, fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 6 };
 const selectStyle = { width: '100%', boxSizing: 'border-box', padding: '8px 12px', borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface)', fontSize: 13, fontWeight: 600, color: 'var(--text)', cursor: 'pointer', outline: 'none' };
-
-function Field({ label, value, onChange, placeholder, type = 'text', span }) {
-  return (
-    <div style={span ? { gridColumn: '1/-1' } : {}}>
-      <label style={labelStyle}>{label}</label>
-      <input type={type} value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder} style={inputStyle} />
-    </div>
-  );
-}
 
 // A search icon that expands into an input when clicked. Stays open while it
 // has text; collapses on blur when empty or on Esc (which also clears it).

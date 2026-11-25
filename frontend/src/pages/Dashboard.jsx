@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, BarChart, Bar } from 'recharts';
 import { MapContainer, TileLayer, Marker, Popup } from 'react-leaflet';
@@ -7,6 +7,8 @@ import 'leaflet/dist/leaflet.css';
 import API, { getPendingLandlordsCount } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import Icon from '../components/Icon';
+import RecordPaymentModal from '../components/RecordPaymentModal';
+import TenantFormModal from '../components/TenantFormModal';
 // PendingLandlordsAlert / PendingUnitsAlert banners moved to Layout.jsx as
 // floating, dismissible toasts (bottom-right, global across every page)
 // instead of two permanent full-width rows at the top of just this page.
@@ -383,7 +385,18 @@ export default function Dashboard() {
   const [rejectReason,  setRejectReason]  = useState('');
   const isDark = useIsDarkMode();
   const navigate = useNavigate();
-  const { user: me, can } = useAuth();
+  const { user: me, can, canAnywhere } = useAuth();
+  // Quick actions open as modals right here instead of navigating away.
+  // canAnywhere: a property-specific grant of the permission also counts.
+  const canAnywhereOr = (perm) => (canAnywhere ? canAnywhere(perm) : can(perm));
+  const canAddTenant   = canAnywhereOr('tenants.create');
+  const canRecordPay   = canAnywhereOr('payments.record_manual');
+  const [quickModal, setQuickModal] = useState(null);  // null | 'tenant' | 'payment'
+  const [quickToast, setQuickToast] = useState('');
+  function quickSaved(msg) {
+    load(true);                                         // refresh tiles/tables silently
+    setQuickToast(msg); setTimeout(() => setQuickToast(''), 2400);
+  }
   // Count of landlords waiting for approval (admins only) — shown in "Today at a glance"
   const [pendingLandlords, setPendingLandlords] = useState(0);
   useEffect(() => {
@@ -400,11 +413,12 @@ export default function Dashboard() {
   // own role gate rather than relying on the list being empty for them.
   const showCaretakerBadge = me?.role && me.role !== 'admin';
 
-  useEffect(() => {
-    async function load() {
+  // refresh=true re-fetches silently (no spinner, skips the STK expiry call) —
+  // used after a quick-action modal saves so the tiles update in place.
+  const load = useCallback(async (refresh = false) => {
       try {
         // Expire any stale pending STK rows before loading
-        await API.post('/mpesa/expire-pending').catch(() => {});
+        if (!refresh) await API.post('/mpesa/expire-pending').catch(() => {});
 
         // Promise.allSettled, not Promise.all — a role that's blocked from
         // one endpoint (e.g. payments.view not granted to a profile) should
@@ -460,9 +474,8 @@ export default function Dashboard() {
         });
       } catch (e) { console.error(e); }
       finally { setLoading(false); }
-    }
-    load();
   }, []);
+  useEffect(() => { load(); }, [load]);
 
   if (loading) return (
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 300, color: 'var(--muted)' }}>
@@ -651,8 +664,8 @@ export default function Dashboard() {
               <p style={{ margin: 0, color: 'var(--muted)', fontSize: 15 }}>{hello}{me?.name ? `, ${String(me.name).split(' ')[0]}` : ''} · {now.toLocaleDateString('en-KE', { weekday: 'long', day: 'numeric', month: 'long' })}</p>
             </div>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
-              <button onClick={() => navigate('/tenants', { state: { openAddModal: true } })} style={{ ...btn, background: 'var(--primary, #1b6b45)', borderColor: 'var(--primary, #1b6b45)', color: '#fff' }}><Icon name="👥" size={16} /> Add tenant</button>
-              <button onClick={() => navigate('/payments')} style={btn}><Icon name="💳" size={16} /> Record payment</button>
+              {canAddTenant && <button onClick={() => setQuickModal('tenant')} style={{ ...btn, background: 'var(--primary, #1b6b45)', borderColor: 'var(--primary, #1b6b45)', color: '#fff' }}><Icon name="👥" size={16} /> Add tenant</button>}
+              {canRecordPay && <button onClick={() => setQuickModal('payment')} style={btn}><Icon name="💳" size={16} /> Record payment</button>}
               <button onClick={() => navigate('/users')} style={btn}><Icon name="🧑‍🔧" size={16} /> Assign caretaker</button>
               <button onClick={() => navigate('/reports')} style={btn}><Icon name="📄" size={16} /> Export report</button>
               {showCaretakerBadge && caretakers.length > 0 && (
@@ -683,12 +696,12 @@ export default function Dashboard() {
         const items = [
           { dot: '#1b6b45', text: `${paidToday.length} payment${s_(paidToday.length)} received today`, sub: paidToday.length ? `KES ${paidTodayTotal.toLocaleString()}` : null, to: '/payments', state: { highlightIds: paidToday.map(p => p.id) }, show: true },
           { dot: '#b45309', text: `${dueSoon.length} tenant${s_(dueSoon.length)} with rent due in the next 3 days`, to: '/tenants', show: dueSoon.length > 0 },
-          { dot: '#b42318', text: `${overdue.length} tenant${s_(overdue.length)} ${overdue.length === 1 ? 'has' : 'have'} an outstanding balance`, sub: `KES ${overdue.reduce((a, t) => a + parseFloat(t.balance || 0), 0).toLocaleString()} in total`, to: '/reports', show: overdue.length > 0 },
+          { dot: '#b42318', text: `${overdue.length} tenant${s_(overdue.length)} ${overdue.length === 1 ? 'has' : 'have'} an outstanding balance`, sub: `KES ${overdue.reduce((a, t) => a + parseFloat(t.balance || 0), 0).toLocaleString()} in total`, to: '/tenants', state: { highlightTenantIds: overdue.map(t => t.id) }, show: overdue.length > 0 },
           { dot: '#b42318', text: `${needsMatching.length} M-Pesa payment${s_(needsMatching.length)} need matching`, to: '/payments', show: needsMatching.length > 0 },
           { dot: '#b45309', text: `${expiringLeases.length} lease${s_(expiringLeases.length)} at 11+ months`, to: '/reports', show: expiringLeases.length > 0 },
           { dot: '#b42318', text: `${staleMaint.length} maintenance request${s_(staleMaint.length)} open for over a week`, to: '/maintenance', show: staleMaint.length > 0 },
           { dot: '#b45309', text: `${vacantHouses.length} vacant unit${s_(vacantHouses.length)}`, sub: `Across ${plots.length} propert${plots.length === 1 ? 'y' : 'ies'}`, to: '/properties', show: vacantHouses.length > 0 },
-          { dot: '#2563a8', text: `${pendingLandlords} landlord${s_(pendingLandlords)} awaiting approval`, sub: 'Needs your review', to: '/users', show: pendingLandlords > 0 },
+          { dot: '#2563a8', text: `${pendingLandlords} landlord${s_(pendingLandlords)} awaiting approval`, sub: 'Needs your review', to: '/users?filter=pending', show: pendingLandlords > 0 },
           { dot: '#2563a8', text: `${pendUnits} unit${s_(pendUnits)} awaiting approval`, sub: 'Needs your review', modal: 'pending_units', show: pendUnits > 0 },
         ].filter(i => i.show);
         return (
@@ -1495,8 +1508,7 @@ export default function Dashboard() {
                   return (
                     <RenewRow key={t.id} t={t} i={i} months={months} onRenewed={() => {
                       setModal(null);
-                      setData(null);
-                      setLoading(true);
+                      load(true);
                     }} />
                   );
                 })}
@@ -1506,6 +1518,26 @@ export default function Dashboard() {
           <SeeMoreFooter onClick={() => navigate('/tenants')} />
         </Modal>
       )}
+
+      {/* ── Quick actions: open in place, then refresh the dashboard ── */}
+      {quickModal === 'tenant' && (
+        <TenantFormModal
+          mode="add"
+          houses={data?.houses || []}
+          onClose={() => setQuickModal(null)}
+          onSaved={() => quickSaved('Tenant added')}
+        />
+      )}
+      {quickModal === 'payment' && (
+        <RecordPaymentModal
+          tenants={data?.tenants || []}
+          payments={data?.payments || []}
+          houses={data?.houses || []}
+          onClose={() => setQuickModal(null)}
+          onSaved={() => quickSaved('Payment recorded')}
+        />
+      )}
+      {quickToast && <div style={{ position: 'fixed', bottom: 28, left: '50%', transform: 'translateX(-50%)', background: '#111827', color: '#fff', padding: '10px 18px', borderRadius: 10, fontSize: 13, fontWeight: 600, zIndex: 600, boxShadow: 'var(--shadow-lg)' }}>{quickToast}</div>}
     </div>
   );
 }

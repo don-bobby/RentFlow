@@ -1,9 +1,12 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { useLocation } from 'react-router-dom';
 import { createPortal } from 'react-dom';
 import API, { getUnmatchedPayments, matchPayment, deletePayment } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import Icon, { IconInline, Caret } from '../components/Icon';
+import TenantPicker, { buildPlotLookup, realPhone } from '../components/TenantPicker';
+import RecordPaymentModal from '../components/RecordPaymentModal';
+import { labelStyle, inputStyle } from '../components/formKit';
 
 function hexToRgba(hex, alpha) {
   const n = parseInt(hex.replace('#', ''), 16);
@@ -105,17 +108,11 @@ export default function Payments() {
   const [stkLoading,     setStkLoading]     = useState(false);
   const [arrears,        setArrears]        = useState(null);
   const [arrearsLoading, setArrearsLoading] = useState(false);
-  const [saving,         setSaving]         = useState(false);
-  const [error,          setError]          = useState('');
   const [filter,         setFilter]         = useState('all');
   const location = useLocation();
   const [plotFilter,     setPlotFilter]     = useState('all'); // 'all' or a plot id — narrows the payments list to one property
   const [tenantFilter,   setTenantFilter]   = useState('all'); // 'all' or a tenant id — narrows the payments list to one tenant
   const [allocatedSort,  setAllocatedSort]  = useState(null); // null (table order) | 'asc' | 'desc' — sorts rows by the "Allocated To" month
-  const [utilities,      setUtilities]      = useState([]); // optional utility lines: [{ type, amount }]
-  const [form,           setForm]           = useState({
-    tenant_id: '', amount: '', payment_date: '', payment_method: 'mpesa', reference_number: '', notes: '',
-  });
 
   async function load() {
     setLoading(true);
@@ -146,6 +143,14 @@ export default function Payments() {
     return () => { window.removeEventListener('click', close); window.removeEventListener('scroll', close, true); };
   }, []);
 
+  // Esc closes the STK push modal (the Record Payment modal handles its own Esc).
+  useEffect(() => {
+    if (!stkModal) return;
+    const onKey = e => { if (e.key === 'Escape') { stopPolling(); setStkModal(false); setArrears(null); } };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [stkModal]); // eslint-disable-line react-hooks/exhaustive-deps
+
   function flash(msg) { setToast(msg); setTimeout(() => setToast(''), 2200); }
 
   function copyRef(p) {
@@ -165,39 +170,18 @@ export default function Payments() {
     window.open(`https://wa.me/${phone}?text=${encodeURIComponent(msg)}`, '_blank', 'noopener');
   }
 
+  // Arrears requests can come back out of order when staff click through
+  // tenants quickly; only the latest request is allowed to update the screen.
+  const arrearsReq = useRef(0);
   async function loadArrears(tenantId) {
-    if (!tenantId) { setArrears(null); return; }
+    const req = ++arrearsReq.current;
+    if (!tenantId) { setArrears(null); setArrearsLoading(false); return; }
     setArrearsLoading(true);
     try {
       const res = await API.get(`/payments/arrears/${tenantId}`);
-      setArrears(res.data.data);
-    } catch (e) { setArrears(null); }
-    finally { setArrearsLoading(false); }
-  }
-
-  async function handleSave() {
-    setSaving(true); setError('');
-    try {
-      const tenant = tenants.find(t => String(t.id) === String(form.tenant_id));
-      const utilItems = utilities
-        .filter(u => parseFloat(u.amount) > 0)
-        .map(u => ({ type: u.type, amount: parseFloat(u.amount) }));
-      const hasRent = parseFloat(form.amount) > 0;
-      if (!hasRent && utilItems.length === 0) { setError('Enter a rent amount or a utility amount.'); setSaving(false); return; }
-      if (hasRent) await API.post('/payments', { ...form, unit_id: tenant?.house_id });
-      if (utilItems.length) {
-        await API.post('/utilities', {
-          tenant_id: form.tenant_id, payment_date: form.payment_date, method: form.payment_method,
-          reference: form.reference_number, notes: form.notes, items: utilItems,
-        });
-      }
-      setUtilities([]);
-      await load();
-      setModal(false);
-      setArrears(null);
-    } catch (e) {
-      setError(e.response?.data?.message || e.response?.data?.error || e.message || 'Failed to record payment');
-    } finally { setSaving(false); }
+      if (req === arrearsReq.current) setArrears(res.data.data);
+    } catch (e) { if (req === arrearsReq.current) setArrears(null); }
+    finally { if (req === arrearsReq.current) setArrearsLoading(false); }
   }
 
   // ── Reconciliation (unmatched M-Pesa payments) ──────────────────
@@ -407,6 +391,9 @@ export default function Payments() {
 
   const activeTenants = tenants.filter(t => t.is_active);
 
+  // Property info for the tenant pickers (GET /tenants only sends the plot's name).
+  const plotLookup = useMemo(() => buildPlotLookup(payments), [payments]);
+
   return (
     <div>
       <style>{`
@@ -445,27 +432,15 @@ export default function Payments() {
           )}
           {can('payments.record_manual') && (
             <button onClick={() => {
-              const firstActive = activeTenants[0];
-              setStkTenant(firstActive || null);
-              setStkPhone(firstActive?.phone || '');
-              setStkAmount('');
-              setStkStatus('idle');
-              setStkMsg('');
-              setStkModal(true);
-              setArrears(null);
-              if (firstActive) loadArrears(firstActive.id);
+              setStkTenant(null); setStkPhone(''); setStkAmount('');
+              setStkStatus('idle'); setStkMsg('');
+              setStkModal(true); setArrears(null);
             }} style={{ padding: '10px 18px', borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontWeight: 600, fontSize: 14, cursor: 'pointer' }}>
               <IconInline name="📱" />STK push
             </button>
           )}
           {can('payments.record_manual') && (
-            <button onClick={() => {
-              const firstActive = activeTenants[0];
-              setForm({ tenant_id: firstActive?.id || '', amount: '', payment_date: new Date().toISOString().split('T')[0], payment_method: 'mpesa', reference_number: '', notes: '' });
-              setArrears(null);
-              if (firstActive) loadArrears(firstActive.id);
-              setModal(true); setError('');
-            }} style={{ padding: '10px 18px', borderRadius: 10, border: 'none', background: 'var(--primary, #1b6b45)', color: '#fff', fontWeight: 600, fontSize: 14, cursor: 'pointer' }}>
+            <button onClick={() => setModal(true)} style={{ padding: '10px 18px', borderRadius: 10, border: 'none', background: 'var(--primary, #1b6b45)', color: '#fff', fontWeight: 600, fontSize: 14, cursor: 'pointer' }}>
               + Record Payment
             </button>
           )}
@@ -623,18 +598,16 @@ export default function Payments() {
             {/* Tenant selector */}
             <div style={{ marginBottom: 14 }}>
               <label style={labelStyle}>Tenant</label>
-              <select value={stkTenant?.id || ''} onChange={e => {
-                const t = tenants.find(t => String(t.id) === e.target.value);
-                setStkTenant(t || null);
-                setStkPhone(t?.phone || '');
-                setStkStatus('idle'); setStkMsg('');
-                if (t) loadArrears(t.id);
-              }} style={inputStyle}>
-                <option value="">— Select tenant —</option>
-                {activeTenants.map(t => (
-                  <option key={t.id} value={t.id}>{t.full_name} — {t.phone} (Unit {t.unit_number || t.house_id})</option>
-                ))}
-              </select>
+              <TenantPicker
+                tenants={activeTenants} lookup={plotLookup} rememberKey="pm_last_plot" maxListHeight={200}
+                value={stkTenant?.id || ''}
+                onSelect={t => {
+                  setStkTenant(t);
+                  setStkPhone(realPhone(t.phone));
+                  setStkStatus('idle'); setStkMsg('');
+                  loadArrears(t.id);
+                }}
+              />
             </div>
 
             {/* Arrears summary */}
@@ -746,21 +719,18 @@ export default function Payments() {
                       </div>
                       <span style={{ background: statusBg[p.status] || 'var(--surface2)', color: statusColor[p.status] || 'var(--muted)', padding: '3px 10px', borderRadius: 99, fontSize: 11, fontWeight: 600, height: 'fit-content' }}>{p.status}</span>
                     </div>
-                    <div style={{ display: 'flex', gap: 8 }}>
-                      <select
-                        value={matchPicks[p.id] || ''}
-                        onChange={e => setMatchPicks(picks => ({ ...picks, [p.id]: e.target.value }))}
-                        style={{ ...inputStyle, flex: 1 }}
-                      >
-                        <option value="">— Select tenant to match —</option>
-                        {tenants.map(t => (
-                          <option key={t.id} value={t.id}>{t.full_name} — {t.phone} (Unit {t.unit_number || t.house_id})</option>
-                        ))}
-                      </select>
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <TenantPicker
+                          tenants={tenants} lookup={plotLookup} lazy rememberKey="pm_last_plot" maxListHeight={180}
+                          value={matchPicks[p.id] || ''}
+                          onSelect={t => setMatchPicks(picks => ({ ...picks, [p.id]: String(t.id) }))}
+                        />
+                      </div>
                       <button
                         onClick={() => handleMatch(p)}
                         disabled={!matchPicks[p.id] || matching === p.id}
-                        style={{ padding: '0 18px', borderRadius: 8, border: 'none', background: 'var(--primary, #1b6b45)', color: '#fff', fontWeight: 700, fontSize: 13, cursor: (!matchPicks[p.id] || matching === p.id) ? 'default' : 'pointer', opacity: (!matchPicks[p.id] || matching === p.id) ? 0.5 : 1 }}
+                        style={{ height: 40, padding: '0 18px', borderRadius: 8, border: 'none', background: 'var(--primary, #1b6b45)', color: '#fff', fontWeight: 700, fontSize: 13, cursor: (!matchPicks[p.id] || matching === p.id) ? 'default' : 'pointer', opacity: (!matchPicks[p.id] || matching === p.id) ? 0.5 : 1, flexShrink: 0 }}
                       >
                         {matching === p.id ? 'Matching…' : 'Match'}
                       </button>
@@ -773,133 +743,13 @@ export default function Payments() {
         </div>
       )}
 
-      {/* ── Record Payment Modal ───────────────────────────────── */}
+      {/* ── Record Payment Modal (shared with the Dashboard) ───── */}
       {modal && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, padding: 20, overflowY: 'auto' }}>
-          <div style={{ background: 'var(--surface)', borderRadius: 16, padding: 28, width: '100%', maxWidth: 520, boxShadow: 'var(--shadow-lg)', margin: 'auto' }}>
-            <h2 style={{ fontFamily: 'Bricolage Grotesque', fontWeight: 700, fontSize: 18, marginBottom: 20, color: 'var(--text)' }}>Record Payment</h2>
-            {error && <div style={{ background: isDark ? hexToRgba('#dc2626', 0.18) : 'var(--red-light)', color: 'var(--red, #dc2626)', padding: '10px 14px', borderRadius: 8, marginBottom: 16, fontSize: 13 }}>{error}</div>}
-
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-              <div>
-                <label style={labelStyle}>Tenant</label>
-                <select value={form.tenant_id} onChange={e => {
-                  setForm(f => ({ ...f, tenant_id: e.target.value }));
-                  loadArrears(e.target.value);
-                }} style={inputStyle}>
-                  {activeTenants.map(t => (
-                    <option key={t.id} value={t.id}>{t.full_name} — {t.phone}</option>
-                  ))}
-                </select>
-              </div>
-
-              {(() => {
-                const selectedTenant = tenants.find(t => String(t.id) === String(form.tenant_id));
-                if (!selectedTenant) return null;
-                return (
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'var(--surface2)', border: '1px solid var(--border)', borderRadius: 8, padding: '8px 12px' }}>
-                    <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.4px' }}>Monthly Rent</span>
-                    <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--primary, #1b6b45)' }}>KES {parseFloat(selectedTenant.rent_amount || 0).toLocaleString()}</span>
-                  </div>
-                );
-              })()}
-
-              {arrearsLoading && <div style={{ fontSize: 13, color: 'var(--muted)' }}>Loading arrears...</div>}
-              {arrears && !arrearsLoading && (
-                <div style={{ background: arrears.total_arrears > 0 ? (isDark ? hexToRgba('#dc2626', 0.15) : 'var(--red-light)') : (isDark ? hexToRgba('#16a34a', 0.15) : 'var(--green-light)'), border: `1px solid ${arrears.total_arrears > 0 ? 'var(--red, #dc2626)' : 'var(--green, #16a34a)'}`, borderRadius: 10, padding: 14 }}>
-                  {arrears.total_arrears > 0 ? (
-                    <>
-                      <div style={{ fontWeight: 700, color: 'var(--red, #dc2626)', marginBottom: 8, fontSize: 14 }}>
-                        <IconInline name="⚠️" />Total Arrears: KES {arrears.total_arrears.toLocaleString()}
-                      </div>
-                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                        {arrears.deposit_owed > 0 && (
-                          <div style={{ background: isDark ? 'var(--surface2)' : 'white', border: '1px solid var(--red, #dc2626)', borderRadius: 8, padding: '4px 10px', fontSize: 12 }}>
-                            <span style={{ fontWeight: 700, color: 'var(--red, #dc2626)' }}><IconInline name="🔒" size={13} />Deposit shortfall</span>
-                            <span style={{ color: 'var(--muted)', marginLeft: 4 }}>· KES {arrears.deposit_owed.toLocaleString()} owed</span>
-                          </div>
-                        )}
-                        {arrears.unpaid_months?.map(m => (
-                          <div key={`${m.year}-${m.month}`} style={{ background: isDark ? 'var(--surface2)' : 'white', border: '1px solid var(--red, #dc2626)', borderRadius: 8, padding: '4px 10px', fontSize: 12 }}>
-                            <span style={{ fontWeight: 600, color: 'var(--red, #dc2626)' }}>{monthName(m.year, m.month)}</span>
-                            <span style={{ color: 'var(--muted)', marginLeft: 4 }}>· KES {m.balance.toLocaleString()} owed</span>
-                          </div>
-                        ))}
-                      </div>
-                      <div style={{ fontSize: 12, color: 'var(--red, #dc2626)', marginTop: 8 }}>
-                        {arrears.deposit_owed > 0 ? 'Payment will clear the deposit shortfall first, then the oldest unpaid month.' : 'Payment will be applied to oldest unpaid month first.'}
-                      </div>
-                    </>
-                  ) : (
-                    <div style={{ fontWeight: 600, color: 'var(--green, #16a34a)', fontSize: 14 }}><IconInline name="✅" />No arrears — tenant is up to date.</div>
-                  )}
-                </div>
-              )}
-
-              <div>
-                <Field label="Amount (KES)" value={form.amount} onChange={v => setForm(f=>({...f,amount:v}))} placeholder="15000" type="number" />
-                {(() => {
-                  const selectedTenant = tenants.find(t => String(t.id) === String(form.tenant_id));
-                  if (!selectedTenant?.rent_amount) return null;
-                  return (
-                    <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
-                      <button type="button" onClick={() => setForm(f => ({ ...f, amount: String(selectedTenant.rent_amount) }))}
-                        style={{ padding: '6px 12px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--surface2)', fontSize: 12, fontWeight: 600, cursor: 'pointer', color: 'var(--muted)' }}>
-                        One Month (KES {parseFloat(selectedTenant.rent_amount).toLocaleString()})
-                      </button>
-                      {arrears && arrears.total_arrears > 0 && (
-                        <button type="button" onClick={() => setForm(f => ({ ...f, amount: String(arrears.total_arrears) }))}
-                          style={{ padding: '6px 12px', borderRadius: 6, border: '1px solid var(--red, #dc2626)', background: isDark ? hexToRgba('#dc2626', 0.18) : 'var(--red-light)', fontSize: 12, fontWeight: 600, cursor: 'pointer', color: 'var(--red, #dc2626)' }}>
-                          Clear All (KES {arrears.total_arrears.toLocaleString()})
-                        </button>
-                      )}
-                    </div>
-                  );
-                })()}
-              </div>
-              <Field label="Payment Date"         value={form.payment_date}     onChange={v => setForm(f=>({...f,payment_date:v}))}     type="date" />
-              <div>
-                <label style={labelStyle}>Method</label>
-                <select value={form.payment_method} onChange={e => setForm(f=>({...f,payment_method:e.target.value}))} style={inputStyle}>
-                  {['mpesa','cash','bank_transfer','cheque'].map(m => <option key={m}>{m}</option>)}
-                </select>
-              </div>
-              <Field label="Reference / Receipt"  value={form.reference_number} onChange={v => setForm(f=>({...f,reference_number:v}))} placeholder="e.g. QHJ7K2X" />
-              <Field label="Notes (optional)"     value={form.notes}            onChange={v => setForm(f=>({...f,notes:v}))}            placeholder="Optional" />
-            </div>
-
-            {/* Optional utilities — tracked separately, never reduce rent arrears */}
-            <div style={{ marginTop: 16, padding: 14, borderRadius: 10, border: '1px dashed var(--border)', background: 'var(--surface2)' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <div>
-                  <div style={{ fontWeight: 700, fontSize: 13, color: 'var(--text)' }}>Utilities (optional)</div>
-                  <div style={{ fontSize: 11, color: 'var(--muted)' }}>Water, electricity, garbage… recorded separately from rent and shown on Expenses as recovered.</div>
-                </div>
-                <button type="button" onClick={() => setUtilities(u => [...u, { type: 'Water', amount: '' }])}
-                  style={{ padding: '6px 12px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontWeight: 600, fontSize: 12, cursor: 'pointer' }}>+ Add</button>
-              </div>
-              {utilities.map((u, i) => (
-                <div key={i} style={{ display: 'flex', gap: 8, marginTop: 10 }}>
-                  <select value={u.type} onChange={e => setUtilities(list => list.map((x, j) => j === i ? { ...x, type: e.target.value } : x))} style={{ ...inputStyle, flex: 1 }}>
-                    {['Water', 'Electricity', 'Garbage Collection', 'Other'].map(t => <option key={t}>{t}</option>)}
-                  </select>
-                  <input type="number" min="0" placeholder="Amount" value={u.amount}
-                    onChange={e => setUtilities(list => list.map((x, j) => j === i ? { ...x, amount: e.target.value } : x))}
-                    style={{ ...inputStyle, flex: 1 }} />
-                  <button type="button" onClick={() => setUtilities(list => list.filter((_, j) => j !== i))}
-                    style={{ padding: '0 12px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--red, #dc2626)', cursor: 'pointer', fontWeight: 700 }}>✕</button>
-                </div>
-              ))}
-            </div>
-
-            <div style={{ display: 'flex', gap: 10, marginTop: 24, justifyContent: 'flex-end' }}>
-              <button onClick={() => { setModal(false); setArrears(null); setUtilities([]); }} style={{ padding: '10px 20px', borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface)', fontWeight: 600, fontSize: 14, cursor: 'pointer', color: 'var(--text)' }}>Cancel</button>
-              <button onClick={handleSave} disabled={saving} style={{ padding: '10px 20px', borderRadius: 10, border: 'none', background: 'var(--primary, #1b6b45)', color: '#fff', fontWeight: 600, fontSize: 14, cursor: 'pointer' }}>
-                {saving ? 'Saving...' : 'Record'}
-              </button>
-            </div>
-          </div>
-        </div>
+        <RecordPaymentModal
+          tenants={tenants} payments={payments}
+          onClose={() => setModal(false)}
+          onSaved={() => { load(); flash('Payment recorded'); }}
+        />
       )}
 
       {/* ── Assign Month Modal ─────────────────────────────────── */}
@@ -1044,18 +894,6 @@ export default function Payments() {
       })(),
         document.body
       )}
-    </div>
-  );
-}
-
-const labelStyle = { display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--muted)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.4px' };
-const inputStyle = { width: '100%', padding: '10px 12px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface2)', fontSize: 14, color: 'var(--text)', outline: 'none', boxSizing: 'border-box' };
-
-function Field({ label, value, onChange, placeholder, type = 'text' }) {
-  return (
-    <div>
-      <label style={labelStyle}>{label}</label>
-      <input type={type} value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder} style={inputStyle} />
     </div>
   );
 }
