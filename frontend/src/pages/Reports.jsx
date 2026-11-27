@@ -1796,12 +1796,22 @@ export default function Reports() {
           (filters.location === 'all' || p.location === filters.location) &&
           (filters.landlord === 'all' || p.owner_name === filters.landlord)
         );
-      columns = ['Plot', 'Location', 'Total Units', 'Occupied', 'Vacant', 'Monthly Revenue (KES)'];
+      // The month picker drives the rent-collected columns below. Units, occupancy and
+      // monthly revenue are a snapshot of today (the system keeps no occupancy history).
+      const psMonth = /^\d{4}-\d{2}$/.test(ownerMonth) ? ownerMonth : new Date().toISOString().slice(0, 7);
+      const psMonthLabel = new Date(psMonth + '-01').toLocaleString('en-KE', { month: 'long', year: 'numeric' });
+      const psOk = (pm) => pm.status !== 'failed' && pm.status !== 'pending' && pm.method !== 'balance_charge';
+      columns = ['Plot', 'Location', 'Total Units', 'Occupied', 'Vacant', 'Monthly Revenue (KES)', 'Rent Collected (KES)', 'Collected % of Rent'];
+      let psCollectedTotal = 0;
       rows    = filteredPlots.map(p => {
         const units    = houses.filter(h => h.plot_id === p.id);
         const occupied = units.filter(h => h.status === 'occupied');
         const vacant   = units.filter(h => h.status === 'vacant');
         const revenue  = occupied.reduce((s, h) => s + parseFloat(h.rent_amount || 0), 0);
+        const collected = payments
+          .filter(pm => pm.plot_id === p.id && psOk(pm) && String(pm.payment_date || '').slice(0, 7) === psMonth)
+          .reduce((s, pm) => s + parseFloat(pm.amount || 0), 0);
+        psCollectedTotal += collected;
         return {
           Plot: p.name,
           Location: p.location || '—',
@@ -1809,10 +1819,17 @@ export default function Reports() {
           Occupied: occupied.length,
           Vacant: vacant.length,
           'Monthly Revenue (KES)': revenue.toLocaleString(),
+          'Rent Collected (KES)': collected.toLocaleString(),
+          'Collected % of Rent': revenue > 0 ? `${Math.round((collected / revenue) * 100)}%` : '—',
         };
       });
-      summary = [{ label: 'Total Plots', value: filteredPlots.length, color: 'var(--blue)' }, { label: 'Total Units', value: filteredPlots.reduce((s, p) => s + houses.filter(h => h.plot_id === p.id).length, 0), color: 'var(--primary)' }];
-      title = 'Property Summary Report';
+      summary = [
+        { label: 'Total Plots', value: filteredPlots.length, color: 'var(--blue)' },
+        { label: 'Total Units', value: filteredPlots.reduce((s, p) => s + houses.filter(h => h.plot_id === p.id).length, 0), color: 'var(--primary)' },
+        { label: `Rent collected · ${psMonthLabel}`, value: `KES ${psCollectedTotal.toLocaleString()}`, color: 'var(--green)' },
+      ];
+      title = `Property Summary Report — ${psMonthLabel}`;
+      note = `Units, occupancy and monthly revenue are as of today. Rent collected and Collected % use the month you pick (${psMonthLabel}).`;
     }
 
     if (active === 'occupancy') {
@@ -2559,22 +2576,14 @@ export default function Reports() {
             </select>
           )}
 
-          {/* Property + Location filters for Property Summary */}
+          {/* Property filter for Property Summary */}
           {active === 'properties' && (
-            <>
-              <select value={filters.propertyName} onChange={e => setFilters(f => ({ ...f, propertyName: e.target.value }))} className="rp-select">
-                <option value="all">All Properties</option>
-                {[...new Set((data.plots || []).map(p => p.name))].sort().map(name => (
-                  <option key={name} value={name}>{name}</option>
-                ))}
-              </select>
-              <select value={filters.location} onChange={e => setFilters(f => ({ ...f, location: e.target.value }))} className="rp-select">
-                <option value="all">All Locations</option>
-                {[...new Set((data.plots || []).map(p => p.location).filter(Boolean))].sort().map(loc => (
-                  <option key={loc} value={loc}>{loc}</option>
-                ))}
-              </select>
-            </>
+            <select value={filters.propertyName} onChange={e => setFilters(f => ({ ...f, propertyName: e.target.value }))} className="rp-select">
+              <option value="all">All Properties</option>
+              {[...new Set((data.plots || []).map(p => p.name))].sort().map(name => (
+                <option key={name} value={name}>{name}</option>
+              ))}
+            </select>
           )}
 
           {/* Landlord filter — only meaningful when more than one landlord's data is visible (admin view) */}
@@ -2700,15 +2709,15 @@ export default function Reports() {
                       {(data?.plots || []).filter(pl => canForPlot('reports.revenue_summary', pl.id, data?.plotPermissions)).map(pl => <option key={pl.id} value={pl.id}>{pl.name}</option>)}
                     </select>
                   )}
-                  {active === 'ownerstatement' && <button type="button" className="rp-btn" onClick={() => setOwnerMonth(m => shiftMonth(m, -1))} title="Previous month" aria-label="Previous month">‹</button>}
+                  {(active === 'ownerstatement' || active === 'properties') && <button type="button" className="rp-btn" onClick={() => setOwnerMonth(m => shiftMonth(m || new Date().toISOString().slice(0, 7), -1))} title="Previous month" aria-label="Previous month">‹</button>}
                   <input type="month" value={ownerMonth} onChange={e => setOwnerMonth(e.target.value)} className="rp-select" title="Statement month" />
-                  {active === 'ownerstatement' && <button type="button" className="rp-btn" onClick={() => setOwnerMonth(m => shiftMonth(m, 1))} title="Next month" aria-label="Next month">›</button>}
+                  {(active === 'ownerstatement' || active === 'properties') && <button type="button" className="rp-btn" onClick={() => setOwnerMonth(m => shiftMonth(m || new Date().toISOString().slice(0, 7), 1))} title="Next month" aria-label="Next month">›</button>}
                   <button type="button" className="rp-btn" onClick={downloadOwnerStatement}><IconInline name="🏢" size={14} />Owner statement (PDF)</button>
                 </span>
               )}
 
               {/* Print / Save as PDF — browsers' print dialog offers "Save as PDF" */}
-              {active !== 'unpaid' && (
+              {active !== 'unpaid' && active !== 'properties' && (
                 <button type="button" className="rp-btn" onClick={() => downloadPDF(columns, visibleRows, summary, title)} disabled={!columns.length} style={active === 'ownerstatement' ? { display: 'none' } : undefined}><IconInline name="📄" size={14} />Download PDF</button>
               )}
               <button type="button" className="rp-btn" onClick={() => window.print()} title="Browser print of the on-screen page"><IconInline name="🖨️" size={14} />Print</button>

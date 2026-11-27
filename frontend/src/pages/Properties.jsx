@@ -91,6 +91,11 @@ export default function Properties() {
   const [editing,   setEditing]   = useState(null);
   const [form,      setForm]      = useState({});
   const [saving,    setSaving]    = useState(false);
+  // "Add several units" (bulk create)
+  const [bulk,         setBulk]         = useState(null);   // null = closed
+  const [bulkBusy,     setBulkBusy]     = useState(false);
+  const [bulkProgress, setBulkProgress] = useState(null);   // { done, total } (only used by the one-by-one fallback)
+  const [bulkResult,   setBulkResult]   = useState(null);   // { created, skipped, failed, message }
   const [error,     setError]     = useState('');
   const [rejectTarget, setRejectTarget] = useState(null);
   const [rejectReason, setRejectReason] = useState('');
@@ -270,6 +275,89 @@ export default function Properties() {
     setEditing(null);
     setForm({ unit_number: '', house_type: 'Bedsitter', rent_amount: '', deposit: '', plot_id: String(plotId || plots[0]?.id || ''), status: 'vacant', description: '' });
     setModal('house'); setError('');
+  }
+
+  // ── Add several units at once ───────────────────────────────────────────────
+  function openBulk(plotId) {
+    setBulk({ plot_id: String(plotId || plots[0]?.id || ''), mode: 'floors',
+              prefix: '', start: '1', count: '10', pad: false,                       // number range
+              floors: '4', perFloor: '6', firstFloor: '1', style: 'floor', runStart: '1',   // by floor
+              list: '',                                                               // pasted list
+              house_type: 'Bedsitter', floor: '', rent_amount: '', deposit: '', status: 'vacant' });
+    setBulkResult(null); setBulkProgress(null); setError('');
+  }
+
+  // Turns the form into a clean list of { unit, floor }.
+  //  - by floor:   4 floors x 6 units, first floor 1  ->  101..106 (floor 1), 201..206 (floor 2) ...
+  //                or continuous numbering 1..24 with the floor worked out automatically
+  //  - range:      prefix + first number + how many
+  //  - list:       "A1, A2, B1-B5, Shop 1"
+  function expandUnits(b) {
+    const out = [];
+    const sharedFloor = b.floor === '' || b.floor == null ? null : b.floor;
+    if (b.mode === 'floors') {
+      const floors = Math.min(60, Math.max(0, parseInt(b.floors, 10) || 0));
+      const per    = Math.min(100, Math.max(0, parseInt(b.perFloor, 10) || 0));
+      const first  = Math.min(60, Math.max(0, parseInt(b.firstFloor, 10) || 0));
+      const prefix = (b.prefix || '').trim();
+      let run = parseInt(b.runStart, 10); if (Number.isNaN(run)) run = 1;
+      for (let f = 0; f < floors; f++) {
+        const fl = first + f;
+        for (let u = 1; u <= per; u++) {
+          const name = b.style === 'run' ? `${prefix}${run++}` : `${prefix}${fl === 0 ? 'G' : fl}${String(u).padStart(2, '0')}`;
+          out.push({ unit: name, floor: fl });
+        }
+      }
+    } else if (b.mode === 'range') {
+      const n = Math.min(200, Math.max(0, parseInt(b.count, 10) || 0));
+      const start = parseInt(b.start, 10);
+      if (Number.isNaN(start)) return [];
+      const width = b.pad ? String(start + n - 1).length : 0;
+      for (let i = 0; i < n; i++) out.push({ unit: `${(b.prefix || '').trim()}${String(start + i).padStart(width, '0')}`, floor: sharedFloor });
+    } else {
+      String(b.list || '').split(/[\n,;]+/).map(s => s.trim()).filter(Boolean).forEach(tok => {
+        const m = tok.match(/^([A-Za-z]*)(\d+)\s*-\s*(?:\1)?(\d+)$/);   // S1-S10, S1-10, 01-12
+        if (m) {
+          const a = parseInt(m[2], 10), z = parseInt(m[3], 10), width = m[2].startsWith('0') ? m[2].length : 0;
+          for (let i = a; i <= z && out.length < 400; i++) out.push({ unit: `${m[1]}${String(i).padStart(width, '0')}`, floor: sharedFloor });
+        } else out.push({ unit: tok, floor: sharedFloor });
+      });
+    }
+    const seen = new Set();
+    return out.filter(x => { const k = x.unit.toLowerCase(); if (seen.has(k)) return false; seen.add(k); return true; }).slice(0, 200);
+  }
+
+  async function saveBulk(units) {
+    setBulkBusy(true); setBulkResult(null); setError('');
+    const shared = { house_type: bulk.house_type, rent_amount: bulk.rent_amount, deposit: bulk.deposit, status: bulk.status };
+    try {
+      // One request, one transaction (POST /houses/bulk).
+      const r = await API.post('/houses/bulk', { plot_id: bulk.plot_id, units: units.map(u => ({ unit_number: u.unit, floor: u.floor })), ...shared });
+      await load();
+      setBulkResult({ created: r.data?.created ?? units.length, skipped: r.data?.skipped || [], failed: [], message: r.data?.message });
+    } catch (e) {
+      if (e.response?.status !== 404) {            // a real error (permission, validation...) - show it and stay on the form
+        setError(e.response?.data?.error || e.message || 'Could not create the units.');
+      } else {
+        // Server has not been updated with /houses/bulk yet: fall back to creating them one by one.
+        setBulkProgress({ done: 0, total: units.length });
+        const failed = []; let created = 0; let next = 0;
+        const worker = async () => {
+          while (next < units.length) {
+            const u = units[next++];
+            try {
+              await API.post('/houses', { plot_id: bulk.plot_id, unit_number: u.unit, ...shared, meter_no: '', floor: u.floor === '' || u.floor == null ? null : u.floor });
+              created++;
+            } catch (err) { failed.push({ unit: u.unit, msg: err.response?.data?.error || 'Could not create' }); }
+            setBulkProgress(p => ({ ...(p || { total: units.length }), done: ((p && p.done) || 0) + 1 }));
+          }
+        };
+        await Promise.all([worker(), worker(), worker()]);
+        await load();
+        setBulkResult({ created, skipped: [], failed });
+      }
+    }
+    setBulkBusy(false);
   }
 
   function openEditHouse(house) {
@@ -709,7 +797,7 @@ export default function Properties() {
                     // all resolve the permission the same way, against the
                     // same plot.
                     const items = [
-                      ...(can('houses.create', plot.id) ? [{ label: '+ Add Unit', onClick: () => openAddHouse(plot.id) }] : []),
+                      ...(can('houses.create', plot.id) ? [{ label: '+ Add Unit', onClick: () => openAddHouse(plot.id) }, { label: '+ Add several units', onClick: () => openBulk(plot.id) }] : []),
                       { label: '3D view', onClick: () => navigate(`/building?plot=${plot.id}`) },
                       ...(can('plots.edit', plot.id)    ? [{ label: 'Edit', onClick: () => openEditPlot(plot) }] : []),
                       ...(can('plots.delete', plot.id)  ? [{ label: 'Delete', onClick: () => handleDeletePlot(plot.id), danger: true }] : []),
@@ -884,6 +972,166 @@ export default function Properties() {
           })}
         </div>
       )}
+
+      {/* Add several units */}
+      {bulk && (() => {
+        const plot = plots.find(p => String(p.id) === String(bulk.plot_id));
+        const all = expandUnits(bulk);
+        const existing = new Set(houses.filter(h => String(h.plot_id) === String(bulk.plot_id)).map(h => String(h.unit_number).trim().toLowerCase()));
+        const dupes = all.filter(x => existing.has(x.unit.toLowerCase()));
+        const todo = all.filter(x => !existing.has(x.unit.toLowerCase()));
+        const rentOk = parseFloat(bulk.rent_amount) > 0;
+        const set = (k, v) => setBulk(b => ({ ...b, [k]: v }));
+        const byFloor = {};
+        todo.forEach(x => { const k = x.floor == null || x.floor === '' ? '' : String(x.floor); (byFloor[k] = byFloor[k] || []).push(x.unit); });
+        const floorKeys = Object.keys(byFloor).sort((a, b) => (a === '' ? -1 : b === '' ? 1 : Number(a) - Number(b)));
+        const floorLabel = (k) => k === '' ? '' : (Number(k) === 0 ? 'Ground floor' : `Floor ${k}`);
+        const chip = (u, skipped) => (
+          <span key={u} style={{ padding: '3px 10px', borderRadius: 99, fontSize: 12, fontWeight: 600, background: skipped ? 'var(--amber-light, #fef3c7)' : 'var(--primary-light, #e6efe8)', color: skipped ? 'var(--amber, #b45309)' : 'var(--primary, #1b6b45)', textDecoration: skipped ? 'line-through' : 'none' }}>{u}</span>
+        );
+        const tab = (id, label) => (
+          <button type="button" onClick={() => set('mode', id)} aria-pressed={bulk.mode === id} style={{ flex: 1, minHeight: 40, borderRadius: 10, border: `1px solid ${bulk.mode === id ? 'var(--primary, #1b6b45)' : 'var(--border)'}`, background: bulk.mode === id ? 'var(--primary-light, #e6efe8)' : 'var(--surface)', color: 'var(--text)', fontWeight: 600, fontSize: 13, cursor: 'pointer' }}>{label}</button>
+        );
+        const ex = bulk.style === 'run' ? `${(bulk.prefix || '').trim()}${bulk.runStart || 1}, ${(bulk.prefix || '').trim()}${(parseInt(bulk.runStart, 10) || 1) + 1} ...` : `${(bulk.prefix || '').trim()}${parseInt(bulk.firstFloor, 10) === 0 ? 'G' : (bulk.firstFloor || 1)}01, ${(bulk.prefix || '').trim()}${parseInt(bulk.firstFloor, 10) === 0 ? 'G' : (bulk.firstFloor || 1)}02 ...`;
+        return (
+          <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, padding: 20 }}>
+            <div role="dialog" aria-modal="true" style={{ background: 'var(--surface)', borderRadius: 16, padding: 28, width: '100%', maxWidth: 580, maxHeight: '92vh', overflowY: 'auto', boxShadow: 'var(--shadow-lg)' }}>
+              <h2 style={{ fontFamily: 'Bricolage Grotesque', fontWeight: 700, fontSize: 20, margin: '0 0 4px', color: 'var(--text)' }}>Add several units</h2>
+              <p style={{ margin: '0 0 18px', fontSize: 13, color: 'var(--muted)' }}>Create many units in {plot?.name || 'this property'} at once. They share the details below; you can edit any unit afterwards.</p>
+
+              {bulkResult ? (
+                <div>
+                  <div style={{ padding: '14px 16px', borderRadius: 12, background: 'var(--primary-light, #e6efe8)', color: 'var(--text)', fontWeight: 600, marginBottom: 12 }}>
+                    {bulkResult.created} unit{bulkResult.created !== 1 ? 's' : ''} created{bulkResult.skipped?.length ? `, ${bulkResult.skipped.length} skipped because they already exist` : ''}.
+                    {bulkResult.message && <div style={{ fontWeight: 500, fontSize: 13, marginTop: 4, color: 'var(--muted)' }}>{bulkResult.message}</div>}
+                  </div>
+                  {bulkResult.failed?.length > 0 && (
+                    <div style={{ padding: '12px 16px', borderRadius: 12, background: 'var(--red-light, #fdecea)', color: 'var(--red, #b42318)', fontSize: 13, marginBottom: 12 }}>
+                      <b>{bulkResult.failed.length} could not be created:</b>
+                      <ul style={{ margin: '6px 0 0', paddingLeft: 18 }}>{bulkResult.failed.slice(0, 8).map(f => <li key={f.unit}>{f.unit}: {f.msg}</li>)}</ul>
+                    </div>
+                  )}
+                  <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 18 }}>
+                    <button onClick={() => { setBulk(null); setBulkResult(null); setBulkProgress(null); }} style={{ minHeight: 44, padding: '0 22px', borderRadius: 10, border: 'none', background: 'var(--primary, #1b6b45)', color: '#fff', fontWeight: 600, fontSize: 14, cursor: 'pointer' }}>Done</button>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  {error && <div style={{ background: 'var(--red-light, #fee2e2)', color: 'var(--red, #dc2626)', padding: '10px 14px', borderRadius: 8, marginBottom: 16, fontSize: 13 }}>{error}</div>}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+                    <div>
+                      <label style={labelStyle}>Property</label>
+                      <select value={bulk.plot_id} onChange={e => set('plot_id', e.target.value)} style={inputStyle}>
+                        {plots.filter(p => can('houses.create', p.id)).map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                      </select>
+                    </div>
+
+                    <div style={{ display: 'flex', gap: 8 }}>{tab('floors', 'By floor')}{tab('range', 'Number range')}{tab('list', 'Paste a list')}</div>
+
+                    {bulk.mode === 'floors' && (
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, alignItems: 'end' }}>
+                        <Field label="Number of floors" value={bulk.floors} onChange={v => set('floors', v)} type="number" />
+                        <Field label="Units per floor" value={bulk.perFloor} onChange={v => set('perFloor', v)} type="number" />
+                        <Field label="First floor (0 = ground)" value={bulk.firstFloor} onChange={v => set('firstFloor', v)} type="number" />
+                        <div style={{ gridColumn: '1 / span 2' }}>
+                          <label style={labelStyle}>Numbering</label>
+                          <select value={bulk.style} onChange={e => set('style', e.target.value)} style={inputStyle}>
+                            <option value="floor">Floor + number (101, 102 ... 201, 202)</option>
+                            <option value="run">Continuous (1, 2, 3 ...)</option>
+                          </select>
+                        </div>
+                        <Field label="Prefix (optional)" value={bulk.prefix} onChange={v => set('prefix', v)} placeholder="e.g. A" />
+                        {bulk.style === 'run' && <Field label="Start at" value={bulk.runStart} onChange={v => set('runStart', v)} type="number" />}
+                        <div style={{ gridColumn: '1 / -1', fontSize: 12, color: 'var(--muted)' }}>
+                          Each unit's floor is set for you. Example: {ex}. Ground floor units are numbered G01, G02 ...
+                        </div>
+                      </div>
+                    )}
+
+                    {bulk.mode === 'range' && (
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, alignItems: 'end' }}>
+                        <Field label="Prefix (optional)" value={bulk.prefix} onChange={v => set('prefix', v)} placeholder="e.g. S or A" />
+                        <Field label="First number" value={bulk.start} onChange={v => set('start', v)} type="number" />
+                        <Field label="How many (max 200)" value={bulk.count} onChange={v => set('count', v)} type="number" />
+                        <label style={{ gridColumn: '1 / -1', display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--text)' }}>
+                          <input type="checkbox" checked={bulk.pad} onChange={e => set('pad', e.target.checked)} /> Keep numbers the same length (01, 02, 03)
+                        </label>
+                      </div>
+                    )}
+
+                    {bulk.mode === 'list' && (
+                      <div>
+                        <label style={labelStyle}>Unit numbers</label>
+                        <textarea value={bulk.list} onChange={e => set('list', e.target.value)} rows={3} placeholder="A1, A2, A3   or   A1-A10, B1-B10, Shop 1"
+                          style={{ ...inputStyle, resize: 'vertical', fontFamily: 'inherit', lineHeight: 1.5 }} />
+                        <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 4 }}>Separate with commas or new lines. A range like S1-S12 creates S1 to S12.</div>
+                      </div>
+                    )}
+
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                      <div>
+                        <label style={labelStyle}>Type</label>
+                        <select value={bulk.house_type} onChange={e => set('house_type', e.target.value)} style={inputStyle}>
+                          {['Single Room','Double Room','Bedsitter','1 Bedroom','2 Bedroom','3 Bedroom','Shop','Studio'].map(x => <option key={x}>{x}</option>)}
+                        </select>
+                      </div>
+                      {bulk.mode !== 'floors'
+                        ? <Field label="Floor (optional)" value={bulk.floor} onChange={v => set('floor', v)} type="number" placeholder="0 = ground" />
+                        : <div />}
+                      <Field label="Rent (KES)" value={bulk.rent_amount} onChange={v => set('rent_amount', v)} type="number" placeholder="e.g. 5500" />
+                      <Field label="Deposit (KES)" value={bulk.deposit} onChange={v => set('deposit', v)} type="number" placeholder="e.g. 5500" />
+                    </div>
+                    <div>
+                      <label style={labelStyle}>Status</label>
+                      <select value={bulk.status} onChange={e => set('status', e.target.value)} style={inputStyle}>
+                        <option value="vacant">Vacant</option><option value="occupied">Occupied</option><option value="maintenance">Under Maintenance</option>
+                      </select>
+                    </div>
+
+                    <div style={{ padding: 14, borderRadius: 12, background: 'var(--surface2, #f7faf7)', border: '1px solid var(--border)' }}>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)', marginBottom: 8 }}>
+                        {todo.length === 0 ? 'Nothing to create yet' : `${todo.length} unit${todo.length !== 1 ? 's' : ''} will be created${floorKeys.filter(k => k !== '').length > 1 ? ` across ${floorKeys.filter(k => k !== '').length} floors` : ''}`}
+                        {dupes.length > 0 && <span style={{ color: 'var(--amber, #b45309)', fontWeight: 500 }}> · {dupes.length} already exist and will be skipped</span>}
+                      </div>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 220, overflowY: 'auto' }}>
+                        {floorKeys.slice(0, 20).map(k => (
+                          <div key={k} style={{ display: 'flex', gap: 10, alignItems: 'baseline' }}>
+                            {k !== '' && <span style={{ minWidth: 84, fontSize: 12, fontWeight: 600, color: 'var(--muted)' }}>{floorLabel(k)}</span>}
+                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                              {byFloor[k].slice(0, 24).map(u => chip(u, false))}
+                              {byFloor[k].length > 24 && <span style={{ fontSize: 12, color: 'var(--muted)', alignSelf: 'center' }}>+ {byFloor[k].length - 24} more</span>}
+                            </div>
+                          </div>
+                        ))}
+                        {dupes.length > 0 && (
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, paddingTop: 4 }}>{dupes.slice(0, 10).map(x => chip(x.unit, true))}</div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  {bulkBusy && bulkProgress && (
+                    <div style={{ marginTop: 16 }}>
+                      <div style={{ height: 6, borderRadius: 9, background: 'var(--border)', overflow: 'hidden' }}>
+                        <div style={{ width: `${(bulkProgress.done / Math.max(1, bulkProgress.total)) * 100}%`, height: '100%', background: 'var(--primary, #1b6b45)', transition: 'width .2s' }} />
+                      </div>
+                      <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 6 }}>Creating {bulkProgress.done} of {bulkProgress.total}...</div>
+                    </div>
+                  )}
+
+                  <div style={{ display: 'flex', gap: 10, marginTop: 24, justifyContent: 'flex-end' }}>
+                    <button onClick={() => setBulk(null)} disabled={bulkBusy} style={{ minHeight: 44, padding: '0 20px', borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface)', fontWeight: 600, fontSize: 14, color: 'var(--text)', cursor: 'pointer' }}>Cancel</button>
+                    <button onClick={() => saveBulk(todo)} disabled={bulkBusy || !todo.length || !rentOk} title={!rentOk ? 'Enter the rent first' : undefined}
+                      style={{ minHeight: 44, padding: '0 20px', borderRadius: 10, border: 'none', background: 'var(--primary, #1b6b45)', color: '#fff', fontWeight: 600, fontSize: 14, cursor: 'pointer', opacity: (bulkBusy || !todo.length || !rentOk) ? 0.55 : 1 }}>
+                      {bulkBusy ? 'Creating...' : `Create ${todo.length || ''} unit${todo.length === 1 ? '' : 's'}`}
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Modal */}
       {modal && (

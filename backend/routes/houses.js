@@ -236,6 +236,96 @@ router.post('/', auth, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// POST /api/houses/bulk  create many units in one property in a single request
+// (used by "Add several units" on the Properties page).
+// Body: { plot_id, units: [{ unit_number, floor? }], house_type, rent_amount, deposit, status }
+// Same permission + scope rules as POST / above. All-or-nothing: one transaction.
+// Unit numbers that already exist in that property are skipped and reported back.
+// An agent/caretaker batch posts ONE "pending approval" notice for the whole batch
+// instead of one notice per unit.
+router.post('/bulk', auth, async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const { plot_id, units, house_type, rent_amount, deposit, status } = req.body;
+    const plotIdNum = parseInt(plot_id);
+    if (!plotIdNum || !Array.isArray(units) || units.length === 0 || !(parseFloat(rent_amount) > 0)) {
+      return res.status(400).json({ error: 'plot_id, units and rent_amount are required' });
+    }
+    if (units.length > 200) return res.status(400).json({ error: 'You can add at most 200 units at a time.' });
+
+    const { permissions } = await getPermissions(req.user, plotIdNum);
+    if (!permissions.includes('*') && !permissions.includes('houses.create')) {
+      return res.status(403).json({ error: 'Missing permission: houses.create' });
+    }
+    const visible = await getVisiblePlotIds(req.user);
+    if (visible !== 'ALL' && !visible.includes(plotIdNum)) {
+      return res.status(403).json({ error: 'You do not have access to this plot.' });
+    }
+    const isApproved = !['agent', 'caretaker'].includes(req.user.role);
+
+    // Clean + de-duplicate the requested unit numbers (case-insensitive).
+    const seen = new Set();
+    const clean = [];
+    for (const u of units) {
+      const name = String(u?.unit_number ?? '').trim().slice(0, 40);
+      if (!name || seen.has(name.toLowerCase())) continue;
+      seen.add(name.toLowerCase());
+      const floor = u.floor === '' || u.floor == null ? null : Math.max(0, Math.min(60, parseInt(u.floor) || 0));
+      clean.push({ name, floor });
+    }
+    if (clean.length === 0) return res.status(400).json({ error: 'No valid unit numbers were given.' });
+
+    const existing = await client.query('SELECT lower(trim(unit_number)) AS k FROM houses WHERE plot_id = $1', [plotIdNum]);
+    const taken = new Set(existing.rows.map(r => r.k));
+    const toCreate = clean.filter(u => !taken.has(u.name.toLowerCase()));
+    const skipped  = clean.filter(u => taken.has(u.name.toLowerCase())).map(u => u.name);
+    if (toCreate.length === 0) {
+      return res.status(409).json({ error: 'All of those unit numbers already exist in this property.', skipped });
+    }
+
+    const rows = [];
+    await client.query('BEGIN');
+    for (const u of toCreate) {
+      const r = await client.query(
+        `INSERT INTO houses (plot_id, unit_number, house_type, rent_amount, deposit, status, meter_no, is_approved, status_changed_at, floor)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), $9) RETURNING id, unit_number, floor`,
+        [plotIdNum, u.name, house_type || 'Bedsitter', rent_amount, deposit || null, status || 'vacant', null, isApproved, u.floor]
+      );
+      rows.push(r.rows[0]);
+    }
+    if (!isApproved) {
+      const plotRow = await client.query('SELECT name FROM plots WHERE id = $1', [plotIdNum]);
+      const names = toCreate.map(u => u.name);
+      await client.query(
+        `INSERT INTO notices (author_id, title, body, priority, target_type, target_id)
+         VALUES ($1, $2, $3, 'warning', 'property', $4)`,
+        [
+          req.user.id,
+          `${names.length} new units pending approval`,
+          `${req.user.name || (req.user.role === 'agent' ? 'An agent' : 'A caretaker')} added ${names.length} units on ${plotRow.rows[0]?.name || 'this property'} (${names.slice(0, 12).join(', ')}${names.length > 12 ? ', ...' : ''}), awaiting approval before they go live.`,
+          plotIdNum,
+        ]
+      );
+    }
+    await client.query('COMMIT');
+
+    try {
+      await logAudit({ user: req.user, action: 'house.bulk_create', entityType: 'plot', entityId: plotIdNum,
+        changes: { units_created: { from: null, to: toCreate.map(u => u.name).join(', ') } } });
+    } catch (e) { /* the audit log must never fail the request */ }
+
+    res.status(201).json({
+      success: true, created: rows.length, skipped, data: rows,
+      message: isApproved ? undefined : 'Units submitted for approval by admin/landlord.',
+    });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
+  }
+});
+
 // PUT update house
 // Was gated by requirePermission('houses.edit') as middleware — before this
 // house's property was known, so a per-property override could never apply.
