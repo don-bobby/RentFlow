@@ -37,7 +37,7 @@ export default function Layout() {
   const dropdownRef  = useRef(null); // wraps the avatar BUTTON only (used to measure position + outside-click)
   const dropdownPanelRef = useRef(null); // the portaled panel itself (lives in document.body, not here)
   const [dropdownPos, setDropdownPos] = useState({ top: 0, right: 0 });
-  const { user, can, canAnywhere } = useAuth(); // live DB row (role, agent_id, profile, permissions) via /api/auth/me
+  const { user, can, canAnywhere, logout } = useAuth(); // live DB row (role, agent_id, profile, permissions) via /api/auth/me
   const [displayName, setDisplayName]  = useState(null);
   const role         = user?.role;
   const canApprove   = role === 'admin' || role === 'super_admin';
@@ -296,7 +296,7 @@ export default function Layout() {
     navigate('/messages', { state: { conversationId: conv.id } });
   }
 
-  function handleLogout() { localStorage.removeItem('token'); window.location.href = '/login'; }
+  function handleLogout() { logout(); window.location.href = '/'; }   // '/' = landing page for logged-out visitors (the Android app sends them on to /login)
 
   const nav = [
     { to: '/',            icon: '⊞', label: 'Dashboard',  roles: ['admin','super_admin','agent','landlord','caretaker'] },

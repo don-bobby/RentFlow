@@ -74,7 +74,10 @@ export default function TenantPortal() {
   function logout() {
     localStorage.removeItem('tenant_token');
     localStorage.removeItem('tenant_info');
-    navigate('/tenant/login');
+    // Web: back to the landing page. Android tenant app: stay on the tenant login
+    // (the landing page would send the app to the staff login instead).
+    const isNativeApp = typeof window !== 'undefined' && window.Capacitor?.isNativePlatform?.();
+    navigate(isNativeApp ? '/tenant/login' : '/');
   }
 
   async function triggerStkPush() {
