@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import Dashboard      from './pages/Dashboard';
 import Tenants        from './pages/Tenants';
 import Properties     from './pages/Properties';
@@ -17,6 +17,7 @@ import OwnerPortal      from './pages/OwnerPortal';
 import Payments       from './pages/Payments';
 import Maintenance    from './pages/Maintenance';
 import PublicListings from './pages/PublicListings';
+import Landing        from './pages/Landing';
 import Login          from './pages/Login';
 import Register       from './pages/Register';
 import Users          from './pages/Users';
@@ -42,6 +43,13 @@ function ProtectedRoute({ children, allowedRoles }) {
   if (!user) return <Navigate to="/login" />;
   if (allowedRoles && !allowedRoles.includes(user.role)) return <Navigate to="/" />;
   return children;
+}
+
+// Logged-out visitors: the marketing page at exactly "/", and the old
+// behaviour (public listings) for any other staff-only path.
+function LoggedOutHome() {
+  const { pathname } = useLocation();
+  return pathname === '/' ? <Landing /> : <Navigate to="/listings" replace />;
 }
 
 function AppRoutes() {
@@ -78,7 +86,7 @@ function AppRoutes() {
       <Route path="/tenant/dashboard" element={<TenantPortal />} />
 
       {/* Protected pages */}
-      <Route path="/" element={user ? <Layout /> : <Navigate to="/listings" />}>
+      <Route path="/" element={user ? <Layout /> : <LoggedOutHome />}>
         <Route index             element={<Dashboard />} />
         {/* A landlord with a mix of self-managed and agent-run properties sees the agent-run ones here, read-only. */}
         <Route path="portal" element={

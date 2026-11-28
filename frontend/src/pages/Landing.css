@@ -1,0 +1,123 @@
+/* Same fonts and colour tokens as PublicListings (.pl) so the public site reads as one brand.
+   The fonts are loaded from Landing.jsx (no render-blocking @import here). */
+
+.lp {
+  --ink: #10231b; --mute: #5b6b63; --bg: #f2f5f1; --card: #fff; --line: #dfe6e0;
+  --green: #0e5a3c; --wa: #128c4a; --sun: #f4b400; --red: #c8372d;
+  font-family: 'DM Sans', system-ui, sans-serif;
+  color: var(--ink); background: var(--bg); min-height: 100vh; line-height: 1.5;
+}
+.lp *, .lp *::before, .lp *::after { box-sizing: border-box; }
+.lp h1, .lp h2, .lp h3 { font-family: 'Bricolage Grotesque', 'DM Sans', system-ui, sans-serif; letter-spacing: -.01em; margin: 0; }
+.lp p { margin: 0; }
+.lp a:not(.lp-btn) { color: inherit; text-decoration: none; }
+.lp [id] { scroll-margin-top: 80px; }
+
+.lp-in { max-width: 1280px; margin: 0 auto; padding-left: clamp(16px, 4vw, 48px); padding-right: clamp(16px, 4vw, 48px); }
+.lp-sec { padding-top: 72px; padding-bottom: 72px; }
+.lp-tag { font-size: 13px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--green); }
+.lp-h2 { font-size: clamp(28px, 4vw, 40px); line-height: 1.1; }
+.lp-head { display: flex; flex-direction: column; gap: 10px; max-width: 640px; }
+.lp-stack { display: flex; flex-direction: column; gap: 36px; }
+.lp-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 18px; }
+
+/* Buttons: same shape as .pl-btn */
+.lp-btn { display: inline-block; text-align: center; padding: 11px 18px; border-radius: 10px; font: 700 15px 'DM Sans', sans-serif; border: 2px solid transparent; cursor: pointer; text-decoration: none; }
+.lp-btn:focus-visible, .lp a:focus-visible { outline: 3px solid var(--sun); outline-offset: 2px; }
+.lp-dark { background: var(--ink); color: #fff; }
+.lp-green { background: var(--green); color: #fff; }
+.lp-green:hover { background: #0b4a32; }
+.lp-line { background: #fff; color: var(--ink); border-color: var(--ink); }
+.lp-sunbtn { background: var(--sun); color: #2b2100; }
+.lp-sunbtn:hover { background: #ffc61f; }
+.lp-ghost { background: transparent; color: #fff; border-color: rgba(255,255,255,.65); }
+.lp-ghost:hover { background: rgba(255,255,255,.12); }
+.lp-white { background: #fff; color: var(--green); }
+.lp-link { color: var(--green) !important; font-weight: 700; font-size: 15px; text-decoration: underline !important; padding: 10px 0; }
+
+/* Header: same as .pl-top */
+.lp-top { position: sticky; top: 0; z-index: 20; height: 64px; display: flex; justify-content: space-between; align-items: center; padding: 0 clamp(16px, 4vw, 48px); background: var(--card); border-bottom: 1px solid var(--line); }
+.lp-brand { font-family: 'Bricolage Grotesque', sans-serif; font-weight: 700; font-size: 22px; color: var(--green) !important; }
+.lp-top nav { display: flex; gap: 18px; align-items: center; font-size: 14px; }
+.lp-top nav a:not(.lp-btn) { display: inline-flex; align-items: center; min-height: 44px; }   /* 44px tap targets; Vacant units stays visible on phones */
+.lp-top .lp-btn { padding: 8px 16px; font-size: 14px; }
+
+/* Hero: same green and tint as .pl-hero */
+.lp-hero { color: #fff; background-color: var(--green);
+  background-image: linear-gradient(105deg, rgba(7,45,31,.93) 25%, rgba(7,45,31,.6)); }   /* the skyline photo is added in Landing.jsx (CRA cannot resolve url('/...') inside CSS) */
+.lp-hero-in { display: flex; flex-wrap: wrap; align-items: center; gap: 48px; padding-top: clamp(36px, 7vw, 84px); padding-bottom: clamp(44px, 6vw, 72px); }
+.lp-hero-copy { flex: 1 1 440px; display: flex; flex-direction: column; gap: 20px; }
+.lp-hero .lp-tag { color: var(--sun); }
+.lp-hero h1 { font-size: clamp(34px, 5.4vw, 58px); line-height: 1.05; max-width: 16ch; font-weight: 700; }
+.lp-hero h1 span { color: var(--sun); }
+.lp-lead { font-size: 18px; color: #d3e6dc; max-width: 48ch; }
+.lp-row { display: flex; flex-wrap: wrap; gap: 12px; }
+.lp-hero-note { font-size: 15px; color: #bcd8ca; }
+.lp-hero-note a { color: #fff; font-weight: 700; text-decoration: underline !important; }
+
+/* Two overlapping phones (screens are drawn with HTML/CSS, sample data only) */
+.lp-phone-wrap { flex: 1 1 360px; display: flex; justify-content: center; }
+.lp-phones { position: relative; width: 440px; max-width: 100%; height: 540px; }
+.lp-plat { position: absolute; left: 4%; right: 4%; bottom: 6px; height: 96px; border-radius: 50%; background: radial-gradient(ellipse at center, rgba(255,255,255,.16), rgba(255,255,255,0) 70%); border: 1px solid rgba(255,255,255,.08); }
+.lp-phone { position: absolute; border-radius: 36px; background: var(--ink); padding: 9px; box-shadow: 0 30px 60px rgba(0,0,0,.35); border: 1px solid rgba(255,255,255,.15); }
+.lp-phone.back { left: 0; top: 70px; width: 222px; height: 420px; transform: rotate(-7deg); z-index: 1; }
+.lp-phone.front { right: 0; top: 4px; width: 246px; height: 480px; z-index: 2; }
+.lp-screen { position: relative; height: 100%; border-radius: 28px; background: var(--bg); color: var(--ink); overflow: hidden; display: flex; flex-direction: column; }
+.lp-island { position: absolute; top: 8px; left: 50%; transform: translateX(-50%); width: 64px; height: 18px; border-radius: 99px; background: var(--ink); }
+.lp-status { display: flex; justify-content: space-between; align-items: center; padding: 10px 18px 0; font-size: 11px; font-weight: 700; }
+.lp-sig { width: 22px; height: 8px; border-radius: 3px; background: var(--ink); opacity: .75; }
+.lp-body { flex: 1; padding: 16px 14px 8px; display: flex; flex-direction: column; gap: 10px; overflow: hidden; }
+.lp-hi { font-family: 'Bricolage Grotesque', sans-serif; font-weight: 700; font-size: 17px; line-height: 1.1; }
+.lp-sub { font-size: 11px; color: var(--mute); margin-top: 2px; }
+.lp-bal { background: var(--green); color: #fff; border-radius: 14px; padding: 14px; display: flex; flex-direction: column; gap: 3px; }
+.lp-bal small { font-size: 11px; opacity: .85; }
+.lp-bal strong { font-family: 'Bricolage Grotesque', sans-serif; font-size: 24px; line-height: 1.1; }
+.lp-pay { margin-top: 8px; background: var(--sun); color: #2b2100; text-align: center; border-radius: 10px; padding: 8px; font-weight: 700; font-size: 12px; }
+.lp-sech { font-size: 11px; font-weight: 700; color: var(--mute); text-transform: uppercase; letter-spacing: .06em; }
+.lp-r2 { display: flex; justify-content: space-between; align-items: center; gap: 8px; background: #fff; border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; font-size: 11px; }
+.lp-r2 b { display: block; font-size: 11.5px; }
+.lp-r2 span { color: var(--mute); }
+.lp-chip { font-size: 10px; font-weight: 700; padding: 2px 8px; border-radius: 99px; white-space: nowrap; }
+.lp-chip.ok { background: #e3f1e9; color: #0e5a3c; }
+.lp-chip.bad { background: #fbe6e4; color: #c8372d; }
+.lp-chip.warn { background: #fdf1cc; color: #7a5a00; }
+.lp-tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.lp-tile { background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 10px; display: flex; flex-direction: column; }
+.lp-tile strong { font-family: 'Bricolage Grotesque', sans-serif; font-size: 20px; line-height: 1.1; }
+.lp-tile small { font-size: 10px; color: var(--mute); }
+.lp-tabs { display: flex; justify-content: space-around; padding: 8px 6px 12px; background: #fff; border-top: 1px solid var(--line); }
+.lp-tabs span { display: flex; flex-direction: column; align-items: center; gap: 3px; font-size: 9.5px; color: var(--mute); }
+.lp-tabs b { width: 14px; height: 14px; border-radius: 5px; background: #cfd9d2; }
+.lp-tabs span.on { color: var(--green); font-weight: 700; }
+.lp-tabs span.on b { background: var(--green); }
+
+/* Cards (same radius and border as .pl-card) */
+.lp-card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 24px; display: flex; flex-direction: column; gap: 8px; }
+.lp-card h3 { font-size: 20px; }
+.lp-card p { color: var(--mute); font-size: 15px; }
+.lp-white-band { background: var(--card); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+.lp-white-band .lp-card { background: var(--bg); }
+
+/* Banners */
+.lp-banner { border-radius: 16px; padding: 44px 40px; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 32px; }
+.lp-managers { background: var(--card); border: 1px solid var(--line); }
+.lp-tenants { color: #fff; background-color: var(--green); background-image: linear-gradient(rgba(7,45,31,.82), rgba(7,45,31,.9)); }
+.lp-bcopy { flex: 1 1 380px; display: flex; flex-direction: column; gap: 14px; max-width: 560px; }
+.lp-banner h2 { font-size: clamp(26px, 4vw, 36px); line-height: 1.1; }
+.lp-bcopy > p { font-size: 17px; color: var(--mute); }
+.lp-tenants .lp-bcopy > p { color: #dcebe3; }
+.lp-checks { flex: 1 1 300px; display: flex; flex-direction: column; gap: 12px; max-width: 440px; }
+.lp-check { display: flex; gap: 12px; align-items: flex-start; font-size: 16px; padding: 12px 14px; border-radius: 10px; background: #edf3ee; border-left: 4px solid var(--green); }
+.lp-check svg { flex: none; margin-top: 2px; }
+.lp-contact { border-top: 1px solid var(--line); margin-top: 6px; padding-top: 16px; display: flex; flex-direction: column; gap: 4px; }
+.lp-contact strong { font-size: 15px; }
+.lp-clinks { display: flex; flex-wrap: wrap; gap: 4px 20px; }
+.lp-ph { font-size: 12px; color: var(--mute); }
+.lp-small { font-size: 13px; color: var(--mute); }
+
+/* Footer: same as .pl-foot */
+.lp-foot { display: flex; flex-wrap: wrap; gap: 12px; justify-content: space-between; padding: 22px clamp(16px, 4vw, 48px); background: var(--ink); color: #c9d6cf; font-size: 14px; }
+.lp-foot a { color: #fff !important; text-decoration: underline !important; }
+
+@media (max-width: 820px) { .lp-top nav .lp-nl { display: none; } .lp-banner { padding: 32px 22px; } }
+@media (max-width: 480px) { .lp-top nav .lp-tl { display: none; } .lp-top nav { gap: 12px; } .lp-brand { font-size: 20px; } .lp-phone.back { display: none; } .lp-phones { height: 510px; } .lp-phone.front { right: auto; left: 50%; transform: translateX(-50%); } }
