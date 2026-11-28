@@ -26,31 +26,44 @@ router.get('/', staffAuth, async (req, res) => {
     const visible = await getVisiblePlotIds(req.user);
     if (visible !== 'ALL' && visible.length === 0) return res.json({ success: true, data: [] });
 
-    // vendor_* come from the vendor directory (migration 032). Until that has run
-    // the first query fails with a missing-column/table error, so fall back to the old shape.
+    // Newer columns come from migrations, so try the richest query first and fall back one
+    // step at a time if a column/table isn't there yet (so deploy order never breaks the list):
+    //   1) vendor directory (032) + who requested / who closed it (035)
+    //   2) vendor directory only (032 run, 035 not yet)
+    //   3) the original shape (neither run)
     const where = visible === 'ALL' ? '' : 'WHERE p.id = ANY($1)';
     const params = visible === 'ALL' ? [] : [visible];
-    let result;
-    try {
-      result = await pool.query(`
-        SELECT m.*, h.plot_id, p.user_id AS landlord_id, t.full_name AS tenant_name, h.unit_number, vd.name AS vendor_name, vd.phone AS vendor_phone
+    const joins = `
         FROM maintenance_requests m
         LEFT JOIN tenants t ON m.tenant_id = t.id
         LEFT JOIN houses  h ON m.house_id  = h.id
-        LEFT JOIN plots   p ON h.plot_id   = p.id
+        LEFT JOIN plots   p ON h.plot_id   = p.id`;
+    const attempts = [
+      `SELECT m.*, h.plot_id, p.user_id AS landlord_id, t.full_name AS tenant_name, h.unit_number,
+              vd.name AS vendor_name, vd.phone AS vendor_phone,
+              ru.name AS requested_by_name, ru.role AS requested_by_role, cu.name AS resolved_by_name
+       ${joins}
+        LEFT JOIN vendors vd ON vd.id = m.vendor_id
+        LEFT JOIN users   ru ON ru.id = m.requested_by
+        LEFT JOIN users   cu ON cu.id = m.resolved_by
+        ${where}
+        ORDER BY m.reported_at DESC`,
+      `SELECT m.*, h.plot_id, p.user_id AS landlord_id, t.full_name AS tenant_name, h.unit_number, vd.name AS vendor_name, vd.phone AS vendor_phone
+       ${joins}
         LEFT JOIN vendors vd ON vd.id = m.vendor_id
         ${where}
-        ORDER BY m.reported_at DESC`, params);
-    } catch (e) {
-      if (e.code !== '42P01' && e.code !== '42703') throw e;
-      result = await pool.query(`
-        SELECT m.*, h.plot_id, t.full_name AS tenant_name, h.unit_number
-        FROM maintenance_requests m
-        LEFT JOIN tenants t ON m.tenant_id = t.id
-        LEFT JOIN houses  h ON m.house_id  = h.id
-        LEFT JOIN plots   p ON h.plot_id   = p.id
+        ORDER BY m.reported_at DESC`,
+      `SELECT m.*, h.plot_id, t.full_name AS tenant_name, h.unit_number
+       ${joins}
         ${where}
-        ORDER BY m.reported_at DESC`, params);
+        ORDER BY m.reported_at DESC`,
+    ];
+    let result;
+    for (let i = 0; i < attempts.length; i++) {
+      try { result = await pool.query(attempts[i], params); break; }
+      catch (e) {
+        if ((e.code !== '42P01' && e.code !== '42703') || i === attempts.length - 1) throw e;
+      }
     }
     // getVisiblePlotIds (above) answers "can this user see this property at
     // all" — it doesn't know about a per-property maintenance.view grant or
@@ -122,11 +135,24 @@ router.post('/', flexAuth, async (req, res) => {
       if (!allowed) return res.status(403).json({ error: 'You are not authorized to file a request for this tenant.' });
     }
 
-    const result = await pool.query(
-      `INSERT INTO maintenance_requests (tenant_id, house_id, issue, priority, status, photo_url)
-       VALUES ($1, $2, $3, $4, 'pending', $5) RETURNING *`,
-      [tenant_id, resolvedHouseId, issue, priority || 'medium', photo_url || null]
-    );
+    // requested_by (migration 035) = the staff member who filed it on the tenant's behalf;
+    // NULL means the tenant filed it themselves. Falls back to the old insert until 035 has run.
+    const filedBy = req.user.role === 'tenant' ? null : req.user.id;
+    let result;
+    try {
+      result = await pool.query(
+        `INSERT INTO maintenance_requests (tenant_id, house_id, issue, priority, status, photo_url, requested_by)
+         VALUES ($1, $2, $3, $4, 'pending', $5, $6) RETURNING *`,
+        [tenant_id, resolvedHouseId, issue, priority || 'medium', photo_url || null, filedBy]
+      );
+    } catch (e) {
+      if (e.code !== '42703') throw e;
+      result = await pool.query(
+        `INSERT INTO maintenance_requests (tenant_id, house_id, issue, priority, status, photo_url)
+         VALUES ($1, $2, $3, $4, 'pending', $5) RETURNING *`,
+        [tenant_id, resolvedHouseId, issue, priority || 'medium', photo_url || null]
+      );
+    }
     res.status(201).json({ success: true, data: result.rows[0] });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -188,14 +214,31 @@ router.patch('/:id', staffAuth, async (req, res) => {
     // in JS and passing it as its own parameter (same pattern houses.js
     // already uses for status_changed_at) sidesteps the ambiguity entirely.
     const isCompleted = status === 'completed';
-    const result = await pool.query(
-      `UPDATE maintenance_requests
-       SET status = $1,
-           resolved_at = CASE WHEN $3 THEN NOW() ELSE NULL END
-       WHERE id = $2
-       RETURNING *`,
-      [status, req.params.id, isCompleted]
-    );
+    // resolved_by (migration 035) records WHO closed it. Computed in JS and passed as its own
+    // parameter (same reason as isCompleted above). Falls back to the old update until 035 has run.
+    const resolvedBy = isCompleted ? req.user.id : null;
+    let result;
+    try {
+      result = await pool.query(
+        `UPDATE maintenance_requests
+         SET status = $1,
+             resolved_at = CASE WHEN $3 THEN NOW() ELSE NULL END,
+             resolved_by = $4
+         WHERE id = $2
+         RETURNING *`,
+        [status, req.params.id, isCompleted, resolvedBy]
+      );
+    } catch (e) {
+      if (e.code !== '42703') throw e;
+      result = await pool.query(
+        `UPDATE maintenance_requests
+         SET status = $1,
+             resolved_at = CASE WHEN $3 THEN NOW() ELSE NULL END
+         WHERE id = $2
+         RETURNING *`,
+        [status, req.params.id, isCompleted]
+      );
+    }
 
     if (oldStatus !== status) {
       await logAudit({
